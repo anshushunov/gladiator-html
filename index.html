@@ -4,52 +4,24 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0d0d12" />
-    <title>Blood & Sand — Prototype</title>
+    <title>Blood &amp; Sand — Prototype</title>
   </head>
   <body>
-    <main class="game-shell">
+    <main class="game-shell" data-testid="series-phase" data-phase="planning">
       <header class="masthead">
-        <div>
-          <p class="eyebrow">Agent-first prototype · bout 001</p>
-          <h1>Blood <span>&</span> Sand</h1>
-        </div>
-        <div class="controls" aria-label="Battle controls">
-          <button class="button button--primary" data-testid="toggle-bout">Pause bout</button>
-          <button class="button" data-testid="reset-bout">Reset</button>
-        </div>
+        <div><p class="eyebrow">House of Mars &middot; Series challenge</p><h1>Blood <span>&amp;</span> Sand</h1></div>
+        <div class="controls" data-testid="runtime-controls"></div>
       </header>
-
-      <section class="battle-grid" aria-label="Gladiator bout">
-        <article class="fighter-card fighter-card--red" data-testid="fighter-red">
-          <div class="fighter-card__title">
-            <span class="sigil">I</span>
-            <div><small>House of Mars</small><h2>Brutus</h2></div>
-            <strong data-hp="red">100</strong>
-          </div>
-          <div class="health"><i data-health="red"></i></div>
-        </article>
-
-        <div class="arena" data-testid="arena">
-          <canvas aria-label="3D gladiator arena"></canvas>
-          <div class="arena__status" aria-live="polite" data-testid="battle-status">FIGHT</div>
-          <div class="arena__round">The Ludus · Exhibition Match</div>
+      <section id="series-ui" aria-label="Series management"></section>
+      <section id="battle-ui" hidden>
+        <div class="battle-grid" data-testid="arena-shell">
+          <article data-testid="active-home"></article>
+          <div class="arena" data-testid="arena"><canvas aria-label="3D gladiator arena"></canvas><h2 class="arena__status" tabindex="-1" aria-live="polite" data-testid="battle-status"></h2></div>
+          <article data-testid="active-away"></article>
         </div>
-
-        <article class="fighter-card fighter-card--blue" data-testid="fighter-blue">
-          <div class="fighter-card__title">
-            <span class="sigil">II</span>
-            <div><small>House of Neptune</small><h2>Cassius</h2></div>
-            <strong data-hp="blue">100</strong>
-          </div>
-          <div class="health"><i data-health="blue"></i></div>
-        </article>
-      </section>
-
-      <section class="battle-feed" aria-label="Battle feed">
-        <div><span class="live-dot"></span><strong>Battle feed</strong></div>
-        <ol data-testid="battle-feed"></ol>
+        <section class="battle-feed" aria-label="Battle feed"><div><strong>Battle feed</strong></div><ol aria-live="off" data-testid="battle-feed"></ol></section>
       </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
-</body>
+  </body>
 </html>

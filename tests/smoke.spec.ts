@@ -1,25 +1,18 @@
 import { expect, test } from '@playwright/test'
 
-test('loads the arena and starts a bout', async ({ page }) => {
-  await page.goto('/?snapshot')
+test('plans and locks three matchups', async ({ page }) => {
+  await page.goto('/?seed=20260815&snapshot')
+  await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
+  await expect(page.locator('[data-role="home-fighter"]')).toHaveCount(3)
+  await expect(page.locator('[data-role="opponent-slot"]')).toHaveCount(3)
+  await expect(page.getByTestId('confirm-lineup')).toBeDisabled()
 
-  await expect(page.getByRole('heading', { name: 'Blood & Sand' })).toBeVisible()
-  await expect(page.getByTestId('arena')).toBeVisible()
-  await expect(page.getByTestId('fighter-red')).toContainText('Brutus')
-  await expect(page.getByTestId('fighter-blue')).toContainText('Cassius')
-  await expect(page.getByTestId('battle-status')).toHaveText('READY')
+  for (const [fighterId, boutIndex] of [['aquila', 0], ['nerva', 1], ['brutus', 2]] as const) {
+    await page.getByTestId(`fighter-${fighterId}`).click()
+    await page.getByTestId(`slot-${boutIndex}`).click()
+  }
 
-  await page.getByTestId('toggle-bout').click()
-  await expect(page.getByTestId('battle-status')).toHaveText('FIGHT')
-
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advance(20))
-  await expect(page.getByTestId('battle-status')).toHaveText(/wins|Draw/)
-  await expect(page.getByTestId('toggle-bout')).toBeDisabled()
-})
-
-test('matches the stable arena snapshot', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 820 })
-  await page.goto('/?snapshot')
-  await expect(page.getByTestId('battle-status')).toHaveText('READY')
-  await expect(page).toHaveScreenshot('arena.png', { fullPage: true })
+  await expect(page.getByTestId('confirm-lineup')).toBeEnabled()
+  await page.getByTestId('confirm-lineup').click()
+  await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'fighting')
 })

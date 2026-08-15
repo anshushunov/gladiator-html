@@ -1,90 +1,113 @@
 import './style.css'
 import { ArenaView } from './presentation/ArenaView'
-import { formatBattleFeed } from './presentation/battleFeed'
-import { advanceBattleTick, advanceBattleTicks, createBattle, TICKS_PER_SECOND, type BattleState } from './simulation/battle'
-import type { FighterDefinition, FighterSide } from './simulation/fighters'
+import { SeriesView, type RuntimeViewState, type SeriesIntent } from './presentation/SeriesView'
+import { homeRoster, opponents } from './content/mvpSeries'
+import {
+  advanceSeriesTicks,
+  assignFighter,
+  confirmLineup,
+  createSeries,
+  rematch,
+  startNextBout,
+  unassignSlot,
+  type BoutIndex,
+  type SeriesCommandFailure,
+  type SeriesCommandResult,
+  type SeriesState,
+} from './simulation/series'
+import { TICKS_PER_SECOND } from './simulation/battle'
 
-// Temporary migration fixtures matching the previous single-bout page exactly.
-// Task 5 replaces these local fixtures with the shared MVP series content.
-const brutus: FighterDefinition = { id: 'brutus', name: 'Brutus', school: 'House of Mars', archetype: 'heavy', maxHp: 100, damage: 10, attackIntervalTicks: 43, accuracy: 1, blockChance: 0, criticalChance: 0 }
-const cassius: FighterDefinition = { id: 'cassius', name: 'Cassius', school: 'House of Neptune', archetype: 'technical', maxHp: 100, damage: 10, attackIntervalTicks: 43, accuracy: 1, blockChance: 0, criticalChance: 0 }
-const MIGRATION_SEED = 20260815
-const HP_SELECTOR: Record<FighterSide, string> = { home: 'red', away: 'blue' }
-const FEED_NAMES = { home: 'Brutus', away: 'Cassius' }
+type TestCommandResult = { ok: true } | { ok: false; reason: SeriesCommandFailure }
 
-const canvas = required<HTMLCanvasElement>('canvas')
-const toggleButton = required<HTMLButtonElement>('[data-testid="toggle-bout"]')
-const resetButton = required<HTMLButtonElement>('[data-testid="reset-bout"]')
-const status = required<HTMLElement>('[data-testid="battle-status"]')
-const feed = required<HTMLOListElement>('[data-testid="battle-feed"]')
+interface GladiatorTestApi {
+  getState(): SeriesState
+  assign(homeFighterId: string, boutIndex: BoutIndex): TestCommandResult
+  unassign(boutIndex: BoutIndex): TestCommandResult
+  confirm(): TestCommandResult
+  advanceTicks(ticks: number): void
+  startNextBout(): TestCommandResult
+  rematch(): TestCommandResult
+}
+
+const url = new URL(window.location.href)
+const seed = resolveSeriesSeed(url)
 const snapshotMode = new URLSearchParams(window.location.search).has('snapshot')
 
-const view = new ArenaView(canvas)
-let battle = createBattle({ home: brutus, away: cassius, seed: MIGRATION_SEED })
-let running = !snapshotMode
+const shell = required<HTMLElement>('.game-shell')
+const canvas = required<HTMLCanvasElement>('canvas')
+
+const seriesView = new SeriesView(shell, applyIntent)
+const arenaView = new ArenaView(canvas)
+
+let series: SeriesState = createSeries({ homeRoster, opponents, seed })
+const runtime: RuntimeViewState = { paused: snapshotMode, speed: 1 }
 let previousFrame = performance.now()
+let lastPhase = series.phase
 let accumulator = 0
 const tickDuration = 1 / TICKS_PER_SECOND
+
+function applyIntent(intent: SeriesIntent): void {
+  switch (intent.type) {
+    case 'assign': series = assignFighter(series, intent.fighterId, intent.boutIndex).state; break
+    case 'unassign': series = unassignSlot(series, intent.boutIndex).state; break
+    case 'confirm': series = confirmLineup(series).state; break
+    case 'start-next': series = startNextBout(series).state; break
+    case 'rematch': series = rematch(series).state; break
+    case 'toggle-pause': runtime.paused = !runtime.paused; break
+    case 'set-speed': runtime.speed = intent.speed; break
+  }
+  renderDom()
+}
+
+function applyCommand(result: SeriesCommandResult): TestCommandResult {
+  series = result.state
+  renderDom()
+  return result.ok ? { ok: true } : { ok: false, reason: result.reason }
+}
+
+function renderDom(): void {
+  if (series.phase !== lastPhase) {
+    accumulator = 0
+    lastPhase = series.phase
+  }
+  seriesView.render(series, runtime)
+  const battle = series.activeBattle
+  if (battle) arenaView.sync(battle)
+}
 
 function frame(now: number): void {
   const elapsed = Math.min((now - previousFrame) / 1000, 0.1)
   previousFrame = now
 
-  if (running && battle.phase === 'running') {
+  if (series.phase === 'fighting' && !runtime.paused) {
     accumulator += elapsed
     while (accumulator >= tickDuration) {
-      battle = advanceBattleTick(battle)
       accumulator -= tickDuration
+      for (let step = 0; step < runtime.speed; step += 1) {
+        const next = advanceSeriesTicks(series, 1)
+        if (next !== series) series = next
+      }
     }
   }
 
-  renderUi()
-  view.sync(battle)
+  const battle = series.activeBattle
+  if (battle) arenaView.sync(battle)
   requestAnimationFrame(frame)
 }
 
-function renderUi(): void {
-  for (const side of ['home', 'away'] as const) {
-    const fighter = battle.fighters[side]
-    required<HTMLElement>(`[data-hp="${HP_SELECTOR[side]}"]`).textContent = String(fighter.hp)
-    required<HTMLElement>(`[data-health="${HP_SELECTOR[side]}"]`).style.width = `${(fighter.hp / fighter.definition.maxHp) * 100}%`
-  }
-
-  if (battle.phase === 'finished') {
-    const winner = battle.fighters[battle.winnerSide as FighterSide]
-    status.textContent = winner ? `${winner.definition.name} wins` : ''
-    toggleButton.textContent = 'Bout finished'
-    toggleButton.disabled = true
-  } else {
-    status.textContent = running ? 'FIGHT' : 'READY'
-    toggleButton.textContent = running ? 'Pause bout' : 'Start bout'
-    toggleButton.disabled = false
-  }
-
-  feed.replaceChildren(...formatBattleFeed(battle.events, FEED_NAMES).slice().reverse().map((entry) => {
-    const item = document.createElement('li')
-    item.innerHTML = `<time>${entry.atSeconds.toFixed(1)}s</time><span>${entry.message}</span>`
-    return item
-  }))
+function resolveSeriesSeed(target: URL): number {
+  const raw = target.searchParams.get('seed')
+  const parsed = raw !== null && /^\d+$/.test(raw) ? Number(raw) : Number.NaN
+  if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 0xffff_ffff) return parsed >>> 0
+  const value = crypto.getRandomValues(new Uint32Array(1))[0]
+  target.searchParams.set('seed', String(value))
+  history.replaceState(null, '', target)
+  return value
 }
 
-toggleButton.addEventListener('click', () => {
-  running = !running
-  previousFrame = performance.now()
-  renderUi()
-})
+window.addEventListener('pagehide', () => arenaView.dispose())
 
-resetButton.addEventListener('click', () => {
-  battle = createBattle({ home: brutus, away: cassius, seed: MIGRATION_SEED })
-  running = false
-  accumulator = 0
-  renderUi()
-})
-
-window.addEventListener('pagehide', () => view.dispose())
-
-renderUi()
-view.sync(battle)
+renderDom()
 requestAnimationFrame(frame)
 
 function required<T extends Element>(selector: string): T {
@@ -95,24 +118,19 @@ function required<T extends Element>(selector: string): T {
 
 declare global {
   interface Window {
-    __GLADIATOR_TEST__: {
-      getState: () => BattleState
-      advance: (seconds: number) => void
-      reset: () => void
-    }
+    __GLADIATOR_TEST__: GladiatorTestApi
   }
 }
 
 window.__GLADIATOR_TEST__ = {
-  getState: () => structuredClone(battle),
-  advance: (seconds: number) => {
-    battle = advanceBattleTicks(battle, Math.round(seconds * TICKS_PER_SECOND))
-    renderUi()
-    view.sync(battle)
+  getState: () => structuredClone(series),
+  assign: (homeFighterId, boutIndex) => applyCommand(assignFighter(series, homeFighterId, boutIndex)),
+  unassign: (boutIndex) => applyCommand(unassignSlot(series, boutIndex)),
+  confirm: () => applyCommand(confirmLineup(series)),
+  advanceTicks: (ticks) => {
+    series = advanceSeriesTicks(series, ticks)
+    renderDom()
   },
-  reset: () => {
-    battle = createBattle({ home: brutus, away: cassius, seed: MIGRATION_SEED })
-    running = false
-    renderUi()
-  },
+  startNextBout: () => applyCommand(startNextBout(series)),
+  rematch: () => applyCommand(rematch(series)),
 }
