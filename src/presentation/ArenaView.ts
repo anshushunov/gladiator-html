@@ -1,11 +1,12 @@
 import * as THREE from 'three'
-import type { BattleState, FighterId } from '../simulation/battle'
+import type { BattleState } from '../simulation/battle'
+import type { FighterSide } from '../simulation/fighters'
 
 export class ArenaView {
   private readonly renderer: THREE.WebGLRenderer
   private readonly scene = new THREE.Scene()
   private readonly camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100)
-  private readonly fighters = new Map<FighterId, THREE.Group>()
+  private readonly fighters = new Map<FighterSide, THREE.Group>()
   private readonly observer: ResizeObserver
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -18,8 +19,8 @@ export class ArenaView {
     this.camera.lookAt(0, 0, 0)
 
     this.buildArena()
-    this.fighters.set('red', this.buildFighter(0xb83b34, 0xf0b071))
-    this.fighters.set('blue', this.buildFighter(0x2a6f8e, 0xb9d7dc))
+    this.fighters.set('home', this.buildFighter(0xb83b34, 0xf0b071))
+    this.fighters.set('away', this.buildFighter(0x2a6f8e, 0xb9d7dc))
 
     this.observer = new ResizeObserver(() => this.resize())
     this.observer.observe(canvas.parentElement ?? canvas)
@@ -27,12 +28,13 @@ export class ArenaView {
   }
 
   sync(state: BattleState): void {
-    for (const fighter of state.fighters) {
-      const mesh = this.fighters.get(fighter.id)
+    for (const side of ['home', 'away'] as const) {
+      const mesh = this.fighters.get(side)
       if (!mesh) continue
+      const fighter = state.fighters[side]
       mesh.position.x = fighter.x
-      mesh.rotation.y = fighter.id === 'red' ? Math.PI / 2 : -Math.PI / 2
-      mesh.rotation.z = fighter.hp === 0 ? (fighter.id === 'red' ? -1.3 : 1.3) : 0
+      mesh.rotation.y = side === 'home' ? Math.PI / 2 : -Math.PI / 2
+      mesh.rotation.z = fighter.hp === 0 ? (side === 'home' ? -1.3 : 1.3) : 0
     }
     this.renderer.render(this.scene, this.camera)
   }

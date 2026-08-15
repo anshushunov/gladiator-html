@@ -1,6 +1,16 @@
 import './style.css'
 import { ArenaView } from './presentation/ArenaView'
-import { createBattle, stepBattle, type BattleState } from './simulation/battle'
+import { formatBattleFeed } from './presentation/battleFeed'
+import { advanceBattleTick, advanceBattleTicks, createBattle, TICKS_PER_SECOND, type BattleState } from './simulation/battle'
+import type { FighterDefinition, FighterSide } from './simulation/fighters'
+
+// Temporary migration fixtures matching the previous single-bout page exactly.
+// Task 5 replaces these local fixtures with the shared MVP series content.
+const brutus: FighterDefinition = { id: 'brutus', name: 'Brutus', school: 'House of Mars', archetype: 'heavy', maxHp: 100, damage: 10, attackIntervalTicks: 43, accuracy: 1, blockChance: 0, criticalChance: 0 }
+const cassius: FighterDefinition = { id: 'cassius', name: 'Cassius', school: 'House of Neptune', archetype: 'technical', maxHp: 100, damage: 10, attackIntervalTicks: 43, accuracy: 1, blockChance: 0, criticalChance: 0 }
+const MIGRATION_SEED = 20260815
+const HP_SELECTOR: Record<FighterSide, string> = { home: 'red', away: 'blue' }
+const FEED_NAMES = { home: 'Brutus', away: 'Cassius' }
 
 const canvas = required<HTMLCanvasElement>('canvas')
 const toggleButton = required<HTMLButtonElement>('[data-testid="toggle-bout"]')
@@ -10,11 +20,11 @@ const feed = required<HTMLOListElement>('[data-testid="battle-feed"]')
 const snapshotMode = new URLSearchParams(window.location.search).has('snapshot')
 
 const view = new ArenaView(canvas)
-let battle = createBattle()
+let battle = createBattle({ home: brutus, away: cassius, seed: MIGRATION_SEED })
 let running = !snapshotMode
 let previousFrame = performance.now()
 let accumulator = 0
-const fixedStep = 1 / 60
+const tickDuration = 1 / TICKS_PER_SECOND
 
 function frame(now: number): void {
   const elapsed = Math.min((now - previousFrame) / 1000, 0.1)
@@ -22,9 +32,9 @@ function frame(now: number): void {
 
   if (running && battle.phase === 'running') {
     accumulator += elapsed
-    while (accumulator >= fixedStep) {
-      battle = stepBattle(battle, fixedStep)
-      accumulator -= fixedStep
+    while (accumulator >= tickDuration) {
+      battle = advanceBattleTick(battle)
+      accumulator -= tickDuration
     }
   }
 
@@ -34,14 +44,15 @@ function frame(now: number): void {
 }
 
 function renderUi(): void {
-  for (const fighter of battle.fighters) {
-    required<HTMLElement>(`[data-hp="${fighter.id}"]`).textContent = String(fighter.hp)
-    required<HTMLElement>(`[data-health="${fighter.id}"]`).style.width = `${(fighter.hp / fighter.maxHp) * 100}%`
+  for (const side of ['home', 'away'] as const) {
+    const fighter = battle.fighters[side]
+    required<HTMLElement>(`[data-hp="${HP_SELECTOR[side]}"]`).textContent = String(fighter.hp)
+    required<HTMLElement>(`[data-health="${HP_SELECTOR[side]}"]`).style.width = `${(fighter.hp / fighter.definition.maxHp) * 100}%`
   }
 
   if (battle.phase === 'finished') {
-    const winner = battle.fighters.find(({ id }) => id === battle.winnerId)
-    status.textContent = winner ? `${winner.name} wins` : 'Draw'
+    const winner = battle.fighters[battle.winnerSide as FighterSide]
+    status.textContent = winner ? `${winner.definition.name} wins` : ''
     toggleButton.textContent = 'Bout finished'
     toggleButton.disabled = true
   } else {
@@ -50,9 +61,9 @@ function renderUi(): void {
     toggleButton.disabled = false
   }
 
-  feed.replaceChildren(...battle.events.slice().reverse().map((event) => {
+  feed.replaceChildren(...formatBattleFeed(battle.events, FEED_NAMES).slice().reverse().map((entry) => {
     const item = document.createElement('li')
-    item.innerHTML = `<time>${event.at.toFixed(1)}s</time><span>${event.message}</span>`
+    item.innerHTML = `<time>${entry.atSeconds.toFixed(1)}s</time><span>${entry.message}</span>`
     return item
   }))
 }
@@ -64,7 +75,7 @@ toggleButton.addEventListener('click', () => {
 })
 
 resetButton.addEventListener('click', () => {
-  battle = createBattle()
+  battle = createBattle({ home: brutus, away: cassius, seed: MIGRATION_SEED })
   running = false
   accumulator = 0
   renderUi()
@@ -95,14 +106,12 @@ declare global {
 window.__GLADIATOR_TEST__ = {
   getState: () => structuredClone(battle),
   advance: (seconds: number) => {
-    for (let elapsed = 0; elapsed < seconds && battle.phase === 'running'; elapsed += fixedStep) {
-      battle = stepBattle(battle, fixedStep)
-    }
+    battle = advanceBattleTicks(battle, Math.round(seconds * TICKS_PER_SECOND))
     renderUi()
     view.sync(battle)
   },
   reset: () => {
-    battle = createBattle()
+    battle = createBattle({ home: brutus, away: cassius, seed: MIGRATION_SEED })
     running = false
     renderUi()
   },
