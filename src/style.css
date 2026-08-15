@@ -260,6 +260,7 @@ h1 span { color: #c78b4f; font-style: italic; }
 }
 
 .arena canvas { display: block; width: 100%; height: 100%; }
+.arena canvas[hidden] { display: none; }
 
 .arena__status {
   position: absolute;

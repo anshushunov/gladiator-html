@@ -43,6 +43,7 @@ let series: SeriesState = createSeries({ homeRoster, opponents, seed })
 const runtime: RuntimeViewState = { paused: snapshotMode, speed: 1 }
 let previousFrame = performance.now()
 let lastPhase = series.phase
+let lastActiveBoutIndex: number | null = series.activeBoutIndex
 let lastRenderedSeries: SeriesState = series
 let accumulator = 0
 const tickDuration = 1 / TICKS_PER_SECOND
@@ -70,11 +71,28 @@ function renderDom(): void {
   lastRenderedSeries = series
   if (series.phase !== lastPhase) {
     accumulator = 0
+    handleArenaPhaseChange()
     lastPhase = series.phase
   }
   seriesView.render(series, runtime)
+  syncArena()
+}
+
+function handleArenaPhaseChange(): void {
+  if (series.phase === 'fighting') {
+    if (series.activeBoutIndex !== null && series.activeBoutIndex !== lastActiveBoutIndex && series.activeBattle) {
+      const { home, away } = series.activeBattle.fighters
+      arenaView.startBout(series.activeBoutIndex, home.definition, away.definition)
+    }
+  } else if (series.phase === 'planning' || series.phase === 'summary') {
+    arenaView.clearBout()
+  }
+  lastActiveBoutIndex = series.activeBoutIndex
+}
+
+function syncArena(): void {
   const battle = series.activeBattle
-  if (battle) arenaView.sync(battle)
+  if (battle && (series.phase === 'fighting' || series.phase === 'between-bouts')) arenaView.sync(battle)
 }
 
 function frame(now: number): void {
@@ -94,8 +112,7 @@ function frame(now: number): void {
 
   if (series !== lastRenderedSeries) renderDom()
 
-  const battle = series.activeBattle
-  if (battle) arenaView.sync(battle)
+  syncArena()
   requestAnimationFrame(frame)
 }
 
