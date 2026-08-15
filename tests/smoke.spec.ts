@@ -59,6 +59,22 @@ test('plays three bouts, reports a 2–1 win, and rematches the same seed', asyn
   expect(new URL(page.url()).searchParams.get('seed')).toBe('20260815')
 })
 
+test('reports school defeat in the summary heading for a losing lineup', async ({ page }) => {
+  await page.goto('/?seed=20260815&snapshot')
+  await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.assign('brutus', 0)
+    window.__GLADIATOR_TEST__.assign('aquila', 1)
+    window.__GLADIATOR_TEST__.assign('nerva', 2)
+    window.__GLADIATOR_TEST__.confirm()
+  })
+  for (let bout = 0; bout < 3; bout += 1) {
+    await finishActiveBout(page)
+    if (bout < 2) await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
+  }
+  await expect(page.getByRole('heading', { name: 'School defeat' })).toBeFocused()
+  await expect(page.getByTestId('series-score')).toHaveText('1–2')
+})
+
 test('supports keyboard planning and deterministic focus', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   const aquila = page.getByTestId('fighter-aquila')

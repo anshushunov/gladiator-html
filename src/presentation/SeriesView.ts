@@ -360,8 +360,8 @@ export class SeriesView {
 
   private buildSummary(state: SeriesState): HTMLElement {
     const section = el('section', { class: 'summary', 'aria-labelledby': 'summary-heading' })
-    const heading = el('h2', { id: 'summary-heading', tabindex: '-1' }, 'School victory')
     const victory = state.score.home > state.score.away
+    const heading = el('h2', { id: 'summary-heading', tabindex: '-1' }, victory ? 'School victory' : 'School defeat')
     const scoreLine = el('p', { class: 'summary__score', 'aria-live': 'polite', 'data-testid': 'series-score' }, `${state.score.home}${RC.enDash}${state.score.away}`)
     const verdict = el('p', { class: 'summary__verdict', 'aria-live': 'polite' }, victory ? 'Victory for the House of Mars!' : 'Defeat for the House of Mars.')
     const list = el('ol', { class: 'summary__bouts' })
