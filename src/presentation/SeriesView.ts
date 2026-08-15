@@ -205,10 +205,10 @@ export class SeriesView {
       this.updateControls(runtime)
       return
     }
-    const pause = el('button', { class: 'button', type: 'button', 'data-action': 'toggle-pause', 'aria-pressed': String(runtime.paused) }, runtime.paused ? 'Resume' : 'Pause')
+    const pause = el('button', { class: 'button', type: 'button', 'data-action': 'toggle-pause', 'data-testid': 'toggle-pause', 'aria-pressed': String(runtime.paused) }, runtime.paused ? 'Resume' : 'Pause')
     const group = el('div', { class: 'speed-control', role: 'group', 'aria-label': 'Bout speed' })
     for (const speed of [1, 2, 4] as const) {
-      group.append(el('button', { class: 'button speed-control__button', type: 'button', 'data-action': 'set-speed', 'data-speed': String(speed), 'aria-pressed': String(runtime.speed === speed) }, `${RC.times}${speed}`))
+      group.append(el('button', { class: 'button speed-control__button', type: 'button', 'data-action': 'set-speed', 'data-speed': String(speed), 'data-testid': `speed-${speed}`, 'aria-pressed': String(runtime.speed === speed) }, `${RC.times}${speed}`))
     }
     container.replaceChildren(pause, group)
   }
@@ -342,9 +342,9 @@ export class SeriesView {
     const awayName = fighterName(state.opponents, result.opponentId)
     const winnerName = result.winnerSide === 'home' ? homeName : awayName
     const endedText = result.endedBy === 'defeat' ? 'by defeat' : 'on the time limit'
-    const resultLine = el('p', { class: 'interstitial__result', 'aria-live': 'polite' }, `Bout ${BOUT_NUMERALS[result.boutIndex]}: ${winnerName} wins ${endedText}.`)
+    const resultLine = el('p', { class: 'interstitial__result', 'aria-live': 'polite', 'data-testid': 'bout-result-summary' }, `Bout ${BOUT_NUMERALS[result.boutIndex]}: ${winnerName} wins ${endedText}.`)
     const scoreLine = el('p', { class: 'interstitial__score' }, `Series ${state.score.home}${RC.enDash}${state.score.away}`)
-    const nextLine = el('p', { class: 'interstitial__next' })
+    const nextLine = el('p', { class: 'interstitial__next', 'data-testid': 'next-matchup' })
     const nextBoutIndex = state.results.length as BoutIndex
     const nextOpponent = state.opponents[nextBoutIndex]
     const nextHomeId = state.assignments[nextBoutIndex]
@@ -359,9 +359,9 @@ export class SeriesView {
 
   private buildSummary(state: SeriesState): HTMLElement {
     const section = el('section', { class: 'summary', 'aria-labelledby': 'summary-heading' })
-    const heading = el('h2', { id: 'summary-heading', tabindex: '-1' }, 'Series over')
+    const heading = el('h2', { id: 'summary-heading', tabindex: '-1' }, 'School victory')
     const victory = state.score.home > state.score.away
-    const scoreLine = el('p', { class: 'summary__score', 'aria-live': 'polite' }, `${state.score.home}${RC.enDash}${state.score.away}`)
+    const scoreLine = el('p', { class: 'summary__score', 'aria-live': 'polite', 'data-testid': 'series-score' }, `${state.score.home}${RC.enDash}${state.score.away}`)
     const verdict = el('p', { class: 'summary__verdict', 'aria-live': 'polite' }, victory ? 'Victory for the House of Mars!' : 'Defeat for the House of Mars.')
     const list = el('ol', { class: 'summary__bouts' })
     for (const result of state.results) list.append(this.buildSummaryBout(state, result))
@@ -377,7 +377,7 @@ export class SeriesView {
     const homePercent = Math.round(result.remainingHpRatio.home * 100)
     const awayPercent = Math.round(result.remainingHpRatio.away * 100)
     const endedText = result.endedBy === 'defeat' ? 'by defeat' : 'on the time limit'
-    return el('li', { class: 'summary__bout' },
+    return el('li', { class: 'summary__bout', 'data-testid': 'bout-result' },
       `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} ${homeName} vs ${awayName}: ${winnerName} won ${endedText}. Home ${result.advantage}. Remaining: ${homeName} ${homePercent}%, ${awayName} ${awayPercent}%.`)
   }
 
