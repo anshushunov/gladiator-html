@@ -1,6 +1,6 @@
 # Gladiator School Series — MVP Design
 
-**Status:** revised after spec review; awaiting final confirmation
+**Status:** approved after spec review
 
 **Date:** 2026-08-15
 
@@ -99,7 +99,7 @@ Selecting **Rematch** returns to planning with the same home roster, opponent ro
 
 - Fighter cards and matchup slots are native buttons or expose equivalent button semantics.
 - The selected fighter uses `aria-pressed="true"`; assignment changes are described by a non-live instruction element referenced with `aria-describedby`.
-- After an assignment, focus moves to the next available home fighter; after the third assignment, focus moves to the confirm control.
+- After an assignment, focus moves to the first unassigned home fighter in roster DOM order; after the third assignment, focus moves to the confirm control.
 - Removing an assignment moves focus to the returned fighter card.
 - Entering `fighting`, `between-bouts`, `summary`, or returning to `planning` moves focus to that phase's heading, which is programmatically focusable with `tabindex="-1"`.
 - The battle feed uses `aria-live="off"`. Only the bout status, interstitial result, and final series result use `aria-live="polite"`, preventing attack-by-attack screen-reader chatter.
@@ -312,7 +312,7 @@ The runtime parses or creates the URL seed, creates the series, accepts user int
 - resets the per-bout event cursor to before event zero;
 - cancels all presentation-only reactions and timers;
 - restores both groups to their neutral pose;
-- applies the active fighters' colors and labels;
+- applies an archetype-derived palette to each side; fighter labels remain the responsibility of `SeriesView`;
 - synchronizes their initial positions and health.
 
 Entering planning or summary calls `clearBout()`, which resets presentation state and hides the canvas. Planning therefore has a stable HTML/CSS screenshot baseline and does not continuously render Three.js. During `between-bouts`, the arena remains visible in the completed bout's final pose under the interstitial.
