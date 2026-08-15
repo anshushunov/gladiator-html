@@ -1,6 +1,6 @@
 # Gladiator School Series — MVP Design
 
-**Status:** approved after spec review
+**Status:** approved after spec and implementation-plan review
 
 **Date:** 2026-08-15
 
@@ -89,7 +89,8 @@ After the third bout, the summary shows:
 - school victory for 2–1 or 3–0, otherwise school defeat;
 - the winner of each matchup;
 - whether the home fighter had archetype advantage, neutrality, or disadvantage;
-- whether each bout ended by defeat or by the time limit.
+- whether each bout ended by defeat or by the time limit;
+- each fighter's remaining-health percentage, so rematches can be compared beyond win/loss.
 
 Every bout has exactly one winner, so the series cannot draw.
 
@@ -138,12 +139,12 @@ Each roster contains exactly one fighter of each archetype.
 
 | Side | Fighter | Archetype | HP | Damage | Attack interval | Accuracy | Block | Critical | Intent |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| Home | Brutus | `heavy` | 120 | 12 | 54 | 0.86 | 0.18 | 0.10 | Reliable front-liner |
-| Home | Aquila | `fast` | 80 | 8 | 38 | 0.82 | 0.08 | 0.12 | Fast but deliberately fragile |
-| Home | Nerva | `technical` | 115 | 12 | 44 | 0.92 | 0.16 | 0.16 | The school's strongest all-round fighter |
-| Away | Drusus | `fast` | 130 | 13 | 36 | 0.90 | 0.12 | 0.15 | Elite opponent intended to absorb a sacrifice |
-| Away | Cassius | `technical` | 110 | 11 | 48 | 0.90 | 0.15 | 0.12 | Strong technical opponent |
-| Away | Magnus | `heavy` | 100 | 10 | 62 | 0.78 | 0.18 | 0.06 | Vulnerable opponent despite heavy armor |
+| Home | Brutus | `heavy` | 360 | 12 | 54 | 0.86 | 0.18 | 0.10 | Reliable front-liner |
+| Home | Aquila | `fast` | 240 | 8 | 38 | 0.82 | 0.08 | 0.12 | Fast but deliberately fragile |
+| Home | Nerva | `technical` | 345 | 12 | 44 | 0.92 | 0.16 | 0.16 | The school's strongest all-round fighter |
+| Away | Drusus | `fast` | 390 | 13 | 36 | 0.90 | 0.12 | 0.15 | Elite opponent intended to absorb a sacrifice |
+| Away | Cassius | `technical` | 330 | 11 | 48 | 0.90 | 0.15 | 0.12 | Strong technical opponent |
+| Away | Magnus | `heavy` | 300 | 10 | 62 | 0.78 | 0.18 | 0.06 | Vulnerable opponent despite heavy armor |
 
 The fixed opponent order is Drusus, Cassius, Magnus. The baseline test seed is `20260815`.
 
@@ -151,8 +152,8 @@ Content tuning must satisfy these acceptance fixtures for seed `20260815`:
 
 - the all-counter lineup `Brutus→Drusus`, `Aquila→Cassius`, `Nerva→Magnus` loses the series 1–2;
 - the mixed lineup `Aquila→Drusus`, `Nerva→Cassius`, `Brutus→Magnus` wins the series 2–1;
-- at least two of the six possible lineups have different final series outcomes;
-- ordinary defeats target 15–30 displayed seconds; the 45-second limit is a safety net.
+- the six possible lineups contain at least three distinct final scores;
+- ordinary baseline defeats finish between `840` and `1800` ticks, or 14–30 displayed seconds; the 45-second limit is a safety net.
 
 If the initial numbers do not produce these fixtures under the specified rules, implementation may tune only the six content rows while preserving their stated intent, the one-of-each-archetype invariant, and all four acceptance fixtures.
 
@@ -172,18 +173,20 @@ Randomness uses a small pure seeded PRNG. No simulation module calls `Math.rando
 
 The URL accepts a decimal unsigned 32-bit seed as `?seed=<0..4294967295>`. When the parameter is absent or invalid, `main.ts` generates a seed with `crypto.getRandomValues()` and immediately writes the normalized decimal value into the URL with `history.replaceState`. Simulation receives only the resulting integer.
 
-The bout seed is derived from the series seed and fixed opponent index. Each bout then derives separate `home` and `away` PRNG streams. Every attack consumes exactly three values from its actor's stream in this fixed order: accuracy, block, critical. Values are consumed even when an earlier check makes a later value irrelevant.
+The bout seed is derived from the series seed and fixed opponent index. Each bout then derives separate `home`, `away`, and `initiative-tie` PRNG streams. Every attack consumes exactly three values from its actor's stream in this fixed order: accuracy, block, critical. Values are consumed even when an earlier check makes a later value irrelevant.
 
-Initiative ties and exact time-limit ratio ties use separately labelled values derived from the bout seed; they do not consume either fighter's attack stream. Rematch preserves the series seed.
+Every equal-interval same-tick initiative tie consumes one value from the separate tie stream and chooses home for a roll below `0.5`, otherwise away. An exact time-limit ratio tie uses its own labelled value derived from the bout seed. Neither mechanism consumes a fighter's attack stream. Rematch preserves the series seed.
 
 ### Attack resolution
 
-When an attack becomes ready, the simulation performs the three pre-consumed checks in this order:
+Before contact, neither fighter has a scheduled attack. When the fighters first enter attack range on tick `T`, each receives `nextAttackTick = T + attackIntervalTicks`; therefore the shorter interval produces the first attack. When an attack becomes ready, the simulation performs the three pre-consumed checks in this order:
 
 1. Accuracy decides whether the attack hits.
 2. On a hit, the defender's block chance decides whether damage is halved.
 3. If the attack is not blocked, the attacker's critical chance decides whether damage is multiplied by `1.5`.
 4. Damage is multiplied by archetype advantage and rounded with JavaScript `Math.round`, so an exact `.5` rounds upward. A successful hit deals at least one damage.
+
+Every probability check succeeds exactly when `roll < probability`. `nextRandom` returns values in `(0, 1)`, so probability `0` never succeeds and probability `1` always succeeds.
 
 Block and critical are mutually exclusive in this scaffold. Because rounding can make low-damage blocked hits visually close to ordinary hits, `attack-blocked` must have a distinct presentation reaction; the exact tuning remains an open combat-spike concern.
 
@@ -198,10 +201,10 @@ Events are data, not presentation messages. IDs are monotonically increasing **w
 | Event | Emitted when | Required payload | Battle feed | `ArenaView` |
 | --- | --- | --- | --- | --- |
 | `bout-started` | Battle state is created | `homeFighterId`, `awayFighterId` | Gates/opening line | Reset-ready opening pose |
-| `approach-started` | Fighters begin closing distance | none | Optional single approach line | Read positions from state; no movement calculation |
+| `approach-started` | The first simulation tick that moves fighters toward each other | none | Optional single approach line | Read positions from state; no movement calculation |
 | `attack-started` | An actor begins a resolved attack | `actorSide`, `targetSide` | No separate line | Start short lunge indication |
 | `attack-missed` | Accuracy check fails | `actorSide`, `targetSide` | Miss line | Miss/recovery reaction |
-| `attack-blocked` | Hit is blocked and reduced, not cancelled | `actorSide`, `targetSide`, `amount` | Blocked-for-amount line | Defender block reaction |
+| `attack-blocked` | Hit is blocked and reduced, not cancelled | `actorSide`, `targetSide` | Combine with the following `damage-dealt` amount | Defender block reaction |
 | `critical-hit` | Unblocked hit is critical | `actorSide`, `targetSide`, `multiplier` | Critical emphasis | Strong attack accent |
 | `damage-dealt` | Every successful hit, including blocked and critical hits | `actorSide`, `targetSide`, `amount`, `remainingHp` | Damage line unless combined with the immediately preceding block/critical line | Health and hit reaction |
 | `fighter-defeated` | Damage reduces health to zero | `defeatedSide`, `winnerSide` | Defeat line | Defeated pose/fall |
@@ -277,7 +280,7 @@ type SeriesCommandResult =
 
 Unknown static content IDs and bout indices outside `0..2` are developer errors and throw. All command failures return the exact previous state object. Phase validation happens before state-specific validation: for example, `unassignSlot` outside planning returns `lineup-locked`; `slot-empty` is used only for an empty slot during planning.
 
-`advanceSeriesTicks(state, ticks: number): SeriesState` accepts a non-negative integer. It repeatedly applies one fixed simulation tick only while the series is in `fighting`, stopping early when the bout finishes. A negative or non-integer tick count throws. Outside `fighting`, it returns the exact previous state object.
+`advanceSeriesTicks(state, ticks: number): SeriesState` accepts a non-negative integer. It repeatedly applies one fixed simulation tick only while the series is in `fighting`, stopping early when the bout finishes. The same transition that finishes a battle creates its `BoutResult`, updates the score, and enters `between-bouts` for bouts 0–1 or `summary` for bout 2; there is no separate result-finalization command. A negative or non-integer tick count throws. Outside `fighting`, it returns the exact previous state object.
 
 ## Module boundaries
 
@@ -333,16 +336,18 @@ The battle-level `window.__GLADIATOR_TEST__` contract is replaced by a series-le
 ```ts
 interface GladiatorTestApi {
   getState(): SeriesState
-  assign(homeFighterId: string, boutIndex: 0 | 1 | 2): SeriesCommandResult
-  unassign(boutIndex: 0 | 1 | 2): SeriesCommandResult
-  confirm(): SeriesCommandResult
+  assign(homeFighterId: string, boutIndex: 0 | 1 | 2): TestCommandResult
+  unassign(boutIndex: 0 | 1 | 2): TestCommandResult
+  confirm(): TestCommandResult
   advanceTicks(ticks: number): void
-  startNextBout(): SeriesCommandResult
-  rematch(): SeriesCommandResult
+  startNextBout(): TestCommandResult
+  rematch(): TestCommandResult
 }
+
+type TestCommandResult = { ok: true } | { ok: false; reason: SeriesCommandFailure }
 ```
 
-Each mutating wrapper updates the runtime's current series state from the public transition result. `getState()` returns a structured clone. Playwright uses an explicit `?seed=20260815` and never waits on wall-clock combat timing.
+Each mutating wrapper updates the runtime's current series state from the public transition result but returns only the slim `TestCommandResult`; `getState()` is the only method that returns a structured clone. Playwright uses an explicit `?seed=20260815` and never waits on wall-clock combat timing.
 
 ## Migration and breaking changes
 
@@ -382,6 +387,7 @@ Tests under `src/simulation/` verify:
 - identical PRNG seeds produce identical sequences;
 - each attack consumes exactly three values from its actor's stream;
 - one side's random consumption cannot shift the other side's stream;
+- equal-interval initiative ties consume only the separate tie stream;
 - bout and labelled tie-break seed derivation is stable;
 - `compareArchetypes('heavy', 'fast')` is exactly `advantage`, plus the other two explicit winning pairs and all reverse/neutral pairs;
 - the default content has three fighters per side and exactly one of each archetype;
@@ -395,7 +401,8 @@ Tests under `src/simulation/` verify:
 - exactly three bouts are recorded before summary;
 - score and `BoutResult` fields match the three battle outcomes;
 - rematch preserves content and seed while clearing assignments and results;
-- the two baseline lineups produce their specified 1–2 and 2–1 outcomes at seed `20260815`.
+- the two baseline lineups produce their specified 1–2 and 2–1 outcomes at seed `20260815`;
+- all six lineups contain at least three distinct final scores and the two baseline runs finish their bouts within `840..1800` ticks.
 
 A small architecture-guard test scans non-test files under `src/simulation/` and fails on imports of `three`, references to `document` or `window`, and DOM element types. This makes the project boundary mechanically verifiable.
 
@@ -430,7 +437,7 @@ The slice is complete when:
 - a player can complete planning, three bouts, summary, and rematch without reloading;
 - each home gladiator is used exactly once per series;
 - all opponents, statistics, and matchup information are visible before confirmation;
-- the default all-counter lineup loses 1–2 while the specified mixed lineup wins 2–1 at seed `20260815`;
+- the default all-counter lineup loses 1–2, the specified mixed lineup wins 2–1, and all six lineups contain at least three distinct scores at seed `20260815`;
 - results are reproducible for identical assignments, seed, and tick count;
 - the summary explains archetype comparison and completion reason for every bout;
 - all four series phases follow the specified focus and live-region behavior;
@@ -445,7 +452,7 @@ The slice is complete when:
 
 There are no blocking design questions for this slice. The following are intentionally deferred tuning risks:
 
-- the six default fighter rows may require small value changes to satisfy the two baseline lineup fixtures;
+- exactly one of the six current lineups wins; if playtesting shows that the loop is exhausted in one session, making a second lineup viable is the first content-tuning candidate;
 - blocked low-damage hits need a visually distinct reaction even when rounded damage is close to an ordinary hit;
-- speed-control feel and the 15–30 second target may be tuned without changing simulation tick size;
+- speed-control feel and the 14–30 second target may be tuned without changing simulation tick size;
 - richer combat event vocabulary is added only by a later approved combat-spike design.

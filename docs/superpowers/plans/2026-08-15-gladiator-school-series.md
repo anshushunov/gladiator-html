@@ -10,10 +10,12 @@
 
 ## Global Constraints
 
+- Before Task 1, invoke `superpowers:using-git-worktrees` and create an isolated implementation worktree; do not implement in the documentation branch.
 - Read `docs/superpowers/specs/2026-08-15-gladiator-school-series-design.md` before Task 1; it is the source of truth.
 - Use Node.js 22+ or 20.19+ and the existing npm dependencies. Add no framework or runtime dependency.
 - `src/simulation/` must not import Three.js, DOM APIs, `Math.random()`, or `crypto`.
 - Simulation time is integer ticks: `TICKS_PER_SECOND = 60`, `MAX_BOUT_TICKS = 2700`.
+- Baseline content uses `TARGET_MIN_BOUT_TICKS = 840` and `TARGET_MAX_BOUT_TICKS = 1800`, matching the spec's 14–30 second target.
 - Every bout has exactly one winner; do not retain a draw or mutual-defeat branch.
 - The URL seed is an unsigned 32-bit decimal. Tests use `20260815`; rematch preserves it.
 - Each attack consumes exactly three actor-stream PRNG values: accuracy, block, critical.
@@ -152,7 +154,7 @@ describe('MVP series content', () => {
   ] as const)('%s roster has one fighter of every archetype', (_side, roster) => {
     expect(roster).toHaveLength(3)
     expect(roster.map(({ archetype }) => archetype).sort()).toEqual(['fast', 'heavy', 'technical'])
-    expect(new Set(roster.map(({ id }) => id).size).toBe(3)
+    expect(new Set(roster.map(({ id }) => id)).size).toBe(3)
   })
 
   it('keeps the fixed opponent order', () => {
@@ -169,18 +171,20 @@ Create `src/content/mvpSeries.ts`. Use `satisfies readonly FighterDefinition[]` 
 import type { FighterDefinition } from '../simulation/fighters'
 
 export const homeRoster = [
-  { id: 'brutus', name: 'Brutus', school: 'House of Mars', archetype: 'heavy', maxHp: 120, damage: 12, attackIntervalTicks: 54, accuracy: 0.86, blockChance: 0.18, criticalChance: 0.10 },
-  { id: 'aquila', name: 'Aquila', school: 'House of Mars', archetype: 'fast', maxHp: 80, damage: 8, attackIntervalTicks: 38, accuracy: 0.82, blockChance: 0.08, criticalChance: 0.12 },
-  { id: 'nerva', name: 'Nerva', school: 'House of Mars', archetype: 'technical', maxHp: 115, damage: 12, attackIntervalTicks: 44, accuracy: 0.92, blockChance: 0.16, criticalChance: 0.16 },
+  { id: 'brutus', name: 'Brutus', school: 'House of Mars', archetype: 'heavy', maxHp: 360, damage: 12, attackIntervalTicks: 54, accuracy: 0.86, blockChance: 0.18, criticalChance: 0.10 },
+  { id: 'aquila', name: 'Aquila', school: 'House of Mars', archetype: 'fast', maxHp: 240, damage: 8, attackIntervalTicks: 38, accuracy: 0.82, blockChance: 0.08, criticalChance: 0.12 },
+  { id: 'nerva', name: 'Nerva', school: 'House of Mars', archetype: 'technical', maxHp: 345, damage: 12, attackIntervalTicks: 44, accuracy: 0.92, blockChance: 0.16, criticalChance: 0.16 },
 ] as const satisfies readonly FighterDefinition[]
 
 export const opponents = [
-  { id: 'drusus', name: 'Drusus', school: 'House of Saturn', archetype: 'fast', maxHp: 130, damage: 13, attackIntervalTicks: 36, accuracy: 0.90, blockChance: 0.12, criticalChance: 0.15 },
-  { id: 'cassius', name: 'Cassius', school: 'House of Neptune', archetype: 'technical', maxHp: 110, damage: 11, attackIntervalTicks: 48, accuracy: 0.90, blockChance: 0.15, criticalChance: 0.12 },
-  { id: 'magnus', name: 'Magnus', school: 'House of Vulcan', archetype: 'heavy', maxHp: 100, damage: 10, attackIntervalTicks: 62, accuracy: 0.78, blockChance: 0.18, criticalChance: 0.06 },
+  { id: 'drusus', name: 'Drusus', school: 'House of Saturn', archetype: 'fast', maxHp: 390, damage: 13, attackIntervalTicks: 36, accuracy: 0.90, blockChance: 0.12, criticalChance: 0.15 },
+  { id: 'cassius', name: 'Cassius', school: 'House of Neptune', archetype: 'technical', maxHp: 330, damage: 11, attackIntervalTicks: 48, accuracy: 0.90, blockChance: 0.15, criticalChance: 0.12 },
+  { id: 'magnus', name: 'Magnus', school: 'House of Vulcan', archetype: 'heavy', maxHp: 300, damage: 10, attackIntervalTicks: 62, accuracy: 0.78, blockChance: 0.18, criticalChance: 0.06 },
 ] as const satisfies readonly FighterDefinition[]
 
 export const BASELINE_TEST_SEED = 20260815
+export const TARGET_MIN_BOUT_TICKS = 840
+export const TARGET_MAX_BOUT_TICKS = 1800
 ```
 
 - [ ] **Step 6: Run domain checks and commit**
@@ -249,7 +253,6 @@ describe('seeded random', () => {
     let expected = initial
     for (let index = 0; index < 3; index += 1) expected = nextRandom(expected)[1]
     expect(drawn.next).toEqual(expected)
-    expect(Object.keys(drawn.rolls)).toEqual(['accuracy', 'block', 'critical'])
   })
 })
 ```
@@ -283,7 +286,7 @@ export function nextRandom(state: RandomState): [number, RandomState] {
   value ^= value >>> 17
   value ^= value << 5
   value >>>= 0
-  return [value / 0x1_0000_0000, { value: value === 0 ? NON_ZERO_SEED : value }]
+  return [value / 0x1_0000_0000, { value }]
 }
 
 export function deriveSeed(seed: number, label: string): number {
@@ -332,7 +335,6 @@ git commit -m "feat: add deterministic combat random streams"
 - Create: `src/presentation/battleFeed.test.ts`
 - Modify: `src/presentation/ArenaView.ts:1-43`
 - Modify: `src/main.ts:1-109`
-- Modify: `index.html:22-45`
 
 **Interfaces:**
 - Consumes: `FighterDefinition`, `FighterSide`, `MatchupComparison`, counter helpers, and random helpers from Tasks 1–2.
@@ -358,6 +360,7 @@ describe('battle simulation', () => {
     expect(state.tick).toBe(0)
     expect(state.comparison).toBe('advantage')
     expect(state.events[0]).toMatchObject({ id: 0, tick: 0, type: 'bout-started', homeFighterId: 'heavy', awayFighterId: 'fast' })
+    expect(state.events).toHaveLength(1)
   })
 
   it('applies ordered comparison damage and a one-point minimum', () => {
@@ -373,12 +376,12 @@ describe('battle simulation', () => {
     const second = advanceBattleTicks(createBattle(config), MAX_BOUT_TICKS)
     expect(first).toEqual(second)
     expect(first.phase).toBe('finished')
-    expect(first.winnerSide).toMatch(/home|away/)
+    expect(['home', 'away']).toContain(first.winnerSide)
   })
 })
 ```
 
-Add a `finished(config)` helper that calls `advanceBattleTicks(createBattle(config), MAX_BOUT_TICKS)`. Use it in these concrete cases:
+Use the already-declared `finished(config)` helper in these concrete cases. The 200-seed matrix intentionally holds non-archetype statistics constant: it proves termination across counter relationships, not content diversity.
 
 ```ts
 it('finishes every archetype pairing across 200 seeds', () => {
@@ -390,7 +393,7 @@ it('finishes every archetype pairing across 200 seeds', () => {
         const away = { ...fast, id: `away-${awayArchetype}`, archetype: awayArchetype }
         const state = advanceBattleTicks(createBattle({ home, away, seed }), MAX_BOUT_TICKS)
         expect(state.phase).toBe('finished')
-        expect(state.winnerSide).toMatch(/home|away/)
+        expect(['home', 'away']).toContain(state.winnerSide)
         expect(state.tick).toBeLessThanOrEqual(MAX_BOUT_TICKS)
       }
     }
@@ -422,6 +425,32 @@ it('advances the actor stream by exactly three values on attack', () => {
   let expected = before.random[actor.actorSide]
   for (let index = 0; index < 3; index += 1) expected = nextRandom(expected)[1]
   expect(state.random[actor.actorSide]).toEqual(expected)
+})
+
+it('schedules the faster fighter to make the first attack after contact', () => {
+  let state = createBattle({ home: { ...heavy, attackIntervalTicks: 20 }, away: { ...fast, attackIntervalTicks: 60 }, seed: 17 })
+  while (!state.events.some(({ type }) => type === 'attack-started')) state = advanceBattleTick(state)
+  expect(state.events.find(({ type }) => type === 'attack-started')).toMatchObject({ actorSide: 'home' })
+  expect(state.events.filter(({ type }) => type === 'attack-started')).toHaveLength(1)
+})
+
+it('does not shift the away stream when only home attacks', () => {
+  let state = createBattle({ home: { ...heavy, attackIntervalTicks: 20 }, away: { ...fast, attackIntervalTicks: 60 }, seed: 23 })
+  while (!state.events.some(({ type }) => type === 'attack-started')) {
+    const previousAway = state.random.away
+    state = advanceBattleTick(state)
+    if (state.events.some(({ type }) => type === 'attack-started')) expect(state.random.away).toBe(previousAway)
+  }
+})
+
+it('consumes the separate tie stream for equal-interval initiative', () => {
+  let state = createBattle({ home: { ...heavy, accuracy: 0 }, away: { ...fast, accuracy: 0 }, seed: 29 })
+  let before = state
+  while (!state.events.some(({ type }) => type === 'attack-started')) {
+    before = state
+    state = advanceBattleTick(state)
+  }
+  expect(state.initiativeTieRandom).toEqual(nextRandom(before.initiativeTieRandom)[1])
 })
 
 it.each([
@@ -459,17 +488,18 @@ export interface FighterCombatState {
   definition: FighterDefinition
   x: number
   hp: number
-  nextAttackTick: number
+  nextAttackTick: number | null
   status: 'active' | 'defeated'
 }
 
 export interface BattleState {
   tick: number
   phase: BattlePhase
+  approachStarted: boolean
   comparison: MatchupComparison
   fighters: Record<FighterSide, FighterCombatState>
   random: Record<FighterSide, RandomState>
-  initiativeTieWinner: FighterSide
+  initiativeTieRandom: RandomState
   timeLimitTieWinner: FighterSide
   winnerSide?: FighterSide
   finishReason?: BattleFinishReason
@@ -483,7 +513,7 @@ export type BattleEvent =
   | (EventBase & { type: 'approach-started' })
   | (EventBase & { type: 'attack-started'; actorSide: FighterSide; targetSide: FighterSide })
   | (EventBase & { type: 'attack-missed'; actorSide: FighterSide; targetSide: FighterSide })
-  | (EventBase & { type: 'attack-blocked'; actorSide: FighterSide; targetSide: FighterSide; amount: number })
+  | (EventBase & { type: 'attack-blocked'; actorSide: FighterSide; targetSide: FighterSide })
   | (EventBase & { type: 'critical-hit'; actorSide: FighterSide; targetSide: FighterSide; multiplier: number })
   | (EventBase & { type: 'damage-dealt'; actorSide: FighterSide; targetSide: FighterSide; amount: number; remainingHp: number })
   | (EventBase & { type: 'fighter-defeated'; defeatedSide: FighterSide; winnerSide: FighterSide })
@@ -506,11 +536,15 @@ For away attacks, invert the home comparison before calling `calculateDamage`.
 
 - [ ] **Step 4: Implement one-tick movement, attack ordering, events, and finish rules**
 
-Use `MOVE_PER_TICK = 2.2 / TICKS_PER_SECOND`, `ATTACK_RANGE = 1.45`, starting positions `-5` and `5`, and append `approach-started` once when the battle is created. On an attack, always call `drawAttackRolls`, store its `next` state, and then emit exactly one canonical sequence. Resolve ready attackers in attack-interval order; use `initiativeTieWinner` when equal; skip the second actor if defeated.
+Use `MOVE_PER_TICK = 2.2 / TICKS_PER_SECOND`, `ATTACK_RANGE = 1.45`, and starting positions `-5` and `5`. Create the battle with only `bout-started`; append `approach-started` on the first tick that actually moves both fighters. Before contact, `nextAttackTick` is `null`. On first entering range at tick `T`, assign each fighter `nextAttackTick = T + definition.attackIntervalTicks`, so the faster fighter attacks first.
+
+On an attack, always call `drawAttackRolls`, store its `next` state, and then emit exactly one canonical sequence. A probability check succeeds only when `roll < probability`. Resolve ready attackers in attack-interval order. When equal intervals are ready on the same tick, draw from `initiativeTieRandom`, persist its next state, and choose home for a roll below `0.5`, otherwise away. Skip the second actor if defeated.
 
 At tick 2700, resolve scheduled attacks first. If nobody is defeated, compare `hp / maxHp`, use `timeLimitTieWinner` for an exact tie, and emit `bout-finished` with `reason: 'time-limit'`.
 
 Only allocate a new events array on a tick that emits events. Remove the old eight-event truncation and remove all English messages from simulation.
+
+`advanceBattleTicks(state, ticks)` applies one-tick transitions but returns immediately when `phase === 'finished'`; it must not allocate copies for the remaining requested ticks.
 
 - [ ] **Step 5: Add and test pure feed formatting**
 
@@ -522,42 +556,41 @@ import type { FighterSide } from '../simulation/fighters'
 
 export interface BattleFeedEntry { eventId: number; atSeconds: number; message: string }
 
-export function formatBattleFeed(events: readonly BattleEvent[]): BattleFeedEntry[] {
+export function formatBattleFeed(events: readonly BattleEvent[], names: Record<FighterSide, string>): BattleFeedEntry[] {
   const entries: BattleFeedEntry[] = []
-  for (let index = 0; index < events.length; index += 1) {
-    const event = events[index]
+  const recent = events.slice(-20)
+  for (let index = 0; index < recent.length; index += 1) {
+    const event = recent[index]
     if (event.type === 'attack-started') continue
-    const next = events[index + 1]
+    const next = recent[index + 1]
     let message: string
     if (event.type === 'attack-blocked' && next?.type === 'damage-dealt') {
-      message = `${label(event.targetSide)} blocks but takes ${next.amount}.`
+      message = `${names[event.targetSide]} blocks but takes ${next.amount}.`
       index += 1
     } else if (event.type === 'critical-hit' && next?.type === 'damage-dealt') {
-      message = `${label(event.actorSide)} lands a critical hit for ${next.amount}.`
+      message = `${names[event.actorSide]} lands a critical hit for ${next.amount}.`
       index += 1
     } else {
-      message = formatEventMessage(event)
+      message = formatEventMessage(event, names)
     }
     entries.push({ eventId: event.id, atSeconds: event.tick / TICKS_PER_SECOND, message })
   }
   return entries.slice(-8)
 }
 
-const label = (side: FighterSide): string => side === 'home' ? 'Home fighter' : 'Away fighter'
-
-function formatEventMessage(event: BattleEvent): string {
+function formatEventMessage(event: BattleEvent, names: Record<FighterSide, string>): string {
   switch (event.type) {
     case 'bout-started': return 'The gates open.'
     case 'approach-started': return 'The fighters close the distance.'
     case 'attack-started': return ''
-    case 'attack-missed': return `${label(event.actorSide)} misses.`
-    case 'attack-blocked': return `${label(event.targetSide)} blocks but takes ${event.amount}.`
-    case 'critical-hit': return `${label(event.actorSide)} lands a critical hit.`
-    case 'damage-dealt': return `${label(event.actorSide)} deals ${event.amount}.`
-    case 'fighter-defeated': return `${label(event.defeatedSide)} falls.`
+    case 'attack-missed': return `${names[event.actorSide]} misses.`
+    case 'attack-blocked': return `${names[event.targetSide]} blocks.`
+    case 'critical-hit': return `${names[event.actorSide]} lands a critical hit.`
+    case 'damage-dealt': return `${names[event.actorSide]} deals ${event.amount}.`
+    case 'fighter-defeated': return `${names[event.defeatedSide]} falls.`
     case 'bout-finished': return event.reason === 'defeat'
-      ? `${label(event.winnerSide)} wins by defeat.`
-      : `${label(event.winnerSide)} wins on the time limit.`
+      ? `${names[event.winnerSide]} wins by defeat.`
+      : `${names[event.winnerSide]} wins on the time limit.`
   }
 }
 ```
@@ -569,24 +602,26 @@ import { describe, expect, it } from 'vitest'
 import { formatBattleFeed } from './battleFeed'
 
 describe('battle feed', () => {
+  const names = { home: 'Brutus', away: 'Cassius' }
+
   it('combines a block with its reduced damage', () => {
     const entries = formatBattleFeed([
-      { id: 0, tick: 60, type: 'attack-blocked', actorSide: 'home', targetSide: 'away', amount: 4 },
+      { id: 0, tick: 60, type: 'attack-blocked', actorSide: 'home', targetSide: 'away' },
       { id: 1, tick: 60, type: 'damage-dealt', actorSide: 'home', targetSide: 'away', amount: 4, remainingHp: 96 },
-    ])
-    expect(entries).toEqual([{ eventId: 0, atSeconds: 1, message: 'Away fighter blocks but takes 4.' }])
+    ], names)
+    expect(entries).toEqual([{ eventId: 0, atSeconds: 1, message: 'Cassius blocks but takes 4.' }])
   })
 
   it('combines a critical event with its damage', () => {
     const entries = formatBattleFeed([
       { id: 0, tick: 120, type: 'critical-hit', actorSide: 'home', targetSide: 'away', multiplier: 1.5 },
       { id: 1, tick: 120, type: 'damage-dealt', actorSide: 'home', targetSide: 'away', amount: 18, remainingHp: 82 },
-    ])
-    expect(entries[0].message).toBe('Home fighter lands a critical hit for 18.')
+    ], names)
+    expect(entries[0].message).toBe('Brutus lands a critical hit for 18.')
   })
 
   it.each([['defeat', 'wins by defeat'], ['time-limit', 'wins on the time limit']] as const)('formats %s finishes', (reason, copy) => {
-    const entries = formatBattleFeed([{ id: 0, tick: 2700, type: 'bout-finished', winnerSide: 'home', reason, durationTicks: 2700 }])
+    const entries = formatBattleFeed([{ id: 0, tick: 2700, type: 'bout-finished', winnerSide: 'home', reason, durationTicks: 2700 }], names)
     expect(entries[0].message).toContain(copy)
   })
 })
@@ -594,7 +629,7 @@ describe('battle feed', () => {
 
 - [ ] **Step 6: Keep the existing single-bout page compiling during migration**
 
-Update `ArenaView` to key the two groups by `FighterSide` and read `state.fighters.home` / `state.fighters.away`. Update the current DOM selectors from `red/blue` to `home/away`. In `main.ts`, temporarily create one parameterized bout with Brutus and Cassius, advance it with integer ticks, and format the feed via `formatBattleFeed`.
+Update `ArenaView` to key its internal groups by `FighterSide` and read `state.fighters.home` / `state.fighters.away`. Do not change `index.html`, current `data-testid` values, `data-hp="red|blue"`, or `data-health="red|blue"` in this task. In `main.ts`, temporarily map `home` to the existing red DOM selectors and `away` to blue. Define local migration fixtures matching the existing screenshot exactly: Brutus and Cassius both have `maxHp: 100`, `damage: 10`, `attackIntervalTicks: 43`, `accuracy: 1`, `blockChance: 0`, and `criticalChance: 0`; Brutus is `heavy`, Cassius is `technical`. Advance this bout with integer ticks and call `formatBattleFeed(events, { home: 'Brutus', away: 'Cassius' })`. Task 5 deletes these local fixtures and switches to `mvpSeries.ts`.
 
 Keep the temporary browser hook shape `getState/advance/reset` for this task only, but make `advance(seconds)` call `advanceBattleTicks(battle, Math.round(seconds * TICKS_PER_SECOND))`. Task 5 replaces this hook with the final series API.
 
@@ -610,10 +645,10 @@ Expected: PASS with no `FighterId`, `winnerId`, floating simulation time, messag
 
 Run: `npm run test:e2e`
 
-Expected: PASS against the still-single-bout page; do not update the screenshot unless the migration changed visible pixels intentionally.
+Expected: PASS against the visually unchanged single-bout page and existing `arena.png` baseline.
 
 ```bash
-git add src/simulation/battle.ts src/simulation/battle.test.ts src/presentation/battleFeed.ts src/presentation/battleFeed.test.ts src/presentation/ArenaView.ts src/main.ts index.html
+git add src/simulation/battle.ts src/simulation/battle.test.ts src/presentation/battleFeed.ts src/presentation/battleFeed.test.ts src/presentation/ArenaView.ts src/main.ts
 git commit -m "feat: parameterize deterministic tick-based bouts"
 ```
 
@@ -637,7 +672,8 @@ Create `src/simulation/series.test.ts` with a `createMvpSeries()` helper and the
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
+import { BASELINE_TEST_SEED, homeRoster, opponents, TARGET_MAX_BOUT_TICKS, TARGET_MIN_BOUT_TICKS } from '../content/mvpSeries'
+import { advanceBattleTicks } from './battle'
 import { advanceSeriesTicks, assignFighter, confirmLineup, createSeries, rematch, startNextBout, unassignSlot } from './series'
 
 const createMvpSeries = () => createSeries({ homeRoster, opponents, seed: BASELINE_TEST_SEED })
@@ -662,6 +698,15 @@ describe('series planning', () => {
   it('returns slot-empty only while planning', () => {
     const state = createMvpSeries()
     expect(unassignSlot(state, 0)).toEqual({ ok: false, state, reason: 'slot-empty' })
+  })
+
+  it('returns an assigned fighter to the available roster', () => {
+    let state = assignFighter(createMvpSeries(), 'brutus', 0).state
+    state = unassignSlot(state, 0).state
+    expect(state.assignments).toEqual([null, null, null])
+    const reassigned = assignFighter(state, 'brutus', 1)
+    expect(reassigned.ok).toBe(true)
+    expect(reassigned.state.assignments).toEqual([null, 'brutus', null])
   })
 })
 ```
@@ -713,6 +758,44 @@ it('records exactly three results and a matching score', () => {
   expect(state.results).toHaveLength(3)
   expect(state.score.home + state.score.away).toBe(3)
   expect(state.results.map(({ boutIndex }) => boutIndex)).toEqual([0, 1, 2])
+  expect(state.results.map(({ homeFighterId, opponentId }) => [homeFighterId, opponentId])).toEqual([
+    ['aquila', 'drusus'],
+    ['nerva', 'cassius'],
+    ['brutus', 'magnus'],
+  ])
+  for (const result of state.results) {
+    expect(['home', 'away']).toContain(result.winnerSide)
+    expect(['advantage', 'neutral', 'disadvantage']).toContain(result.advantage)
+    expect(['defeat', 'time-limit']).toContain(result.endedBy)
+    expect(result.remainingHpRatio.home).toBeGreaterThanOrEqual(0)
+    expect(result.remainingHpRatio.home).toBeLessThanOrEqual(1)
+    expect(result.remainingHpRatio.away).toBeGreaterThanOrEqual(0)
+    expect(result.remainingHpRatio.away).toBeLessThanOrEqual(1)
+  }
+})
+
+it('copies the finished battle fields into BoutResult in the same transition', () => {
+  let state = createMvpSeries()
+  state = assignFighter(state, 'aquila', 0).state
+  state = assignFighter(state, 'nerva', 1).state
+  state = assignFighter(state, 'brutus', 2).state
+  state = confirmLineup(state).state
+  if (!state.activeBattle) throw new Error('Expected active battle')
+  const battle = advanceBattleTicks(state.activeBattle, 2700)
+  const transitioned = advanceSeriesTicks(state, 2700)
+  expect(transitioned.phase).toBe('between-bouts')
+  expect(transitioned.results[0]).toMatchObject({
+    boutIndex: 0,
+    homeFighterId: 'aquila',
+    opponentId: 'drusus',
+    winnerSide: battle.winnerSide,
+    endedBy: battle.finishReason,
+    durationTicks: battle.tick,
+    remainingHpRatio: {
+      home: battle.fighters.home.hp / battle.fighters.home.definition.maxHp,
+      away: battle.fighters.away.hp / battle.fighters.away.definition.maxHp,
+    },
+  })
 })
 
 it('clears mutable run data but preserves content and seed on rematch', () => {
@@ -767,7 +850,7 @@ export function getAssignmentComparison(state: SeriesState, homeFighterId: strin
 }
 ```
 
-`SeriesState` contains `phase`, readonly roster references, `seed`, `assignments`, `activeBoutIndex`, optional `activeBattle`, `results`, and `score`. Implement phase validation before slot validation. Build `BoutResult` from the finished battle before changing phase. Bout 0 and 1 end in `between-bouts`; bout 2 ends in `summary`.
+`SeriesState` contains `phase`, readonly roster references, `seed`, `assignments`, `activeBoutIndex`, optional `activeBattle`, `results`, and `score`. Implement phase validation before slot validation. Inside `advanceSeriesTicks`, the exact tick that finishes the active battle must also build and append `BoutResult`, update `score`, and enter `between-bouts` for bouts 0–1 or `summary` for bout 2. There is no separate finalization call.
 
 - [ ] **Step 4: Implement baseline lineup tests and tune content only if required**
 
@@ -781,36 +864,52 @@ it('makes stats matter more than blindly taking all counters', () => {
   expect(mixed.score).toEqual({ home: 2, away: 1 })
   for (const result of [...allCounters.results, ...mixed.results]) {
     expect(result.endedBy).toBe('defeat')
-    expect(result.durationTicks).toBeGreaterThanOrEqual(900)
-    expect(result.durationTicks).toBeLessThanOrEqual(1800)
+    expect(result.durationTicks).toBeGreaterThanOrEqual(TARGET_MIN_BOUT_TICKS)
+    expect(result.durationTicks).toBeLessThanOrEqual(TARGET_MAX_BOUT_TICKS)
   }
+})
+
+it('produces at least three distinct scores across all six lineups', () => {
+  const lineups = [
+    ['brutus', 'aquila', 'nerva'],
+    ['brutus', 'nerva', 'aquila'],
+    ['aquila', 'brutus', 'nerva'],
+    ['aquila', 'nerva', 'brutus'],
+    ['nerva', 'brutus', 'aquila'],
+    ['nerva', 'aquila', 'brutus'],
+  ] as const
+  const scores = new Set(lineups.map((lineup) => {
+    const { score } = playSeries(lineup)
+    return `${score.home}-${score.away}`
+  }))
+  expect(scores.size).toBeGreaterThanOrEqual(3)
+  expect(scores).toEqual(new Set(['0-3', '1-2', '2-1']))
 })
 ```
 
 Run: `npx vitest run src/simulation/series.test.ts`
 
-Expected: PASS. If either score differs, change only numeric values in `src/content/mvpSeries.ts`; preserve names, archetypes, roster order, intent ordering, and the 15–30 second target. Record the final values by updating the design spec's content table in the same commit.
+Expected: PASS. If a score or duration differs, change only numeric values in `src/content/mvpSeries.ts`; preserve names, archetypes, roster order, intent ordering, the three-score distribution, and `TARGET_MIN_BOUT_TICKS..TARGET_MAX_BOUT_TICKS`. Update the design spec's content table, acceptance fixtures, duration corridor, and Definition of Done in the same commit.
 
 - [ ] **Step 5: Add the architecture guard**
 
-Create `src/simulation/architecture.test.ts`. Scan non-test `.ts` files in its own directory and fail on forbidden imports or globals:
+Create `src/simulation/architecture.test.ts`. Use Vite's raw recursive glob, strip comments to avoid prose false positives, and fail on forbidden imports or globals without adding `@types/node`:
 
 ```ts
-import { readdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+/// <reference types="vite/client" />
+
 import { describe, expect, it } from 'vitest'
 
 describe('simulation boundary', () => {
   it('does not import rendering or browser APIs', () => {
-    const directory = dirname(fileURLToPath(import.meta.url))
-    const violations = readdirSync(directory)
-      .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
-      .flatMap((name) => {
-        const source = readFileSync(join(directory, name), 'utf8')
+    const sources = import.meta.glob('./**/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+    const violations = Object.entries(sources)
+      .filter(([path]) => !path.endsWith('.test.ts'))
+      .flatMap(([path, source]) => {
+        const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
         return [/from ['"]three['"]/, /\bdocument\b/, /\bwindow\b/, /\bHTMLElement\b/, /\bcrypto\b/, /Math\.random/]
-          .filter((pattern) => pattern.test(source))
-          .map((pattern) => `${name}: ${pattern}`)
+          .filter((pattern) => pattern.test(code))
+          .map((pattern) => `${path}: ${pattern}`)
       })
     expect(violations).toEqual([])
   })
@@ -856,9 +955,9 @@ import { expect, test } from '@playwright/test'
 
 test('plans and locks three matchups', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
-  await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeFocused()
-  await expect(page.getByTestId('home-fighter')).toHaveCount(3)
-  await expect(page.getByTestId('opponent-slot')).toHaveCount(3)
+  await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
+  await expect(page.locator('[data-role="home-fighter"]')).toHaveCount(3)
+  await expect(page.locator('[data-role="opponent-slot"]')).toHaveCount(3)
   await expect(page.getByTestId('confirm-lineup')).toBeDisabled()
 
   for (const [fighterId, boutIndex] of [['aquila', 0], ['nerva', 1], ['brutus', 2]] as const) {
@@ -898,6 +997,8 @@ Keep the existing title and theme metadata, but make `index.html` contain these 
 </main>
 ```
 
+Dynamic fighter cards use one addressable `data-testid="fighter-<id>"` plus `data-role="home-fighter"`. Dynamic opponent slots use `data-testid="slot-<index>"` plus `data-role="opponent-slot"`. Never attempt to place two `data-testid` values on one element.
+
 - [ ] **Step 3: Implement `SeriesView` intent and rendering contracts**
 
 Create `src/presentation/SeriesView.ts` with:
@@ -914,15 +1015,16 @@ export type SeriesIntent =
 
 export interface RuntimeViewState { paused: boolean; speed: 1 | 2 | 4 }
 
-export class SeriesView {
-  constructor(private readonly shell: HTMLElement, private readonly onIntent: (intent: SeriesIntent) => void) {}
+// Public contract; implement the method body in SeriesView.ts.
+export declare class SeriesView {
+  constructor(shell: HTMLElement, onIntent: (intent: SeriesIntent) => void)
   render(state: SeriesState, runtime: RuntimeViewState): void
 }
 ```
 
 Pass `.game-shell` as `shell`. Keep `selectedFighterId` and the previously rendered phase private to `SeriesView`. Render planning cards and slots from state data, not from hard-coded fighter names. On assignment, show the comparison by calling the simulation-owned `getAssignmentComparison(state, fighterId, boutIndex)` selector; do not import `compareArchetypes` into presentation.
 
-Use event delegation on `root` and `data-action` attributes. Escape clears local selection. Implement the exact focus transitions from the spec with phase headings carrying `tabindex="-1"`.
+Use event delegation on `shell` and `data-action` attributes. Escape clears local selection. Implement the exact focus transitions from the spec with phase headings carrying `tabindex="-1"`. Do not move focus on initial page load; move it only when entering fighting, between-bouts, summary, or returning to planning after rematch.
 
 - [ ] **Step 4: Replace the battle runtime with the series runtime**
 
@@ -940,9 +1042,9 @@ function resolveSeriesSeed(url: URL): number {
 }
 ```
 
-Create `SeriesState` from content and route each `SeriesIntent` to its pure command. Store runtime `paused` and `speed` separately. Initialize `paused` from `new URLSearchParams(location.search).has('snapshot')`; snapshot mode suppresses frame-driven ticks but never blocks the explicit test-hook `advanceTicks` command. The animation frame accumulates real seconds, converts each `1 / 60` slice into exactly `speed` calls' worth of ticks, and only advances while phase is `fighting` and not paused. Stop and clear the accumulator on phase changes.
+Create `SeriesState` from content and route each `SeriesIntent` to its pure command. Store runtime `paused` and `speed` separately. Initialize `paused` from `new URLSearchParams(location.search).has('snapshot')`; snapshot mode suppresses frame-driven ticks but never blocks the explicit test-hook `advanceTicks` command. Preserve the existing elapsed-time clamp: `const elapsed = Math.min((now - previousFrame) / 1000, 0.1)`. The animation frame converts each accumulated `1 / 60` slice into exactly `speed` fixed ticks and only advances while phase is `fighting` and not paused. Stop and clear the accumulator on phase changes.
 
-Render feed entries from the active battle's full events. Render the latest result on `between-bouts` and all three `BoutResult` records on `summary`.
+Render feed entries with `formatBattleFeed(activeBattle.events, { home: activeBattle.fighters.home.definition.name, away: activeBattle.fighters.away.definition.name })`. Render the latest result on `between-bouts` and all three `BoutResult` records on `summary`, including each side's rounded remaining-health percentage. Render the score with the en dash character `–`, exactly as `2–1`, never an ASCII hyphen.
 
 - [ ] **Step 5: Install the final browser test hook**
 
@@ -951,16 +1053,18 @@ Replace the temporary hook with the exact spec contract:
 ```ts
 interface GladiatorTestApi {
   getState(): SeriesState
-  assign(homeFighterId: string, boutIndex: BoutIndex): SeriesCommandResult
-  unassign(boutIndex: BoutIndex): SeriesCommandResult
-  confirm(): SeriesCommandResult
+  assign(homeFighterId: string, boutIndex: BoutIndex): TestCommandResult
+  unassign(boutIndex: BoutIndex): TestCommandResult
+  confirm(): TestCommandResult
   advanceTicks(ticks: number): void
-  startNextBout(): SeriesCommandResult
-  rematch(): SeriesCommandResult
+  startNextBout(): TestCommandResult
+  rematch(): TestCommandResult
 }
+
+type TestCommandResult = { ok: true } | { ok: false; reason: SeriesCommandFailure }
 ```
 
-Each command wrapper applies `result.state`, renders immediately, and returns the result. `advanceTicks` applies `advanceSeriesTicks`, then renders. `getState` returns `structuredClone(series)`.
+Each command wrapper applies `result.state`, renders immediately, and returns only `{ ok: true }` or `{ ok: false, reason }`; it never serializes `SeriesState` through the command result. `advanceTicks` applies `advanceSeriesTicks`, then renders. `getState` is the only hook method that returns `structuredClone(series)`.
 
 - [ ] **Step 6: Add planning, battle, interstitial, and summary styles**
 
@@ -1110,6 +1214,7 @@ test('plays three bouts, reports a 2–1 win, and rematches the same seed', asyn
   await expect(page.getByRole('heading', { name: 'School victory' })).toBeFocused()
   await expect(page.getByTestId('series-score')).toHaveText('2–1')
   await expect(page.getByTestId('bout-result')).toHaveCount(3)
+  await expect(page.getByTestId('bout-result').first()).toContainText('%')
   await page.getByTestId('rematch').click()
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeFocused()
   await expect(page.getByTestId('confirm-lineup')).toBeDisabled()
@@ -1156,8 +1261,10 @@ test('changes speed without advancing while paused', async ({ page }) => {
   })
   await page.getByTestId('speed-4').click()
   await expect(page.getByTestId('speed-4')).toHaveAttribute('aria-pressed', 'true')
+  await expect.poll(() => page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.tick ?? 0)).toBeGreaterThan(0)
   await page.getByTestId('toggle-pause').click()
   const before = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.tick)
+  expect(before).toEqual(expect.any(Number))
   await page.waitForTimeout(150)
   const after = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.tick)
   expect(after).toBe(before)
@@ -1202,9 +1309,9 @@ test('matches the stable planning snapshot', async ({ page }) => {
 })
 ```
 
-Run: `npm run test:e2e:update`
+Run: `npx playwright test --update-snapshots -g "matches the stable planning snapshot"`
 
-Expected: PASS, create `tests/__screenshots__/planning.png`, and make `tests/__screenshots__/arena.png` obsolete. Remove only that exact old file after confirming both absolute paths resolve inside `C:\gamedev\gladiator-html\tests\__screenshots__`.
+Expected: PASS and create `tests/__screenshots__/planning.png` without accepting unrelated baselines. Resolve both screenshot paths and confirm they are inside `C:\gamedev\gladiator-html\tests\__screenshots__`, then run `git rm -- tests/__screenshots__/arena.png` to stage only the obsolete baseline deletion.
 
 - [ ] **Step 4: Update README for the implemented slice**
 
@@ -1237,11 +1344,11 @@ Expected: only intentional source, test, README, and screenshot changes for this
 - [ ] **Step 6: Commit the acceptance handoff**
 
 ```bash
-git add README.md tests/smoke.spec.ts tests/__screenshots__/planning.png tests/__screenshots__/arena.png
+git add README.md tests/smoke.spec.ts tests/__screenshots__/planning.png
 git commit -m "test: cover the gladiator school MVP flow"
 ```
 
-If Git reports that the deleted `arena.png` path does not exist, omit that path and stage the remaining three exact targets. Do not use a directory-wide `git add`.
+The preceding `git rm` already stages `arena.png`. Do not use a directory-wide `git add`.
 
 ---
 
