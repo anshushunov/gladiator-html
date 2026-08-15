@@ -43,6 +43,7 @@ let series: SeriesState = createSeries({ homeRoster, opponents, seed })
 const runtime: RuntimeViewState = { paused: snapshotMode, speed: 1 }
 let previousFrame = performance.now()
 let lastPhase = series.phase
+let lastRenderedSeries: SeriesState = series
 let accumulator = 0
 const tickDuration = 1 / TICKS_PER_SECOND
 
@@ -66,6 +67,7 @@ function applyCommand(result: SeriesCommandResult): TestCommandResult {
 }
 
 function renderDom(): void {
+  lastRenderedSeries = series
   if (series.phase !== lastPhase) {
     accumulator = 0
     lastPhase = series.phase
@@ -89,6 +91,8 @@ function frame(now: number): void {
       }
     }
   }
+
+  if (series !== lastRenderedSeries) renderDom()
 
   const battle = series.activeBattle
   if (battle) arenaView.sync(battle)
