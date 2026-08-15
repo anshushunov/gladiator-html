@@ -144,7 +144,7 @@ Each roster contains exactly one fighter of each archetype.
 | Home | Nerva | `technical` | 345 | 12 | 44 | 0.92 | 0.16 | 0.16 | The school's strongest all-round fighter |
 | Away | Drusus | `fast` | 390 | 13 | 36 | 0.90 | 0.12 | 0.15 | Elite opponent intended to absorb a sacrifice |
 | Away | Cassius | `technical` | 330 | 11 | 48 | 0.90 | 0.15 | 0.12 | Strong technical opponent |
-| Away | Magnus | `heavy` | 300 | 10 | 62 | 0.78 | 0.18 | 0.06 | Vulnerable opponent despite heavy armor |
+| Away | Magnus | `heavy` | 288 | 10 | 62 | 0.78 | 0.18 | 0.06 | Vulnerable opponent despite heavy armor |
 
 The fixed opponent order is Drusus, Cassius, Magnus. The baseline test seed is `20260815`.
 
