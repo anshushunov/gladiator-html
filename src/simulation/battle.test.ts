@@ -111,4 +111,55 @@ describe('battle simulation', () => {
     const firstAttackTick = state.events.find(({ type }) => type === 'attack-started')?.tick
     expect(state.events.filter(({ tick }) => tick === firstAttackTick).map(({ type }) => type)).toEqual(expectedTypes)
   })
+
+  it('emits approach-started exactly once before the first attack', () => {
+    const state = finished({ home: heavy, away: fast, seed: 7 })
+    const approaches = state.events.filter(({ type }) => type === 'approach-started')
+    const firstAttack = state.events.find(({ type }) => type === 'attack-started')
+    expect(approaches).toHaveLength(1)
+    expect(state.approachStarted).toBe(true)
+    expect(approaches[0].tick).toBeGreaterThan(0)
+    expect(approaches[0].tick).toBeLessThan(firstAttack?.tick ?? Number.POSITIVE_INFINITY)
+  })
+
+  it('orders equal-interval initiative by the derived tie roll', () => {
+    let state = createBattle({ home: { ...heavy, accuracy: 0 }, away: { ...fast, accuracy: 0 }, seed: 47 })
+    let before = state
+    let tieTick: number | undefined
+    while (tieTick === undefined) {
+      before = state
+      state = advanceBattleTick(state)
+      if (state.events.filter(({ type, tick }) => type === 'attack-started' && tick === state.tick).length === 2) tieTick = state.tick
+    }
+    const [roll] = nextRandom(before.initiativeTieRandom)
+    const actors = state.events.flatMap((event) =>
+      event.type === 'attack-started' && event.tick === tieTick ? [event.actorSide] : [],
+    )
+    expect(actors).toEqual(roll < 0.5 ? ['home', 'away'] : ['away', 'home'])
+  })
+
+  it('finishes by time limit with the higher remaining-health ratio winning', () => {
+    const home = { ...heavy, id: 'home', maxHp: 100, damage: 1, attackIntervalTicks: 100, accuracy: 1, blockChance: 0, criticalChance: 0 }
+    const away = { ...heavy, id: 'away', maxHp: 150, damage: 1, attackIntervalTicks: 100, accuracy: 1, blockChance: 0, criticalChance: 0 }
+    const state = finished({ home, away, seed: 41 })
+    expect(state.phase).toBe('finished')
+    expect(state.finishReason).toBe('time-limit')
+    expect(state.tick).toBe(MAX_BOUT_TICKS)
+    const homeRatio = state.fighters.home.hp / state.fighters.home.definition.maxHp
+    const awayRatio = state.fighters.away.hp / state.fighters.away.definition.maxHp
+    expect(homeRatio).not.toBe(awayRatio)
+    expect(state.winnerSide).toBe(homeRatio > awayRatio ? 'home' : 'away')
+    expect(state.events.at(-1)).toMatchObject({ type: 'bout-finished', winnerSide: state.winnerSide, reason: 'time-limit', durationTicks: MAX_BOUT_TICKS })
+  })
+
+  it('uses the derived tie winner for an exact ratio tie', () => {
+    const state = finished({ home: { ...heavy, id: 'home', accuracy: 0 }, away: { ...heavy, id: 'away', accuracy: 0 }, seed: 43 })
+    expect(state.phase).toBe('finished')
+    expect(state.finishReason).toBe('time-limit')
+    expect(state.tick).toBe(MAX_BOUT_TICKS)
+    expect(state.fighters.home.hp / state.fighters.home.definition.maxHp)
+      .toBe(state.fighters.away.hp / state.fighters.away.definition.maxHp)
+    expect(state.winnerSide).toBe(state.timeLimitTieWinner)
+    expect(state.events.at(-1)).toMatchObject({ type: 'bout-finished', winnerSide: state.timeLimitTieWinner, reason: 'time-limit', durationTicks: MAX_BOUT_TICKS })
+  })
 })

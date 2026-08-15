@@ -33,4 +33,20 @@ describe('seeded random', () => {
     for (let index = 0; index < 3; index += 1) expected = nextRandom(expected)[1]
     expect(drawn.next).toEqual(expected)
   })
+
+  it('normalizes the zero seed to the non-zero fallback value', () => {
+    expect(createRandom(0).value).toBe(0x6d2b79f5)
+  })
+
+  it('draws attack rolls in accuracy, block, critical order from three sequential values', () => {
+    const initial = createRandom(23)
+    const drawn = drawAttackRolls(initial)
+    const [accuracy, afterAccuracy] = nextRandom(initial)
+    const [block, afterBlock] = nextRandom(afterAccuracy)
+    const [critical, afterCritical] = nextRandom(afterBlock)
+    expect(drawn.rolls.accuracy).toBe(accuracy)
+    expect(drawn.rolls.block).toBe(block)
+    expect(drawn.rolls.critical).toBe(critical)
+    expect(drawn.next).toEqual(afterCritical)
+  })
 })

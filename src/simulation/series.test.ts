@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { BASELINE_TEST_SEED, homeRoster, opponents, TARGET_MAX_BOUT_TICKS, TARGET_MIN_BOUT_TICKS } from '../content/mvpSeries'
 import { advanceBattleTicks } from './battle'
+import type { FighterDefinition } from './fighters'
 import { advanceSeriesTicks, assignFighter, confirmLineup, createSeries, rematch, startNextBout, unassignSlot } from './series'
 
 const createMvpSeries = () => createSeries({ homeRoster, opponents, seed: BASELINE_TEST_SEED })
@@ -34,6 +35,20 @@ describe('series planning', () => {
     const reassigned = assignFighter(state, 'brutus', 1)
     expect(reassigned.ok).toBe(true)
     expect(reassigned.state.assignments).toEqual([null, 'brutus', null])
+  })
+
+  it('rejects startNextBout outside between-bouts with the same state object', () => {
+    const state = createMvpSeries()
+    const result = startNextBout(state)
+    expect(result).toEqual({ ok: false, state, reason: 'no-bout-pending' })
+    expect(result.state).toBe(state)
+  })
+
+  it('rejects rematch outside summary with the same state object', () => {
+    const state = createMvpSeries()
+    const result = rematch(state)
+    expect(result).toEqual({ ok: false, state, reason: 'series-not-finished' })
+    expect(result.state).toBe(state)
   })
 })
 
@@ -113,6 +128,27 @@ it('copies the finished battle fields into BoutResult in the same transition', (
       away: battle.fighters.away.hp / battle.fighters.away.definition.maxHp,
     },
   })
+})
+
+it('records a time-limit endedBy when a bout survives to the tick cap', () => {
+  const filler: FighterDefinition = { id: 'filler', name: 'Filler', school: 'Test', archetype: 'technical', maxHp: 100, damage: 1, attackIntervalTicks: 100, accuracy: 0, blockChance: 0, criticalChance: 0 }
+  const home: FighterDefinition = { id: 'home', name: 'Home', school: 'Test', archetype: 'heavy', maxHp: 100, damage: 1, attackIntervalTicks: 100, accuracy: 1, blockChance: 0, criticalChance: 0 }
+  const away: FighterDefinition = { id: 'away', name: 'Away', school: 'Test', archetype: 'heavy', maxHp: 150, damage: 1, attackIntervalTicks: 100, accuracy: 1, blockChance: 0, criticalChance: 0 }
+  let state = createSeries({
+    homeRoster: [home, filler, { ...filler, id: 'filler-2' }],
+    opponents: [away, { ...filler, id: 'filler-3' }, { ...filler, id: 'filler-4' }],
+    seed: 41,
+  })
+  state = assignFighter(state, 'home', 0).state
+  state = assignFighter(state, 'filler', 1).state
+  state = assignFighter(state, 'filler-2', 2).state
+  state = confirmLineup(state).state
+  const transitioned = advanceSeriesTicks(state, 2700)
+  expect(transitioned.phase).toBe('between-bouts')
+  expect(transitioned.results[0].endedBy).toBe('time-limit')
+  expect(transitioned.results[0].winnerSide).toBe('away')
+  expect(transitioned.results[0].durationTicks).toBe(2700)
+  expect(transitioned.score).toEqual({ home: 0, away: 1 })
 })
 
 it('clears mutable run data but preserves content and seed on rematch', () => {

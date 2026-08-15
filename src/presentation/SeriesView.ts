@@ -50,6 +50,7 @@ export class SeriesView {
   private lastState: SeriesState | null = null
   private lastRuntime: RuntimeViewState | null = null
   private pendingFocus: PendingFocus | null = null
+  private lastFeedEventId = -1
 
   constructor(shell: HTMLElement, onIntent: (intent: SeriesIntent) => void) {
     this.shell = shell
@@ -382,6 +383,7 @@ export class SeriesView {
   }
 
   private buildBattleUi(state: SeriesState): void {
+    this.lastFeedEventId = -1
     const homeCard = this.shell.querySelector<HTMLElement>('[data-testid="active-home"]')
     const awayCard = this.shell.querySelector<HTMLElement>('[data-testid="active-away"]')
     const status = this.shell.querySelector<HTMLElement>('[data-testid="battle-status"]')
@@ -393,8 +395,10 @@ export class SeriesView {
   }
 
   private clearBattleUi(): void {
-    const battle = this.shell.querySelector<HTMLElement>('[data-testid="active-home"]')
-    if (battle?.firstChild) battle?.replaceChildren()
+    for (const testId of ['active-home', 'active-away']) {
+      const card = this.shell.querySelector<HTMLElement>(`[data-testid="${testId}"]`)
+      if (card?.firstChild) card?.replaceChildren()
+    }
   }
 
   private buildFighterCard(container: HTMLElement, side: FighterSide, battle: BattleState | undefined): void {
@@ -438,8 +442,12 @@ export class SeriesView {
     const battle = state.activeBattle
     if (!battle) {
       feed.replaceChildren()
+      this.lastFeedEventId = -1
       return
     }
+    const latestEventId = battle.events.at(-1)?.id ?? -1
+    if (latestEventId === this.lastFeedEventId) return
+    this.lastFeedEventId = latestEventId
     const entries = formatBattleFeed(battle.events, {
       home: battle.fighters.home.definition.name,
       away: battle.fighters.away.definition.name,

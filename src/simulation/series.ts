@@ -90,7 +90,7 @@ export function confirmLineup(state: SeriesState): SeriesCommandResult {
 
 export function startNextBout(state: SeriesState): SeriesCommandResult {
   if (state.phase !== 'between-bouts') return { ok: false, state, reason: 'no-bout-pending' }
-  if (state.activeBoutIndex === null) throw new Error('Invalid bout index: none')
+  if (state.activeBoutIndex === null) throw new Error(`Invalid bout index: ${state.activeBoutIndex}`)
   const boutIndex = (state.activeBoutIndex + 1) as BoutIndex
   const homeFighterId = state.assignments[boutIndex] as string
   const battle = createBattle({ home: homeFighter(state, homeFighterId), away: state.opponents[boutIndex], seed: deriveBoutSeed(state.seed, boutIndex) })
