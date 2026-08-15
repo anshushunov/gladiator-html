@@ -1,6 +1,6 @@
 # Readable Deep Combat — MVP Design
 
-**Status:** approved in collaborative design review
+**Status:** revised after written review; awaiting final approval
 
 **Date:** 2026-08-16
 
@@ -12,6 +12,9 @@
 - **Exchange** — positioning followed by at least one committed action and its resolution, ending when both fighters can make a new decision.
 - **Opening** — a target in `recovery` or `stagger`, where an unblocked hit may become critical.
 - **Intent** — semantic locomotion chosen by simulation, such as `pressure`, `burst-in`, or `disengage`.
+- **Probe** — a quick, low-commitment attack used to test range or create pressure; it is not required to expose a long readable anticipation.
+- **Committed action** — a slower, higher-payoff attack whose anticipation and recovery create an observable punish window.
+- **Pressure level** — a capped anti-stall input derived from time since physical weapon/body contact; it biases policy without replacing style identity.
 - **Rig** — the shared procedural humanoid joint hierarchy rendered by Three.js.
 - **Pose controller** — presentation code that turns simulation state into joint transforms without deciding game rules.
 
@@ -41,6 +44,9 @@ This is a combat-depth hypothesis, not a final-art hypothesis.
 - Weapon and armor should imply strategy. Roman gladiator types used distinct armaments and fighting styles, providing a grounded visual basis without requiring strict historical simulation: <https://www.metmuseum.org/pt/essays/gladiators-types-and-training>.
 - Camera stability improves legibility; weight can be recovered through timing, reactions, and audio instead of shake: <https://blog.playstation.com/2022/10/04/game-developers-explain-what-makes-god-of-war-2018s-combat-tick/>.
 - Audio cues may build toward contact and distinguish attack or material types: <https://blog.playstation.com/2021/12/06/horizon-forbidden-west-outsmart-your-enemies/>.
+- Fixed-step simulation should keep its remainder and interpolate only presentation between the previous and current snapshots: <https://gafferongames.com/post/fix_your_timestep/>.
+- Group framing benefits from horizontal-only framing, damping, and explicit distance limits: <https://docs.unity3d.com/Packages/com.unity.cinemachine@3.1/manual/CinemachineGroupFraming.html>.
+- A small set of authored poses can support procedural animation when poses are data and grounding/IK are later layers: <https://www.wolfire.com/blog/2014/05/GDC-2014-Procedural-Animation-Video/>.
 
 ## Goals
 
@@ -76,7 +82,7 @@ At `×1`, a reviewer watching with HP cards and battle feed hidden must be able 
 
 `×2` remains readable enough to follow the winner of each exchange. `×4` is an accelerated review mode and is not required to preserve every pose or audio cue.
 
-An ordinary bout lasts `1500–2400` simulation ticks (25–40 seconds) and contains approximately 6–10 completed exchanges. The hard limit is `3600` ticks (60 seconds). A full three-bout series at `×1` should take roughly two minutes of combat.
+Across the fixed balance cohort, the median ordinary bout lasts `1500–2400` simulation ticks (25–40 seconds) and contains approximately 6–10 completed exchanges. An exchange may contain probes and defensive reactions, but it is counted only when at least one committed action resolves and both fighters later regain decision control. Individual non-outlier bouts may be shorter or longer within the hard bounds defined under Balance acceptance. The hard limit is `3600` ticks (60 seconds). A full three-bout series at `×1` should take roughly 1.5–2 minutes of combat.
 
 ## Style identities
 
@@ -94,6 +100,8 @@ The existing counter triangle remains:
 
 The arrow means **has an advantage against**. Advantage stays soft: it influences damage and decision scoring, while geometry and style behavior provide the visible explanation.
 
+Lateral motion now has a rule-level consequence: a fighter who moves outside Heavy's guard or Technical's parry arc can deny that defense until the defender turns back toward the attack. Heavy turns slowly enough that Fast can create this angle near contact range; Fast turns quickly enough to keep its own weapon sector on target. This is the MVP's only flank reward—there is no hidden backstab damage bonus.
+
 ## Simulation clock and combat space
 
 - `TICKS_PER_SECOND = 60`.
@@ -103,11 +111,12 @@ The arrow means **has an advantage against**. Advantage stays soft: it influence
 - Start positions are `home = (-4.2, 0)` and `away = (4.2, 0)`.
 - The walkable floor has radius `6.5`, with lateral movement additionally clamped to `z = -2.5..2.5` for the fixed gameplay camera.
 - Fighter centers remain at least `0.9` units apart.
-- Fighters always face their opponent. Presentation derives body yaw from simulation facing.
+- Facing is a normalized `Vec2`, not an angle. Each tick it turns partway toward the opponent using the style's authored turn responsiveness; it does not snap. Presentation derives body yaw from the interpolated simulation vector.
 - Home and away do not swap their projected left/right sides in this slice. Crossing movement is clamped before the minimum-separation solve.
 - Movement is simultaneous: both desired displacements are computed from the state at the beginning of the movement step, combined, then clamped and separated symmetrically.
+- Simulation geometry uses vector arithmetic and authored dot-product thresholds. `src/simulation/**` may use `Math.sqrt` for normalization but not runtime trigonometric or inverse-trigonometric functions.
 
-Simulation owns root position. Presentation may adjust limbs and weapon contact but may not cosmetically translate a fighter root away from the simulated position.
+Simulation owns root position. Presentation may render the root and facing at `lerp(previousTickState, currentTickState, alpha)`, where `alpha = accumulator / tickDuration`; it may not derive root motion from any other source. This interpolation never feeds back into simulation or changes contact geometry.
 
 ## Locomotion
 
@@ -122,8 +131,6 @@ type LocomotionIntent =
   | 'backstep'
   | 'disengage'
   | 'pressure'
-  | 'stagger'
-  | 'defeated'
 ```
 
 | Style | Forward | Backward | Lateral | Burst | Neutral preferred distance |
@@ -132,10 +139,20 @@ type LocomotionIntent =
 | Fast | 2.4 u/s | 2.7 u/s | 2.1 u/s | 4.0 u/s | 2.4–3.0 before entry |
 | Technical | 1.7 u/s | 2.0 u/s | 1.3 u/s | 2.4 u/s | 2.1–2.8 |
 
+Turn responsiveness is the normalized-lerp factor applied once per tick before normalization:
+
+| Style | Turn factor/tick |
+| --- | ---: |
+| Heavy | `0.012` |
+| Fast | `0.045` |
+| Technical | `0.025` |
+
+`desiredFacing = normalize(opponent.position - self.position)` and `facing = normalize(facing × (1 - turnFactor) + desiredFacing × turnFactor)`. All authored factors are below `0.5`, so even exact-opposite inputs cannot produce a zero blend; validation/invariants still reject a non-finite or near-zero facing vector.
+
 Style movement behavior:
 
 - Heavy prefers `pressure` or `advance`, yields little ground during ordinary movement, and never selects routine `disengage`.
-- Fast prefers shallow arcs outside contact range, uses `burst-in` only with an attack plan, and is forced into `disengage` after a burst-lunge recovery until reaching 2.4 units or spending 30 ticks.
+- Fast prefers shallow arcs outside contact range, may select pure `burst-in` only from 2.8–4.0 units to create a lunge setup, and re-enters ordinary weighted choice once inside the lunge's start range. It is forced into `disengage` after a burst-lunge recovery until reaching 2.4 units or spending 30 ticks.
 - Technical holds spear measure, selects `backstep` when an opponent enters below 1.2 units, and may circle only while remaining able to face the opponent.
 
 Movement during action phases is constrained:
@@ -144,8 +161,8 @@ Movement during action phases is constrained:
 - `contact`: no new locomotion decision;
 - `impact`: root motion freezes except for resolved pushback;
 - `recovery`: at most 35% of normal style speed;
-- `stagger`: only deterministic pushback/recovery motion;
-- `defeated`: no locomotion.
+- while staggered: only deterministic pushback/recovery motion; `locomotionIntent` retains the last ordinary intent but is ignored;
+- while defeated: no locomotion; status, rather than a duplicate intent value, drives the presentation state.
 
 ## Action state
 
@@ -197,7 +214,8 @@ interface FighterCombatState {
   side: FighterSide
   definition: FighterDefinition
   position: Vec2
-  facing: number
+  facing: Vec2
+  travelledDistance: number
   hp: number
   status: 'active' | 'defeated'
   locomotionIntent: LocomotionIntent
@@ -206,15 +224,27 @@ interface FighterCombatState {
   staggerUntilTick: number
   nextDecisionTick: number
   lastReactedToActionInstanceId?: number
-  forcedActionId?: CombatActionId
+  forcedActionId?: AttackActionId
 }
 ```
 
 `phaseEndsAtTick` is exclusive. If an action begins windup on tick `D` with `windupTicks = W`, windup occupies ticks `D..D+W-1`; contact occurs on tick `D+W`; contact always lasts exactly one tick. Impact begins on the following tick, then recovery. A fighter returns to neutral at the first tick after recovery ends.
 
-An attack or counter action must contain `attackRolls`; a defense action must not. A defender records `lastReactedToActionInstanceId` after its one allowed reaction roll, including a failed roll, so it cannot retry the same windup on later ticks.
+An attack or counter action must contain `attackRolls`; a defense action must not. A defender records `lastReactedToActionInstanceId` at the attack's single reaction opportunity, including an ineligible or failed reaction, so it cannot retry the same windup later.
 
-When a fighter enters stagger, an unstarted action is cleared. An action already in its one-tick contact phase is not canceled by non-lethal stagger from another same-tick contact. Defeat always cancels remaining contact intents.
+`velocity` is the actual post-constraint root displacement for the tick multiplied by `TICKS_PER_SECOND`, in units/second. Simulation writes it after movement/separation and presentation reads it for lean and gait direction; decision scoring does not use it in this slice. `travelledDistance` accumulates the absolute post-constraint root displacement in arena units and drives deterministic gait phase. Both fighters start with `nextDecisionTick = 1`, so their first decisions occur together on the first running tick.
+
+Incoming non-lethal stagger has this explicit phase behavior; an interrupted active action emits `action-interrupted` with reason `stagger`:
+
+| Current state | Attack outcome | Defense outcome |
+| --- | --- | --- |
+| `neutral` / queued forced action | clear any queued forced action; stagger owns control | same |
+| `windup` | cancel the action before contact; stored attack rolls remain consumed | cancel the defense; it cannot protect the later contact |
+| one-tick `contact` | keep the already-snapshotted contact for this tick, then clear the action | keep the already-snapshotted defense for this tick, then clear the action |
+| `impact` | clear the remaining impact/recovery and show stagger | same |
+| `recovery` | clear the remaining recovery and show stagger | same |
+
+Lethal defeat always overrides this table: it silently clears the defeated fighter's current/forced action, emits the canonical defeat events, and cancels only later contact intents whose actor is that fighter. It does not cancel a surviving opponent's already scheduled contact.
 
 ## Action definitions
 
@@ -226,7 +256,7 @@ interface AttackActionDefinition {
   tags: readonly string[]
   contactRange: { min: number; max: number }
   startMaxRange?: number
-  halfAngleDegrees: number
+  minimumFacingDot: number
   windupTicks: number
   impactTicks: number
   recoveryTicks: number
@@ -244,53 +274,58 @@ interface DefenseActionDefinition {
   minimumReactionLeadTicks: number
   impactTicks: number
   recoveryTicks: number
+  minimumIncomingFacingDot?: number
 }
 ```
 
-| ID | Tags | Contact range | Half-angle | Windup | Impact | Recovery | Damage | Accuracy | Root travel | Push | Stagger | Priority |
+| ID | Tags | Contact range | Facing dot | Windup | Impact | Recovery | Damage | Accuracy | Root travel | Push | Stagger | Priority |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `heavy-shield-jab` | `attack probe shield unparryable` | 0.9–1.4 | 55° | 14 | 3 | 20 | `power × 0.65` | `+0.08` | 0.25 | 0.40 | 12 | 30 |
-| `heavy-cleave` | `attack committed weapon parryable` | 0.9–1.8 | 50° | 34 | 6 | 34 | `power × 1.75` | `-0.06` | 0.45 | 0.70 | 24 | 10 |
-| `fast-slash` | `attack probe weapon parryable` | 0.9–1.35 | 65° | 10 | 2 | 15 | `power × 0.75` | `+0.06` | 0.25 | 0.18 | 8 | 40 |
-| `fast-burst-lunge` | `attack committed burst weapon parryable` | start ≤2.8, contact 0.9–1.45 | 35° | 18 | 3 | 24 | `power × 1.25` | `+0.00` | ≤1.40 | 0.35 | 14 | 30 |
-| `technical-thrust` | `attack probe weapon parryable` | 1.2–2.8 | 20° | 20 | 3 | 22 | `power × 1.00` | `+0.04` | 0.20 | 0.30 | 12 | 25 |
-| `technical-driving-thrust` | `attack committed weapon parryable` | 1.6–3.1 | 18° | 30 | 4 | 30 | `power × 1.50` | `-0.03` | 0.50 | 0.50 | 20 | 15 |
-| `technical-parry-counter` | `attack forced counter weapon` | 0.9–2.3 | 30° | 8 | 4 | 20 | `power × 1.10` | `+0.12` | 0.30 | 0.40 | 18 | 50 |
+| `heavy-shield-jab` | `attack probe shield unparryable` | 0.9–1.4 | `0.5736` (~55°) | 14 | 3 | 20 | `power × 0.65` | `+0.08` | 0.25 | 0.40 | 12 | 30 |
+| `heavy-cleave` | `attack committed weapon parryable` | 0.9–1.8 | `0.6428` (~50°) | 34 | 6 | 34 | `power × 1.75` | `-0.06` | 0.45 | 0.70 | 24 | 10 |
+| `fast-slash` | `attack probe weapon parryable` | 0.9–1.35 | `0.4226` (~65°) | 10 | 2 | 15 | `power × 0.75` | `+0.06` | 0.25 | 0.18 | 8 | 40 |
+| `fast-burst-lunge` | `attack committed burst weapon parryable` | start ≤2.8, contact 0.9–1.45 | `0.8192` (~35°) | 18 | 3 | 24 | `power × 1.25` | `+0.00` | ≤1.40 | 0.35 | 14 | 30 |
+| `technical-thrust` | `attack probe weapon parryable` | 1.2–2.8 | `0.9397` (~20°) | 20 | 3 | 22 | `power × 1.00` | `+0.04` | 0.20 | 0.30 | 12 | 25 |
+| `technical-driving-thrust` | `attack committed weapon parryable` | 1.6–3.1 | `0.9511` (~18°) | 30 | 4 | 30 | `power × 1.50` | `-0.03` | 0.50 | 0.50 | 20 | 15 |
+| `technical-parry-counter` | `attack forced counter weapon` | 0.9–2.3 | `0.8660` (~30°) | 8 | 4 | 20 | `power × 1.10` | `+0.12` | 0.30 | 0.40 | 18 | 50 |
 
-`half-angle` is measured from actor facing on the arena plane. `root travel` follows facing and is the maximum forward displacement authored across windup. It stops early at minimum separation and never expands the legal contact range.
+Facing eligibility is `dot(actor.facing, normalize(target.position - actor.position)) >= minimumFacingDot`. Values are authored numeric literals; degree annotations are documentation only and are never converted with trigonometry at runtime. `root travel` follows facing and is the maximum forward displacement authored across windup. It stops early at minimum separation and never expands the legal contact range.
 
-All numeric definition fields must be finite. Tick counts are positive integers; distances and multipliers are non-negative. Unknown action IDs and invalid content are developer errors.
+All numeric definition fields must be finite. Tick counts are positive integers; distances and multipliers are non-negative. Validation also requires `contactRange.min >= arena.minimumSeparation`, `contactRange.min <= contactRange.max`, burst `startMaxRange >= contactRange.max`, `minimumFacingDot`/defense-facing dots in `-1..1`, and every parryable attack windup to be at least Technical's authored parry reaction lead. Unknown action IDs and inconsistent content are developer errors.
 
 ## Defense reactions
 
-Defense is a style-specific action scheduled in response to an incoming windup. A defender is eligible only when active, in `neutral` or ordinary locomotion, and not staggered. Minimum remaining windup is 8 ticks for Heavy, 7 for Fast, and 10 for Technical.
+Defense is a style-specific action scheduled once during an incoming windup. Each style has a reaction lead: 8 ticks for Heavy, 7 for Fast, and 10 for Technical. For an attack whose contact is `contactTick`, its one reaction opportunity is the tick satisfying `contactTick - currentTick === minimumReactionLeadTicks`. This makes `technical-parry` eligible against a newly started `fast-slash`: `10 - 0 === 10` at the attack start tick.
 
-An eligible reaction consumes exactly two values from the defender's defense stream: success and direction. Both are consumed for every style even when direction is irrelevant.
+At that opportunity the living defender consumes exactly two values from its defense stream, `success` and `direction`, even when busy, staggered, or unable to answer the action tag. It then records `lastReactedToActionInstanceId`. A defense can start only when the defender is active, in `neutral` or ordinary locomotion, not staggered, and the style-specific tag restrictions below pass. An attack canceled before its reaction opportunity consumes no defense values.
 
 ```ts
 effectiveDefenseChance = clamp(
-  fighter.defenseChance + comparisonDefenseModifier,
+  fighter.defenseChance
+    + comparisonDefenseModifier
+    + telegraphBonus(attack.windupTicks),
   0,
   0.95,
 )
 ```
 
-The comparison modifier is `+0.05` for advantage, `0` for neutral, and `-0.05` for disadvantage. A failed roll schedules no defense. A successful roll schedules the style defense so its active/contact tick aligns with the incoming attack contact.
+The comparison modifier is `+0.05` for advantage, `0` for neutral, and `-0.05` for disadvantage. `telegraphBonus` is `0.00` for windup `<=14`, `+0.05` for `15..24`, and `+0.10` for `>=25` ticks. A failed roll schedules no defense. A successful roll schedules the style defense with a dynamic windup beginning at the reaction opportunity so its contact tick aligns with the incoming attack contact. This ties a longer visible commitment to a modestly stronger reaction without making it automatically safe.
 
 Defense action timing uses the remaining incoming windup as its own dynamic windup, followed by one aligned contact tick:
 
-| Defense ID | Contact/impact behavior | Impact | Recovery |
-| --- | --- | ---: | ---: |
-| `heavy-guard` | hold root and shield contact | 4 | 12 |
-| `fast-evade` | finish ranked lateral/back displacement | 3 | 14 |
-| `technical-parry` | weapon contact and counter opening | 4 | 16 |
+| Defense ID | Contact/impact behavior | Incoming-facing dot | Impact | Recovery |
+| --- | --- | ---: | ---: | ---: |
+| `heavy-guard` | hold root and shield contact | `>=0.3420` (~front ±70°) | 4 | 12 |
+| `fast-evade` | finish ranked lateral/back displacement | none | 3 | 14 |
+| `technical-parry` | weapon contact and counter opening | `>=-0.1736` (~front ±100°) | 4 | 16 |
 
 These IDs use the same `CombatActionState`, but contain no `attackRolls`.
 
+Incoming-facing effectiveness uses `dot(defender.facing, normalize(attacker.position - defender.position))` from the contact snapshot. A successful reaction roll may therefore start a guard/parry that later fails with reason `facing` if the attacker out-circles the defender before contact; conversely, a defender that visibly turns back inside the arc in time is protected. Fast evade deliberately has no facing gate. No flank accuracy or critical bonus is added in this slice: getting outside a guard/parry arc is already the visible geometric reward.
+
 ### Heavy guard
 
-- May answer any current attack.
-- Multiplies damage by `0.35`, push by `0.30`, and stagger duration by `0.40`, each rounded as specified below.
+- May answer any current attack tag that arrives inside the authored front arc.
+- Multiplies damage by `0.35`, push by `0.30`, and stagger duration by `0.40`. Damage uses the common final rounding formula, push remains a float, and stagger uses the explicit integer rounding below.
 - Holds root position during contact and impact.
 - Emits `attack-blocked` followed by `damage-dealt` when the attack hits.
 
@@ -299,14 +334,14 @@ These IDs use the same `CombatActionState`, but contain no `attackRolls`.
 - Uses the direction roll to rank `circle-left`, `circle-right`, and `backstep`; blocked directions fall through in that deterministic order.
 - Attempts 0.9–1.2 units of movement during the incoming windup.
 - It succeeds only when final geometry places the fighter outside the attack's range or facing sector. The event is `attack-evaded`.
-- If arena boundaries prevent all ranked displacements from leaving the contact geometry, the evade is visibly attempted but the normal attack resolution continues.
+- If arena boundaries prevent all ranked displacements from leaving the contact geometry, the evade is visibly attempted, `defense-failed` emits with reason `geometry`, and normal attack resolution continues.
 
 ### Technical parry
 
 - Answers only actions tagged `parryable`.
 - Its active tick must match attack contact exactly.
 - A successful parry cancels damage, applies 24 ticks of stagger to the attacker, and sets `technical-parry-counter` as the defender's forced next action.
-- The forced counter begins on the next tick if the target remains within 2.3 units. Otherwise it is cleared and Technical selects `advance` or `hold-range` normally.
+- The forced counter begins on the next tick if the target remains within 2.3 units. Otherwise it is cleared and Technical selects `advance` or `hold-range` normally. The start check does not guarantee contact: ordinary movement during its eight-tick windup may still produce a geometry miss, and the counter never stretches or teleports to prevent that miss.
 - A shield jab is deliberately unparryable but may miss or be avoided by range.
 
 Future skill may improve reaction choice and error, but current defense chance is a fighter stat. Presentation never performs a defense roll.
@@ -325,10 +360,9 @@ interface CombatDecisionContext {
   arena: Readonly<CombatArenaDefinition>
 }
 
-interface CombatDecision {
-  locomotionIntent: LocomotionIntent
-  actionId?: CombatActionId
-}
+type CombatDecision =
+  | { type: 'locomotion'; locomotionIntent: LocomotionIntent }
+  | { type: 'action'; actionId: AttackActionId }
 
 interface CombatStyleDefinition {
   archetype: Archetype
@@ -344,6 +378,7 @@ interface LocomotionProfile {
   backwardUnitsPerSecond: number
   lateralUnitsPerSecond: number
   burstUnitsPerSecond: number
+  turnFactorPerTick: number
 }
 
 type CombatStyleCatalog = Readonly<Record<Archetype, CombatStyleDefinition>>
@@ -351,11 +386,11 @@ type CombatStyleCatalog = Readonly<Record<Archetype, CombatStyleDefinition>>
 function chooseCombatDecision(
   context: CombatDecisionContext,
   style: CombatStyleDefinition,
-  rolls: { selection: number; direction: number },
+  rolls: { selection: number; interval: number },
 ): CombatDecision
 ```
 
-Each decision consumes exactly two values from the fighter's decision stream, even if only one action is legal. A candidate is a locomotion intent with an optional action. Candidates are filtered for state, range reachable through allowed root travel, arena path, forced behavior, and style.
+Each decision consumes exactly two values from the fighter's decision stream, even if only one candidate is legal. A candidate is either one pure locomotion intent or one action; actions and movement are not multiplied into a Cartesian product. Every legal listed locomotion exists alongside every legal action, so the presence of an action never silently removes the corresponding pure-movement choice. Candidates are filtered for state, range reachable through authored action root travel, arena path, forced behavior, and style.
 
 Initial base weights are:
 
@@ -365,18 +400,20 @@ Initial base weights are:
 | Fast | each circle `12`, `hold-range 5`, `retreat 8`, `burst-in 14` | `fast-slash 12`, `fast-burst-lunge 14` |
 | Technical | `hold-range 12`, `backstep 12`, each circle `6`, `advance 6` | `technical-thrust 14`, `technical-driving-thrust 8` |
 
-Forced `disengage` and `technical-parry-counter` bypass weighted selection. Legal candidates then receive:
+Forced `disengage` and `technical-parry-counter` bypass weighted selection. For an ordinary candidate, `baseWeight` is read from the matching locomotion or action table above, then these adjustments are summed exactly once:
 
-- a continuous range-fit adjustment from `0..20`, highest at the middle of the legal contact band;
-- `+12` for locomotion that reduces distance error to the neutral preferred band and `-12` when it increases that error without a tactical reason;
+- an action-only continuous range-fit adjustment `20 × clamp(1 - abs(predictedContactDistance - rangeMid) / rangeHalfWidth, 0, 1)`;
+- `+12` for locomotion that reduces distance error to the neutral preferred band, `+12` for `hold-range` already inside that band, and `-12` for `hold-range` outside the band or locomotion that increases the error without a style-authored tactical reason (lateral circling is such a reason);
 - an opening bonus of `+18` for committed/counter actions or `+6` for probes against a target in recovery/stagger;
 - `-20` when an action would finish within 0.4 units of the arena boundary;
 - `+8 × pressureLevel` for advance, pressure, burst, or committed candidates and the inverse adjustment for retreat/disengage;
-- `+5`, `0`, or `-5` comparison score for advantage, neutral, or disadvantage.
+- an action-only `+5`, `0`, or `-5` comparison score for advantage, neutral, or disadvantage.
 
-Final weights are clamped at zero. The selection roll chooses proportionally among positive weights. No random number is drawn per candidate. If every weight is zero, policy deterministically selects movement toward the preferred range, or `hold-range` when already inside it. It must never return an illegal action and must not throw for ordinary spatial circumstances.
+The final formula is therefore `weight(candidate) = max(0, baseWeight(candidate) + sum(applicableAdjustments))`. The selection roll chooses proportionally among positive weights. No random number is drawn per candidate. If every weight is zero, policy deterministically selects movement toward the preferred range, or `hold-range` when already inside it. It must never return an illegal action and must not throw for ordinary spatial circumstances.
 
-Decision intervals are drawn from the direction roll within these inclusive ranges:
+Example: Heavy is 2.0 units from a neutral opponent near arena center, neither fighter has an opening, and pressure is zero. `heavy-shield-jab` is illegal because its 0.25 root travel cannot reach 1.4. `hold-range` receives `8 - 12 = 0` and drops out. Positive weights are `advance = 12 + 12 = 24`, `pressure = 12 + 12 = 24`, each circle `= 2`, and `heavy-cleave = 8 + 20 × (1 - |1.55 - 1.35| / 0.45) ≈ 19.11`. Total weight is `71.11`, so the approximate shares are `33.75%`, `33.75%`, `2.81%`, `2.81%`, and `26.88%`. This example is a required unit fixture, including the candidate list and pre-selection weights.
+
+Decision intervals are drawn from the `interval` roll within these inclusive ranges:
 
 - Heavy: 20–42 ticks;
 - Fast: 12–30 ticks;
@@ -386,7 +423,13 @@ Decision intervals are drawn from the direction roll within these inclusive rang
 
 ### Anti-stall pressure
 
-`lastContactTick` belongs to battle state and updates on damage, block, or parry, but not on a miss or evade. Pressure is zero for 180 ticks after physical contact, then increases once per 60 ticks. At 300 ticks without contact, ordinary `retreat`, `circle-*`, and `disengage` candidates are suppressed until a contact occurs. Forced movement needed to make an action legal remains available.
+Battle state stores two clocks:
+
+- both clocks initialize to bout-start tick `0`;
+- `lastContactTick` updates on damage, block, or parry, but not on a miss or evade. Let `contactGap = tick - lastContactTick`; `pressureLevel = contactGap <= 180 ? 0 : min(3, 1 + floor((contactGap - 181) / 60))`. It can never exceed 3;
+- `lastResolutionTick` updates whenever an attack resolves as hit, block, parry, evade, geometry miss, or accuracy miss. At 300 ticks without any resolution, ordinary `retreat`, `backstep`, `circle-*`, and `disengage` candidates are suppressed until the next resolution.
+
+Forced movement needed to make an action legal remains available. The separate clocks let an active sequence of evasions count as combat activity while still allowing physical-contact pressure to build.
 
 ### Future combat skill and perks
 
@@ -408,7 +451,9 @@ Each bout derives labelled streams from the bout seed:
 
 Starting an attack consumes and stores exactly two contact rolls: accuracy and critical. They are consumed even if the target later leaves range, blocks, evades, or parries. Decision and defense consumption are defined above. Priority and time-limit ties never consume fighter streams.
 
-The guarantee remains: identical full inputs, seed, and tick count produce identical state and event trace. Different lineups may consume their independent streams at different ticks.
+Within a decision pair, `selection` chooses among weighted candidates and `interval` schedules `nextDecisionTick`. Within a defense pair, `success` tests the defense chance and `direction` ranks Fast evade directions; the names are not reused for another semantic purpose.
+
+The supported determinism contract covers current Node/Vitest and Chromium/Playwright builds: identical full inputs, seed, and tick count produce identical state, event trace, and canonical trace hash. Different lineups may consume their independent streams at different ticks. The test-only hash folds every tick's integer state, HP, action/phase IDs, RNG states, event payloads, and positions/facing quantized to integer millionths through FNV-1a with `Math.imul`; quantization affects diagnostics only, never combat. `battle.test.ts` fixes hashes for at least three seeds, and Playwright compares one of the same hashes through the test API. Simulation uses vector/dot geometry with authored thresholds and contains no `Math.sin`, `Math.cos`, `Math.tan`, `Math.atan*`, `Math.asin`, `Math.acos`, `Math.pow`, or `Math.hypot`; exact bitwise identity on unsupported JS engines is not claimed by this MVP.
 
 ## Contact resolution
 
@@ -416,18 +461,19 @@ On a contact tick:
 
 1. Snapshot both fighters' contact geometry and already scheduled defenses.
 2. Build contact intents for actions in `contact`.
-3. Resolve evade/parry/guard eligibility against the snapshot.
+3. Resolve evade/parry/guard effectiveness, including guard/parry facing arcs, against the contact snapshot.
 4. Sort remaining intents by descending action priority; an exact priority tie consumes one labelled tie value.
 5. For each intent whose actor remains active:
-   1. check range and facing sector;
-   2. check stored accuracy roll against clamped `accuracy + action accuracy modifier`;
-   3. apply effective parry, evade, or block;
-   4. determine opening critical;
-   5. calculate damage, push, and stagger;
-   6. apply events in canonical order.
+   1. if an active scheduled evade produced final geometry outside the attack range/sector, emit `attack-evaded` and finish this intent;
+   2. otherwise check range and facing sector, emitting geometry miss when invalid;
+   3. check stored accuracy roll against clamped `accuracy + action accuracy modifier`;
+   4. apply an active scheduled parry or guard when its defender-facing gate passes; otherwise emit `defense-failed` with reason `facing` and continue ordinary resolution;
+   5. determine opening critical;
+   6. calculate damage, push, stagger, semantic contact zone, and root-plane contact point;
+   7. apply events in canonical order.
 6. Non-lethal stagger from the first intent does not cancel a second action already in contact. Defeat cancels all later intents from that fighter.
 
-An out-of-range or out-of-sector action emits `attack-missed` with reason `geometry`. A failed accuracy roll emits reason `accuracy`. A successful evade emits `attack-evaded`, not an additional miss event.
+An out-of-range or out-of-sector action without an effective evade emits `attack-missed` with reason `geometry`. A failed accuracy roll emits reason `accuracy`. A successful evade emits `attack-evaded`, not an additional miss event. A started evade that remains inside contact geometry emits `defense-failed` before continuing through ordinary geometry/accuracy/hit resolution.
 
 Critical is possible only for an unblocked hit when the target was in recovery or stagger in the contact snapshot and `criticalRoll < criticalChance`. Critical multiplies damage by `1.5`. Block and critical are mutually exclusive.
 
@@ -445,6 +491,8 @@ Comparison damage multipliers are `1.10`, `1.00`, and `0.90`. The stored matchup
 
 Push moves the target away from the actor along the snapshot line between their roots; exact coincident roots fall back to actor facing. Same-tick push vectors accumulate, then arena, side-order, and separation constraints are applied once. Damage and push never move HP or position outside legal bounds. Stagger ticks after block use `Math.max(1, Math.round(baseStagger * 0.40))`; other stagger uses the action value. `staggerUntilTick = max(previous, contactTick + appliedStaggerTicks)` and the fighter becomes free when `tick >= staggerUntilTick`.
 
+Contact zone is derived from the resolved outcome: `shield` for guard, `weapon` for parry, and `body` for an unblocked hit. Using snapshotted roots, let `towardTarget = normalize(target.position - actor.position)` and `distance` be their separation. The semantic root-plane contact point is `actor.position + towardTarget × distance × zoneRatio`, where `zoneRatio` is `0.60` for `weapon`, `0.65` for `shield`, and `0.72` for `body`. This point is event data owned by simulation; presentation only adds an authored height and maps it to a rig anchor.
+
 On tick 3600, scheduled contacts resolve first. A defeat wins normally; otherwise the higher remaining-HP ratio wins by `time-limit`. An exact ratio tie uses the labelled time-limit value. There is no draw.
 
 ## Battle tick order
@@ -455,7 +503,7 @@ One immutable battle tick performs:
 2. Clear expired stagger and complete forced state transitions.
 3. Make decisions for neutral fighters whose decision tick is due.
 4. Start selected/forced actions, store their attack rolls, and emit `action-started`.
-5. Detect each newly started incoming windup and give the still-eligible opponent its single defense-reaction roll in the same tick.
+5. For every incoming windup whose `contactTick - currentTick` equals the defender's reaction lead, consume that attack's single defense pair, record the reaction attempt, and schedule a legal successful defense.
 6. Compute simultaneous movement intents from the same pre-movement state.
 7. Apply arena clamp, side-order constraint, and symmetric separation.
 8. Resolve all contact intents as defined above.
@@ -474,7 +522,9 @@ Event IDs are monotonic within one bout and restart for a new `BattleState`. Mov
 | `bout-started` | fighter IDs and styles | opening line | reset rig/effects/audio cursors |
 | `movement-intent-changed` | side, from, to | none | locomotion transition/footsteps |
 | `action-started` | actor, target, action ID, expected contact tick | optional committed-action line | anticipation and whoosh scheduling |
+| `action-interrupted` | actor, action ID, reason (`stagger`) | optional interruption line | replace action pose with stagger |
 | `defense-started` | defender, attacker, defense ID, expected contact tick | none | guard/evade/parry preparation |
+| `defense-failed` | defender, attacker, defense ID, reason (`geometry` or `facing`) | optional failed-defense line | failed defense accent before hit |
 | `attack-missed` | actor, target, action ID, reason | miss line | miss/recovery cue |
 | `attack-evaded` | actor, target, action ID, evade intent | evade line | fast exit cue |
 | `attack-blocked` | actor, target, action ID, contact zone, contact point | combine with damage | shield pose/metal cue |
@@ -491,6 +541,9 @@ Canonical contact sequences:
 
 - Miss: `attack-missed`.
 - Evade: `attack-evaded`.
+- Failed evade into hit: `defense-failed → damage-dealt → fighter-staggered`.
+- Failed evade into ordinary miss: `defense-failed → attack-missed`.
+- Ordinary hit: `damage-dealt → [action-interrupted] → fighter-staggered`; the optional interruption appears only when stagger cancels the target's windup, impact, or recovery.
 - Blocked hit: `attack-blocked → damage-dealt → fighter-staggered`.
 - Parry: `attack-parried → fighter-staggered(attacker)`; the counter later emits its own normal action events.
 - Critical defeat: `critical-hit → damage-dealt → fighter-staggered → fighter-defeated → bout-finished`.
@@ -526,23 +579,32 @@ Initial content values:
 | Away | Cassius | Technical | 160 | 19 | 0.90 | 0.38 | 0.12 | strong measured opponent |
 | Away | Magnus | Heavy | 145 | 18 | 0.78 | 0.32 | 0.06 | vulnerable heavy opponent |
 
-Implementation may tune only these numeric rows to satisfy all balance acceptance tests. It must preserve names, styles, opponent order, relative content intent, and the action/style definitions above unless the written spec is amended.
+Implementation may tune these fighter numbers plus action `damageMultiplier` and `recoveryTicks` to satisfy balance acceptance. It must preserve names, styles, opponent order, relative content intent, and the qualitative action ordering: probes remain quicker/lower-payoff than committed actions, Fast remains quickest, Heavy's cleave remains the slowest commitment, and Technical retains the longest practical reach. Any tuning outside those fields requires a written spec amendment.
 
 Planning cards replace attack interval with Power and Defense while retaining HP, Accuracy, Critical, and the always-visible counter rule.
 
 ## Balance acceptance
 
-For series seed `20260815` after content tuning:
+Determinism, style balance, roster balance, and pacing are separate checks.
 
-- `Brutus→Drusus`, `Aquila→Cassius`, `Nerva→Magnus` loses 1–2; all counters are not the automatic best answer.
-- `Aquila→Drusus`, `Nerva→Cassius`, `Brutus→Magnus` wins 2–1.
-- The six possible lineups contain at least three distinct final score/result profiles.
-- Every ordinary baseline bout ends in 1500–2400 ticks and none reaches the limit.
-- Targeted deterministic unit fixtures demonstrate each signature attack and each defense result.
-- A baseline style trace contains meaningful position change between exchanges; no bout becomes stationary cooldown trading.
-- No trace spends more than 300 consecutive ticks without contact after the initial approach.
+**Golden scenario (`20260815`):**
 
-If exact content numbers cannot satisfy all fixtures, the implementation report must stop and present evidence rather than weakening an acceptance criterion silently.
+- the all-counter lineup `Brutus→Drusus`, `Aquila→Cassius`, `Nerva→Magnus` must not sweep `3–0`; the UI counter rule is useful but not a guaranteed answer to stronger individual opponents;
+- at least one different lineup wins `2–1` or `3–0`;
+- the six possible lineups contain at least three distinct final score/result profiles;
+- one complete lineup has a checked canonical event-trace hash. This is a determinism/product-puzzle fixture, not evidence of statistical balance.
+
+**Fixed statistical cohorts:**
+
+- `balance.test.ts` runs all nine roster pairings over 200 consecutive seeds beginning at `20260815` and reports home win rate, median/p10/p95 duration, timeout rate, and the maximum no-resolution gap per bout;
+- no roster pairing has a home win rate below `15%` or above `85%`;
+- the combined median is `1500–2400` ticks, every pairing's median is `1200–2700`, duration p10 is at least `900`, duration p95 is below `3200`, and fewer than `2%` of bouts reach `3600`;
+- the cohort p95 of each bout's longest gap since `lastResolutionTick` is at most `300` ticks after initial approach;
+- separate equal-stat style fixtures run 500 seeds per ordered style matchup: the advantaged style wins `55–75%`, and same-style mirrored fixtures remain within `45–55%` after swapping home/away starts;
+- targeted deterministic unit fixtures demonstrate each signature attack, each defense result, Technical's exact-boundary parry of `fast-slash`, every stagger/action phase cell, and the failed-evade path;
+- sampled traces for every style contain lateral or distance-changing movement between committed exchanges; no style devolves into stationary cooldown trading.
+
+The cohort seed ranges and metric formulas are test data and cannot be changed during tuning. If allowed numeric tuning cannot satisfy the bands, implementation stops and presents the failing distributions rather than weakening a criterion silently.
 
 ## Module boundaries
 
@@ -569,8 +631,10 @@ Content contains no mutable state or presentation objects.
 ### `src/presentation/`
 
 - `ProceduralFighter.ts` — shared joint hierarchy, primitive body builders, equipment anchors, and disposal.
-- `PoseController.ts` — style key poses, phase sampling, locomotion cycles, reaction layers, grounding, and limited two-bone weapon-arm IK.
-- `ArenaView.ts` — scene ownership, fighter instances, camera framing, state/event synchronization, contact effects, and resets.
+- `poses/combatPoses.ts` — immutable joint-key data for style guards, action phases, locomotion, reactions, and defeat.
+- `PoseController.ts` — pose-data sampling, locomotion cycles, reaction layers, grounding, and limited two-bone weapon-arm IK.
+- `ArenaCamera.ts` — midpoint and horizontal group framing, dead zones, damping, distance clamps, interpolation state, and reset.
+- `ArenaView.ts` — scene ownership, fighter instances, state/event synchronization, contact effects, and delegation to the camera/pose modules.
 - `CombatAudio.ts` — AudioContext lifecycle, cue synthesis, voice limiting, speed policy, mute, and event cursor.
 - `battleFeed.ts` — formatting the expanded event vocabulary.
 - `SeriesView.ts` — existing phase UI plus new stat labels and sound control intent.
@@ -609,9 +673,11 @@ The controller samples a `HumanoidPose` from simulation state in this fixed orde
 4. block/evade/parry/stagger/defeat reaction overlay;
 5. foot grounding and limited arm IK.
 
-Each action uses sparse keys for guard/opening, anticipation, contact, overshoot or impact, recovery, and return. Phase progress is `(tick - phaseStartedTick) / (phaseEndsAtTick - phaseStartedTick)`, clamped to `0..1`. Keys use named easing curves rather than uniform interpolation.
+Each action uses sparse immutable data keys for guard/opening, anticipation, contact, overshoot or impact, recovery, and return. The distinctive anticipation key is front-loaded in the first tick of windup rather than appearing only near its middle. Because roots render between previous and current snapshots, render phase progress uses the same visual time: `(currentTick - 1 + alpha - phaseStartedTick) / (phaseEndsAtTick - phaseStartedTick)`, clamped to `0..1`; a new bout initializes both render snapshots from its tick-0 state. Simulation phase boundaries remain integer-only. Keys use named easing curves rather than uniform interpolation.
 
 Presentation may rotate torso/limbs, solve a two-bone weapon arm, and align `weaponTip` to the semantic contact target within a capped cosmetic reach. It may not change simulation root, facing, action phase, hit result, damage, or event order. If a target is outside the cosmetic IK cap, the authored contact pose wins; presentation does not stretch limbs indefinitely.
+
+During an action's `impact` phase, the controller holds both participants' contact/reaction body poses without phase interpolation for exactly `impactTicks`; this is the slice's presentation-only hitstop. Simulation ticks, camera damping, effects, and audio continue. No global clock is paused, and rapid probe hits receive only their already-authored two- or three-tick impact rather than an additional freeze.
 
 Feet use a deterministic gait phase derived from travelled simulation distance, not wall-clock time. Footstep presentation cues fire when the planted foot changes. At `×4`, footsteps are suppressed.
 
@@ -620,14 +686,17 @@ Defeat uses a style-specific controlled pose. Rotating the whole group onto its 
 ## Arena, camera, and effects
 
 - Keep the current stable elevated perspective and arena plane.
-- Camera look target eases toward the fighters' midpoint.
-- Camera distance changes only enough to keep both roots, weapons, and a 10% margin in frame.
+- `ArenaCamera` frames only the horizontal target-group extent; vertical pose motion never changes zoom.
+- The camera look target follows the fighters' midpoint only after it leaves an 8% viewport dead zone, with a `0.75 s` damping time constant.
+- Camera distance changes only after the horizontal group extent leaves a 12% framing dead zone, uses a separate `1.25 s` damping time constant, and is clamped to `11..18` world units from the look target.
+- Framing includes each fighter's style-authored horizontal equipment radius and a 10% margin. It uses no motion lookahead.
 - Camera does not orbit, cross the combat axis, cut, or shake.
 - Lighting, material value, and an inexpensive geometry/rim outline keep silhouettes separate from the floor without a post-processing pipeline.
 - Weapon trails appear only during the final part of windup through contact.
 - `body`, `shield`, and `weapon` contacts use distinct effect shape/position, not color alone.
 - Contact flashes expire before the next exchange and never obscure either torso.
 - Arena reset clears pose, trails, flashes, audio voices, event cursors, and camera interpolation at each new bout and on rematch.
+- With `prefers-reduced-motion: reduce`, weapon trails and transient contact flashes are disabled and nonessential pose overshoot is reduced; simulation, key anticipations, contact holds, and results do not change.
 
 ## Combat audio
 
@@ -644,8 +713,8 @@ The implementation may use short oscillator/noise/filter/gain graphs or generate
 
 Rules:
 
-- Create/resume AudioContext only after a user gesture.
-- Sound defaults on when audio can start, with a visible runtime `Sound on/off` control.
+- Create/resume AudioContext only after the lineup-confirmation click or an explicit `Sound on` click. Playwright uses lineup confirmation as the enabling gesture.
+- Sound defaults on after that first eligible gesture succeeds, with a visible runtime `Sound on/off` control.
 - Persistence across page loads is out of scope.
 - Pause stops scheduling, quickly fades active ordinary voices, and resumes from new events only.
 - `×1` and `×2` allow all cues with a maximum of eight simultaneous voices.
@@ -653,6 +722,8 @@ Rules:
 - The same event/pose threshold cannot play twice after re-render.
 - Missing or rejected Web Audio disables audio silently while combat continues.
 - Bout change and rematch stop all voices and reset cursors.
+
+Probe whooshes begin on the first tick of windup. At `×2`, probes are not required to be predictable from anticipation alone, but their contact/miss, held impact pose, and recovery must remain classifiable after resolution; a probe is not artificially prevented from dealing a lethal final hit.
 
 Audio quality requires human listening; automated tests verify mapping and lifecycle only.
 
@@ -669,8 +740,8 @@ The feed formats new actions and defenses but remains non-live for screen reader
 - Unknown fighter/style/action IDs, invalid arena configuration, non-finite numeric data, negative distances, and non-positive phase ticks throw developer errors at creation/validation boundaries.
 - Ordinary target movement out of range produces a miss, never an exception.
 - An empty attack candidate list yields locomotion/hold behavior.
-- All positions, velocities, facing values, joint transforms, and phase progress must remain finite.
-- In test/dev, battle invariant checks cover arena bounds, separation, phase endpoints, HP range, event IDs, random states, and active/defeated consistency.
+- All positions, velocities, facing values, travelled distances, joint transforms, and phase progress must remain finite; simulation facing remains normalized within a small epsilon.
+- In test/dev, battle invariant checks cover arena bounds, separation, phase endpoints, HP range, event IDs, random states, active/defeated consistency, one reaction opportunity per attack, and absence of action/contact after defeat.
 - A presentation or audio failure cannot mutate or stop simulation. WebGL context loss replaces the canvas with a text fallback while the runtime and series controls continue.
 - Disposing or replacing a bout releases geometries, materials, resize observers, AudioNodes, and event cursors.
 
@@ -678,22 +749,23 @@ The feed formats new actions and defenses but remains non-live for screen reader
 
 ### Simulation/unit
 
-- `movement.test.ts`: vector math, bounds, side order, symmetric separation, facing, and all intents.
-- `combatActions.test.ts`: exact phase ticks, action legality, range/sector, damage rounding, block, evade, parry/counter, opening critical, priority, and simultaneous contacts.
-- `combatDecision.test.ts`: legal candidates, style behavior, fixed roll consumption, deterministic choice, pressure, forced disengage, and future-seam purity.
-- `battle.test.ts`: event ordering, complete traces, defeat/time limit, labelled ties, no draws, and immutability.
+- `movement.test.ts`: vector math, bounds, side order, symmetric separation, bounded vector facing, travelled distance, velocity, and all intents.
+- `combatActions.test.ts`: exact phase ticks, action legality, attack/defense facing arcs, semantic contact points, damage rounding, block, evade/failure, parry/counter including allowed counter miss, opening critical, priority, simultaneous contacts, and every attack/defense phase × stagger cell.
+- `combatDecision.test.ts`: exact candidate construction/formula/example, style behavior, fixed roll consumption, deterministic choice, capped pressure, resolution-based suppression, forced disengage, and future-seam purity.
+- `battle.test.ts`: event ordering, complete traces, defeat/time limit, labelled ties, at least three canonical trace hashes, no draws, and immutability.
 - `series.test.ts`: unchanged phase flow and rematch with new battle state.
-- `mvpSeries.test.ts`: balance, duration, lineup, style, and content invariants.
-- `architecture.test.ts`: simulation imports no DOM/Three/Web Audio/presentation/content and contains no `Math.random()`.
+- `mvpSeries.test.ts`: golden scenario, lineup, style, and content invariants.
+- `balance.test.ts`: fixed roster/equal-stat cohorts, win-rate bands, duration percentiles, timeouts, resolution gaps, and movement metrics.
+- `architecture.test.ts`: simulation imports no DOM/Three/Web Audio/presentation/content and contains no `Math.random()` or forbidden runtime trigonometry/transcendentals listed under Random streams.
 
 ### Presentation/unit
 
 - Pose sampling always returns finite transforms and progress in range.
-- Every style supplies every joint/equipment anchor.
+- Every style supplies every joint/equipment anchor and every required data-driven guard/action/reaction/defeat pose.
 - Contact IK stays within its cosmetic cap.
 - Feed maps every event and retains exactly the latest eight display entries.
 - Audio maps semantic events, suppresses duplicates, enforces voice/speed rules, and degrades without AudioContext.
-- A test-only audio debug surface can trigger every cue individually without starting a bout; it is unavailable in the production UI.
+- In Vite dev/test only, `?audioDebug=1` exposes a test API that can trigger every cue without starting a bout. Production builds ignore the parameter and render no debug UI.
 
 ### Playwright
 
@@ -702,12 +774,13 @@ The feed formats new actions and defenses but remains non-live for screen reader
 - Second and third bouts reset rig, effects, audio cursor, and camera state.
 - Deterministic presentation fixtures freeze Heavy guard/cleave, Fast burst/disengage, Technical measure/parry/counter, plus hit, block, stagger, and defeat.
 - Screenshot baselines cover those key poses and one complete two-fighter safe frame at 1280×820.
+- At 60, 120, and 144 Hz emulation, interpolated roots remain smooth while simulation hashes stay identical; a Chromium fixture compares a canonical hash also asserted in Vitest.
 - The visual fixture mechanism is test-only and cannot alter production simulation results.
 - A WebGL context-loss fixture verifies the text fallback and series progression.
 
 ## Human review gate
 
-Before handoff, a human reviews:
+Before handoff, humans review:
 
 1. one full bout for each of the nine ordered home-style/opponent-style combinations at `×1`;
 2. one full three-bout series at `×2`;
@@ -715,18 +788,22 @@ Before handoff, a human reviews:
 4. a short recording with HP cards and feed hidden;
 5. each audio cue in isolation and cues during a complete bout.
 
-The reviewer explicitly checks silhouette separation, intent, foot sliding, weapon contact, spacing rhythm, camera framing, repeated motion, sound weight, and whether the winner can be explained. Visual/audio acceptance cannot be delegated to a text-only model.
+At least two reviewers who did not implement the combat watch three representative `×1` clips with HP cards/feed hidden; at least one reviewer begins without being taught the style rules. For every committed exchange they briefly label anticipation, defense/result, and recovery, then compare those labels with the event trace. Acceptance requires at least `75%` fully correct exchange labels from each reviewer, correct identification of all three styles after one clip each, and a causally plausible explanation of the winner in all three clips. They also explicitly check foot sliding, weapon contact, spacing rhythm, camera framing, repeated motion, reduced-motion mode, and sound weight. The PR records anonymized counts and short failure notes, not only a subjective pass. Visual/audio acceptance cannot be delegated to a text-only model.
 
 ## Migration
 
-- Replace scalar fighter `x` with `Vec2 position` and add facing, velocity, locomotion, action, stagger, and decision state.
-- Replace `attackIntervalTicks` with `power` plus style action timelines.
+- In `fighters.ts`, rename `damage` to `power`, rename `blockChance` to `defenseChance`, remove `attackIntervalTicks`, and extend validation for the new fighter/action consistency rules.
+- Replace scalar fighter `x` with `Vec2 position`; add normalized vector facing, velocity, travelled distance, locomotion, action, stagger, reaction, resolution/contact clocks, and decision state.
 - Replace the instantaneous attack loop with decision, movement, phase, defense, and contact modules.
-- Expand structured events and feed formatting.
+- In `battle.ts`, change `MAX_BOUT_TICKS` from `2700` to `3600`, remove `approach-started`, add the expanded structured events, trace hashing, and new tick order.
+- In `mvpSeries.ts` and its consumers, replace `TARGET_MIN_BOUT_TICKS = 840` / `TARGET_MAX_BOUT_TICKS = 1800` with cohort metrics rather than exported single-bout limits.
+- Update `battleFeed.ts` and `ArenaView.ts` for removal of `approach-started` and formatting/consumption of every new event.
 - Replace `ArenaView` reaction-decay transforms with procedural fighters and `PoseController`.
-- Add `CombatAudio` and sound runtime intent/control.
+- Add data-driven combat poses, `ArenaCamera`, render interpolation, `CombatAudio`, and sound runtime intent/control.
 - Update cards for the new stats.
 - Retune the six fighter rows while preserving approved fixture intent.
+- Extend `architecture.test.ts` with the content-import and runtime-transcendental bans, add the fixed balance cohort, and update existing fighter fixtures for renamed fields.
+- Update `tests/smoke.spec.ts` helpers that assume a 2700-tick bout limit; add render-rate/hash, reset, reduced-motion, and dev audio-debug coverage.
 - Update README architecture, controls, deterministic guarantees, and checks.
 - Update/add visual baselines only for intentional combat and stat-card changes.
 
@@ -734,7 +811,7 @@ The reviewer explicitly checks silhouette separation, intent, foot sliding, weap
 
 - All goals and player-facing acceptance criteria are met.
 - The baseline series fixtures and full deterministic traces pass.
-- Ordinary baseline bouts finish in 25–40 seconds with no stationary cooldown trading.
+- Cohort pacing and anti-stall bands pass with no stationary cooldown trading.
 - All three styles show distinct movement, attacks, defenses, silhouettes, and equipment.
 - Simulation remains pure TypeScript and presentation remains rule-free.
 - Audio is optional, event-driven, controllable, and failure-safe.
