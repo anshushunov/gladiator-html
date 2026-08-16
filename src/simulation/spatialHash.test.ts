@@ -1,0 +1,101 @@
+import { describe, expect, it } from 'vitest'
+import { buildSpatialHash, collectCanonicalNeighborPairs, queryRadius, spatialCellKey } from './spatialHash'
+
+describe('spatial hash', () => {
+  const entries = [
+    { id: 'c', position: { x: 6.4, z: 0 } },
+    { id: 'a', position: { x: 0, z: 0 } },
+    { id: 'b', position: { x: 2.9, z: 0 } },
+  ]
+
+  it('queries a radius within adjacent cells', () => {
+    const index = buildSpatialHash(entries, 3.2)
+    expect(queryRadius(index, { x: 0, z: 0 }, 3.2)).toEqual(['a', 'b'])
+  })
+
+  it('collects canonical neighbor pairs with structural candidate counts', () => {
+    const index = buildSpatialHash(entries, 3.2)
+    expect(collectCanonicalNeighborPairs(index)).toEqual({
+      pairKeys: ['a|b', 'b|c'],
+      candidateChecks: 3,
+    })
+  })
+
+  it('is independent of input order', () => {
+    const index = buildSpatialHash(entries, 3.2)
+    expect(buildSpatialHash([...entries].reverse(), 3.2)).toEqual(index)
+  })
+
+  it('uses the default cell size of 3.2 when none is given', () => {
+    const index = buildSpatialHash(entries)
+    expect(index.cellSize).toBe(3.2)
+  })
+
+  it('places negative and positive coordinates near zero into different cells', () => {
+    const negativeKey = spatialCellKey({ x: -0.1, z: 0 }, 3.2)
+    const positiveKey = spatialCellKey({ x: 0.1, z: 0 }, 3.2)
+    expect(negativeKey).not.toBe(positiveKey)
+    expect(negativeKey).toBe('-1,0')
+    expect(positiveKey).toBe('0,0')
+  })
+
+  it('gives distinct cells no colliding keys across a negative/positive grid', () => {
+    const points = [
+      { x: -3.2, z: -3.2 },
+      { x: -3.2, z: 3.2 },
+      { x: 3.2, z: -3.2 },
+      { x: 3.2, z: 3.2 },
+      { x: 0, z: 0 },
+      { x: -0.1, z: 0.1 },
+    ]
+    const keys = points.map((position) => spatialCellKey(position, 3.2))
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  it('rejects duplicate entry ids', () => {
+    const duplicated = [
+      { id: 'a', position: { x: 0, z: 0 } },
+      { id: 'a', position: { x: 1, z: 1 } },
+    ]
+    expect(() => buildSpatialHash(duplicated, 3.2)).toThrow(/"a"/)
+  })
+
+  it('visits every intersecting cell for a radius larger than one cell, not just the 3x3 neighbourhood', () => {
+    const strung = [
+      { id: 'p0', position: { x: 0, z: 0 } },
+      { id: 'p1', position: { x: 3.3, z: 0 } },
+      { id: 'p2', position: { x: 6.6, z: 0 } },
+      { id: 'p3', position: { x: 9.9, z: 0 } },
+      { id: 'p4', position: { x: 13.2, z: 0 } },
+    ]
+    const index = buildSpatialHash(strung, 3.2)
+    // radius 10 from p0 spans far more than the 3x3 neighbourhood of p0's cell.
+    expect(queryRadius(index, { x: 0, z: 0 }, 10)).toEqual(['p0', 'p1', 'p2', 'p3'])
+  })
+
+  it('returns each candidate pair at most once regardless of scan direction', () => {
+    const index = buildSpatialHash(entries, 3.2)
+    const { pairKeys } = collectCanonicalNeighborPairs(index)
+    expect(new Set(pairKeys).size).toBe(pairKeys.length)
+    for (const key of pairKeys) {
+      const [first, second] = key.split('|')
+      expect(first < second).toBe(true)
+    }
+  })
+
+  it('keeps cell keys, pair keys, and query results lexicographically sorted', () => {
+    const index = buildSpatialHash(entries, 3.2)
+    expect(Object.keys(index.cells)).toEqual([...Object.keys(index.cells)].sort())
+    const { pairKeys } = collectCanonicalNeighborPairs(index)
+    expect(pairKeys).toEqual([...pairKeys].sort())
+    const found = queryRadius(index, { x: 0, z: 0 }, 100)
+    expect(found).toEqual([...found].sort())
+  })
+
+  it('never returns a Set from its public API', () => {
+    const index = buildSpatialHash(entries, 3.2)
+    expect(index.cells).not.toBeInstanceOf(Set)
+    expect(queryRadius(index, { x: 0, z: 0 }, 3.2)).not.toBeInstanceOf(Set)
+    expect(collectCanonicalNeighborPairs(index).pairKeys).not.toBeInstanceOf(Set)
+  })
+})
