@@ -255,7 +255,7 @@ git commit -m "feat: add combatant-local deterministic streams"
 
 ```ts
 const entries = [
-  { id: 'c', position: { x: 6.4, z: 0 } },
+  { id: 'c', position: { x: 5.0, z: 0 } },
   { id: 'a', position: { x: 0, z: 0 } },
   { id: 'b', position: { x: 2.9, z: 0 } },
 ]
@@ -267,6 +267,8 @@ expect(collectCanonicalNeighborPairs(index)).toEqual({
 })
 expect(buildSpatialHash([...entries].reverse(), 3.2)).toEqual(index)
 ```
+
+> **Amendment (2026-08-16, approved by the plan owner during execution):** `c` was authored at `x = 6.4`, which is unreachable under the design's normative broad phase. The design fixes candidate pairs as those "returned from the same or adjacent occupied cells" (design § Spatial index, targeting, and separation). At `x = 6.4` the entry falls in cell `2` while `a`/`b` share cell `0`, so `b|c` (3.5 units apart, further than one cell) can only be produced by widening the scan to a two-cell ring — which raises the sparse 10×10 separation pass to 918 candidate checks and breaks the design's binding `< 800` mass-foundation bound (design § Mass-foundation acceptance). Moving `c` to `x = 5.0` places it in cell `1`, adjacent to cell `0`, and reproduces every asserted value above — `['a', 'b']`, `['a|b', 'b|c']`, and `3` — under the normative one-cell-ring rule, which then costs only 342 checks on the sparse fixture. The rule, not the asserted counts, is normative; only the authored coordinate changed.
 
 Add negative-coordinate cell-key tests, duplicate-ID rejection, radius crossing more than adjacent cells, and pair uniqueness.
 
@@ -292,7 +294,7 @@ export function collectCanonicalNeighborPairs(index: SpatialHash): {
 }
 ```
 
-Use `Math.floor`, default cell size `3.2`, lexicographically sorted IDs/cell keys/pair keys, squared-distance filtering for radius queries, and a `Set` only as transient local implementation state.
+Use `Math.floor`, default cell size `3.2`, lexicographically sorted IDs/cell keys/pair keys, squared-distance filtering for radius queries, and a `Set` only as transient local implementation state. `collectCanonicalNeighborPairs` examines only the same and directly adjacent occupied cells — a one-cell ring — and returns the examined pairs whose squared distance is within `cellSize`. `candidateChecks` counts each examined unordered pair exactly once.
 
 - [ ] **Step 3: Verify and commit**
 
