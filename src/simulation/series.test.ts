@@ -164,15 +164,25 @@ it('clears mutable run data but preserves content and seed on rematch', () => {
   expect(restarted.state.opponents).toBe(finished.opponents)
 })
 
-// The exact scores below are the deep-combat kernel's current deterministic
-// output for the MVP roster/seed, not a tuned balance target: the kernel
-// (movement, actions, stagger, contact resolution) replaced the old
-// instantaneous loop this task deletes, and Task 13 ("Balance cohorts,
-// tuning, freeze canonical hashes") owns bringing archetype-counter
-// dominance back down to the "stats matter, not just counters" design goal.
-// Pinning today's real, deterministic values here keeps this a genuine
-// regression guard for the wiring this task delivers; Task 13 is expected to
-// revisit these literals once it retunes the underlying combat math.
+// GATE for Task 13 (Balance cohorts, tuning, freeze canonical hashes): the
+// exact scores below are the deep-combat kernel's current, un-tuned,
+// deterministic output for the MVP roster/seed -- not a passing balance
+// target. They CONTRADICT the design's golden-scenario acceptance
+// (readable-deep-combat-design.md, "Golden scenario (`20260815`)"), which
+// states verbatim: "the all-counter lineup `Brutus→Drusus`, `Aquila→Cassius`,
+// `Nerva→Magnus` must not sweep `3–0`" -- it currently does, asserted below
+// as `{ home: 3, away: 0 }` and as `'3-0'` in the six-lineup set. The
+// relaxed `['defeat', 'time-limit']` check below also admits the design's
+// other stated bound, "fewer than `2%` of bouts reach `3600`" -- Task 10
+// measured roughly 50% reaching the cap, so `'time-limit'` is currently the
+// common case here, not the rare one the design requires. Task 13 must
+// retune the combat catalog until both bounds hold, then restore this test
+// to `toBe('defeat')` and to asserting the all-counter lineup loses (not
+// sweeps) -- do not just re-pin new literals without checking that. Task 11
+// deliberately left this red-in-spirit-but-green-in-CI because the plan
+// forbids an intentionally red migration window and balance tuning is
+// explicitly out of Task 11's scope; see task-11-report.md's Concerns
+// section for the full writeup.
 it('produces a deterministic, non-uniform score across lineups for the same seed', () => {
   const allCounters = playSeries(['brutus', 'aquila', 'nerva'])
   const mixed = playSeries(['aquila', 'nerva', 'brutus'])

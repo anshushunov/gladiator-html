@@ -73,11 +73,25 @@ describe('battle duel adapter', () => {
     expect(['home', 'away']).toContain(first.winnerSide)
   })
 
+  // Seed count per pairing: the legacy instantaneous loop's equivalent test
+  // ran 1..200 (1800 total runs); the kernel's per-tick cost (spatial hash,
+  // movement resolution, contact intents) makes that too slow for the
+  // default suite. Measured on this machine with a throwaway perf harness
+  // (createBattle + advanceBattleTicks to MAX_BOUT_TICKS, 9 archetype
+  // pairings): 8 seeds/pairing (72 runs) ~2.9s, 20/pairing (180 runs) ~8.8s,
+  // 40/pairing (360 runs) ~17.6s, 80/pairing (720 runs) ~35.0s, 200/pairing
+  // (1800 runs) ~81.8s -- a steady ~45-49ms/run, so cost scales linearly
+  // with seed count and 200 is not viable here. 20 seeds/pairing (180 runs)
+  // keeps this one test under ~9s, which is the most this file's runtime
+  // budget can absorb; the broader 200-seed-per-pairing sweep this replaces
+  // still exists, just moved: Task 12's capacity fixtures exercise the same
+  // kernel at higher combatant counts, and Task 13's balance cohorts run the
+  // full 200-seed-per-pairing sweep as part of tuning.
   it('finishes every archetype pairing across many seeds with exactly one winner', () => {
     const archetypes: readonly Archetype[] = ['heavy', 'fast', 'technical']
     for (const homeArchetype of archetypes) {
       for (const awayArchetype of archetypes) {
-        for (let seed = 1; seed <= 8; seed += 1) {
+        for (let seed = 1; seed <= 20; seed += 1) {
           const home: FighterDefinition = { ...heavy, id: `home-${homeArchetype}`, archetype: homeArchetype }
           const away: FighterDefinition = { ...fast, id: `away-${awayArchetype}`, archetype: awayArchetype }
           const state = finished(baseConfig({ home, away, seed }))
@@ -87,7 +101,7 @@ describe('battle duel adapter', () => {
         }
       }
     }
-  })
+  }, 20_000)
 
   it('emits a finish reason, canonical terminal event, and matching duration', () => {
     const state = finished(baseConfig({ seed: 11 }))
