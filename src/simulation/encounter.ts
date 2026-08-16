@@ -42,6 +42,7 @@ import {
   buildCombatDecisionContext,
   chooseCombatDecision,
   decisionIntervalTicks,
+  hasFastForcedDisengageEnded,
   isDefenseReactionOpportunity,
   processDefenseBatch,
   retainTarget,
@@ -179,6 +180,16 @@ export interface FighterCombatState {
   lastResolutionTick: number
   reactionLedger: readonly ReactionRecord[]
   forcedActionId?: AttackActionId
+  /**
+   * Set to the tick Fast's forced disengage began (immediately after a
+   * `fast-burst-lunge` recovery ends), cleared once
+   * `hasFastForcedDisengageEnded` (combatDecision.ts) reports the range or
+   * tick-count exit condition. `undefined` whenever the fighter is not
+   * currently in this forced state. Technical's forced parry-counter has no
+   * equivalent persistent field here: its trigger (a successful parry) is a
+   * contact-resolution outcome that belongs to Task 9.
+   */
+  forcedDisengageStartTick?: number
 }
 
 export interface EncounterCombatantDefinition {
@@ -661,8 +672,22 @@ function resolveActionPhaseDefinition(
   return combatStyles.attacks[definitionId as AttackActionId] ?? combatStyles.defenses[definitionId as DefenseActionId]
 }
 
+/**
+ * `status` has no `'staggered'` variant -- a staggered combatant can sit at
+ * `action.type === 'neutral'` -- so `staggerUntilTick <= tick` must be
+ * checked explicitly here. Without it, both phase 3 reacquisition and phase
+ * 4 decisions would treat a staggered combatant as ready once Tasks 9-10
+ * start setting `staggerUntilTick > 0`, consuming a decision-stream draw on
+ * a tick the design says has none and desynchronizing the stream.
+ */
 function isDecisionReady(combatant: Readonly<FighterCombatState>, tick: number): boolean {
-  return combatant.status === 'active' && combatant.action.type === 'neutral' && tick >= combatant.nextDecisionTick
+  return combatant.status === 'active' && combatant.action.type === 'neutral' && combatant.staggerUntilTick <= tick && tick >= combatant.nextDecisionTick
+}
+
+function distanceBetween(a: Readonly<Vec2>, b: Readonly<Vec2>): number {
+  const dx = a.x - b.x
+  const dz = a.z - b.z
+  return Math.sqrt(dx * dx + dz * dz)
 }
 
 // --- Phase 1: increment tick and transition expired phases -----------------
@@ -693,18 +718,21 @@ function transitionExpiredPhases(
 
 // --- Phase 2: cleanup -------------------------------------------------------
 //
-// Design's phase 2 bundles three concerns. This task implements the two that
-// are reachable without contact resolution or stagger (neither exists yet):
-// pruning `reactionLedger` entries once their referenced attack has resolved
-// (passed contact) or vanished, and interrupting a still-windup-phase bound
-// defense whose threat vanished before its own contact ("threat-canceled").
-// "Clear expired stagger" needs no code: `staggerUntilTick` is a plain
-// comparison against `tick`, nothing to reset, and Task 8 never produces a
-// non-zero value. "Complete forced state transitions" (Fast's post-lunge
-// forced disengage, Technical's forced parry-counter) has no persistent
-// "since when" field on `FighterCombatState` and is only ever *started* by a
-// successful parry or a burst-lunge recovery ending -- both contact-adjacent
-// outcomes that belong to Task 9. Neither is exercised in this task.
+// Design's phase 2 bundles four concerns:
+// - "Clear expired stagger" needs no code: `staggerUntilTick` is a plain
+//   comparison against `tick` (see `isDecisionReady`), nothing to reset, and
+//   Task 8 never produces a non-zero value.
+// - `pruneReactionLedgerAndCancelThreats` prunes `reactionLedger` entries
+//   once their referenced attack has resolved (passed contact) or vanished,
+//   and interrupts a still-windup-phase bound defense whose threat vanished
+//   before its own contact ("threat-canceled").
+// - `completeForcedStateTransitions` implements Fast's forced disengage
+//   (below): its trigger -- a `fast-burst-lunge` recovery ending -- is a
+//   pure phase-clock event phase 1 already observes, needing nothing from
+//   contact resolution.
+// - Technical's forced parry-counter is deliberately **not** started here:
+//   its trigger is a *successful parry*, a contact-resolution outcome that
+//   belongs to Task 9. `forcedActionId` is never populated by this file.
 
 /**
  * Prunes a `reactionLedger` entry once the referenced attacker action either
@@ -769,6 +797,85 @@ function pruneReactionLedgerAndCancelThreats(
 
     if (keptRecords.length !== defender.reactionLedger.length || updatedDefender !== defender) {
       next[defenderId] = { ...updatedDefender, reactionLedger: keptRecords }
+    }
+  }
+
+  return { combatants: next, events }
+}
+
+/** Sets `locomotionIntent` and emits `movement-intent-changed` only when the value actually differs from `combatant`'s current one, matching the same "changed enum value only" rule phase 4 uses. */
+function forceLocomotionIntent(
+  combatant: Readonly<FighterCombatState>,
+  intent: LocomotionIntent,
+  tick: number,
+  cursor: EventIdCursor,
+  events: EncounterEvent[],
+): FighterCombatState {
+  if (combatant.locomotionIntent === intent) return combatant
+  events.push({
+    id: allocateEventId(cursor),
+    tick,
+    type: 'movement-intent-changed',
+    combatantId: combatant.id,
+    from: combatant.locomotionIntent,
+    to: intent,
+  })
+  return { ...combatant, locomotionIntent: intent }
+}
+
+/**
+ * Wires Fast's forced disengage (design.md's locomotion section): the
+ * instant a `fast-burst-lunge` action's `recovery` phase ends (detected off
+ * `previousCombatants`, the tick's pre-phase-1 snapshot, exactly like
+ * `transitionExpiredPhases` detects any other phase boundary), the fighter
+ * is forced into `disengage` and stamped with `forcedDisengageStartTick`.
+ * Every following tick while that field is set, `hasFastForcedDisengageEnded`
+ * (Task 7's existing threshold helper, not reimplemented here) is checked
+ * against the live distance to target and ticks elapsed; once true the field
+ * clears and `nextDecisionTick` is pulled to the current tick so ordinary
+ * weighted selection resumes immediately, matching "re-enters ordinary
+ * weighted choice once inside the lunge's start range" (or the 30-tick
+ * timeout, whichever comes first). While forced, phase 4 (`makeCombatDecisions`)
+ * skips this combatant entirely -- forced behavior bypasses weighted
+ * selection and consumes no decision-stream draw.
+ */
+function completeForcedStateTransitions(
+  previousCombatants: Readonly<Record<CombatantId, FighterCombatState>>,
+  combatants: Readonly<Record<CombatantId, FighterCombatState>>,
+  combatantIds: readonly CombatantId[],
+  tick: number,
+  cursor: EventIdCursor,
+): { combatants: Record<CombatantId, FighterCombatState>; events: EncounterEvent[] } {
+  const next: Record<CombatantId, FighterCombatState> = { ...combatants }
+  const events: EncounterEvent[] = []
+
+  for (const id of combatantIds) {
+    const previousCombatant = previousCombatants[id]
+    const combatant = next[id]
+    if (combatant.status !== 'active' || combatant.definition.archetype !== 'fast') continue
+
+    const justEndedBurstLunge =
+      previousCombatant.action.type === 'active' &&
+      previousCombatant.action.definitionId === 'fast-burst-lunge' &&
+      previousCombatant.action.phase === 'recovery' &&
+      previousCombatant.action.phaseEndsAtTick === tick
+
+    if (justEndedBurstLunge) {
+      const forced = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
+      next[id] = { ...forced, forcedDisengageStartTick: tick }
+      continue
+    }
+
+    if (combatant.forcedDisengageStartTick === undefined) continue
+
+    const target = combatant.targetId ? combatants[combatant.targetId] : undefined
+    const distanceToTarget = target ? distanceBetween(combatant.position, target.position) : Infinity
+    const ticksSinceForced = tick - combatant.forcedDisengageStartTick
+
+    if (hasFastForcedDisengageEnded(distanceToTarget, ticksSinceForced)) {
+      next[id] = { ...combatant, forcedDisengageStartTick: undefined, nextDecisionTick: tick }
+    } else {
+      next[id] = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
     }
   }
 
@@ -860,6 +967,9 @@ function makeCombatDecisions(
 
   for (const id of combatantIds) {
     const self = nextCombatants[id]
+    // Forced behavior (Fast's disengage, wired in phase 2) bypasses weighted
+    // selection entirely: no decision-stream draw, no candidate scoring.
+    if (self.forcedDisengageStartTick !== undefined) continue
     if (!isDecisionReady(self, tick) || self.targetId === undefined) continue
 
     const nearbyIds = queryRadius(spatialHash, self.position, TARGET_RETENTION_RADIUS)
@@ -1058,7 +1168,17 @@ function computeUpdatedFacing(combatant: Readonly<FighterCombatState>, target: R
 /**
  * Movement constraint by action phase (design.md, exact): `windup` allows
  * only the action's authored root travel, evenly distributed across its
- * windup ticks along the (already turned) facing; `contact`/`impact` freeze
+ * windup ticks along the (already turned) facing, **capped so the step
+ * never closes the live distance to the attack's own target past
+ * `arena.minimumSeparation`** ("stops early at minimum separation and never
+ * expands the legal contact range" -- design.md:392). The cap is
+ * conservative: it treats the full displacement length as reducing distance
+ * 1:1 (true when facing points at the target, which it generally does by
+ * this point since facing turns toward the target every tick), so it can
+ * stop a step slightly earlier than geometrically necessary but never lets
+ * one overshoot past the boundary for `resolvePairSeparation`'s symmetric
+ * push to paper over -- that push moves the *target* too, which the design
+ * does not intend for an attacker's own approach. `contact`/`impact` freeze
  * root motion; `recovery` allows at most 35% of normal style speed along the
  * last ordinary `locomotionIntent`; staggered allows no locomotion (Task 8
  * never produces `staggerUntilTick > tick`, kept for forward compatibility).
@@ -1073,6 +1193,8 @@ function computeDesiredDisplacement(
   facing: Readonly<Vec2>,
   tick: number,
   combatStyles: CombatStyleCatalog,
+  combatants: Readonly<Record<CombatantId, FighterCombatState>>,
+  minimumSeparation: number,
 ): Vec2 {
   if (combatant.staggerUntilTick > tick) return { x: 0, z: 0 }
 
@@ -1082,7 +1204,9 @@ function computeDesiredDisplacement(
         const attackDefinition: AttackActionDefinition | undefined = combatStyles.attacks[combatant.action.definitionId as AttackActionId]
         if (!attackDefinition) return { x: 0, z: 0 }
         const perTick = attackDefinition.rootTravel / attackDefinition.windupTicks
-        return { x: facing.x * perTick, z: facing.z * perTick }
+        const target = combatants[combatant.action.targetId]
+        const step = target ? Math.min(perTick, Math.max(0, distanceBetween(combatant.position, target.position) - minimumSeparation)) : perTick
+        return { x: facing.x * step, z: facing.z * step }
       }
       case 'contact':
       case 'impact':
@@ -1103,6 +1227,7 @@ function computeMovementIntents(
   combatantIds: readonly CombatantId[],
   combatStyles: CombatStyleCatalog,
   tick: number,
+  arena: Readonly<CombatArenaDefinition>,
 ): MovementIntentsResult {
   const updatedFacing: Record<CombatantId, Vec2> = {}
   for (const id of combatantIds) {
@@ -1121,7 +1246,7 @@ function computeMovementIntents(
     const combatant = combatants[id]
     if (combatant.status !== 'active') continue
     const style = combatStyles.styles[combatant.definition.archetype]
-    const displacement = computeDesiredDisplacement(combatant, style, updatedFacing[id], tick, combatStyles)
+    const displacement = computeDesiredDisplacement(combatant, style, updatedFacing[id], tick, combatStyles, combatants, arena.minimumSeparation)
     requests.push({ id, position: combatant.position, desiredDisplacement: displacement })
   }
 
@@ -1190,6 +1315,10 @@ export function advanceEncounterTick(previous: EncounterState): EncounterTransit
   combatants = cleanup.combatants
   events.push(...cleanup.events)
 
+  const forcedTransitions = completeForcedStateTransitions(previous.combatants, combatants, previous.combatantIds, tick, cursor)
+  combatants = forcedTransitions.combatants
+  events.push(...forcedTransitions.events)
+
   // Phase 3
   const preMovementHash = buildActivePreMovementHash(combatants, previous.combatantIds)
   combatants = refreshTargets(combatants, previous.combatantIds, previous.hostility, preMovementHash, tick)
@@ -1224,7 +1353,7 @@ export function advanceEncounterTick(previous: EncounterState): EncounterTransit
   events.push(...defense.events)
 
   // Phase 7
-  const intents = computeMovementIntents(combatants, previous.combatantIds, previous.combatStyles, tick)
+  const intents = computeMovementIntents(combatants, previous.combatantIds, previous.combatStyles, tick, previous.arena)
 
   // Phase 8
   combatants = resolveMovementConstraints(combatants, previous.combatantIds, intents, previous.arena)
@@ -1329,6 +1458,9 @@ function assertCombatantInvariants(combatant: FighterCombatState, id: CombatantI
   requireFiniteInteger(combatant.staggerUntilTick, field('staggerUntilTick'))
   requireFiniteInteger(combatant.lastContactTick, field('lastContactTick'))
   requireFiniteInteger(combatant.lastResolutionTick, field('lastResolutionTick'))
+  if (combatant.forcedDisengageStartTick !== undefined) {
+    requireFiniteInteger(combatant.forcedDisengageStartTick, field('forcedDisengageStartTick'))
+  }
 
   requireFinite(combatant.travelledDistance, field('travelledDistance'))
   if (combatant.travelledDistance < 0) {

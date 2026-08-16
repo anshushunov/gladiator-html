@@ -515,6 +515,39 @@ describe('advanceEncounterTick: movement constraints by action phase (design.md,
     expect(state.combatants.self.action).toMatchObject({ phase: 'windup' })
   })
 
+  it('windup: stops the root-travel step early at arena.minimumSeparation instead of pushing the target back', () => {
+    // heavy-cleave's per-tick step is 0.45/34 ~= 0.01324, which would carry
+    // `self` from x=0 to x=0.01324 -- past the target's x=0.905 minus
+    // freeArena's minimumSeparation (0.9), i.e. past 0.005 of headroom.
+    // The capped step must land self at exactly minimumSeparation from the
+    // (unmoved) target, not let the symmetric separation solver shove the
+    // target backwards to fix an overshoot.
+    const base = patchCombatant(movementConstraintFixture(), 'other', { position: { x: 0.905, z: 0 }, nextDecisionTick: 999_999 })
+    const withSelf = patchCombatant(base, 'self', {
+      position: { x: 0, z: 0 },
+      facing: { x: 1, z: 0 },
+      targetId: 'other',
+      nextDecisionTick: 999_999,
+      action: {
+        type: 'active',
+        instanceId: 'self:0',
+        definitionId: 'heavy-cleave',
+        phase: 'windup',
+        phaseStartedTick: 0,
+        phaseEndsAtTick: 40,
+        targetId: 'other',
+        attackRolls: { accuracy: 0.5, critical: 0.5 },
+      },
+    })
+    const withTick: EncounterState = { ...withSelf, tick: 5 }
+    const otherBefore = withTick.combatants.other.position
+
+    const { state } = advanceEncounterTick(withTick)
+
+    expect(distanceBetween(state.combatants.self.position, state.combatants.other.position)).toBeCloseTo(freeArena.minimumSeparation, 9)
+    expect(state.combatants.other.position).toEqual(otherBefore) // the target never moves to accommodate the attacker's approach.
+  })
+
   it('contact: freezes root motion during the one-tick contact phase, even when entered this same tick', () => {
     const base = patchCombatant(movementConstraintFixture(), 'self', {
       position: { x: 0, z: 0 },
@@ -629,6 +662,152 @@ describe('advanceEncounterTick: movement constraints by action phase (design.md,
     expect(state.combatants.self.position).toEqual({ x: 0, z: 0 })
     expect(state.combatants.self.velocity).toEqual({ x: 0, z: 0 })
     expect(state.combatants.self.locomotionIntent).toBe('advance') // retained, not forced to hold-range
+  })
+})
+
+describe('advanceEncounterTick: isDecisionReady is stagger-aware', () => {
+  it('does not reacquire a target for a staggered, targetless, otherwise decision-ready combatant', () => {
+    const base = movementConstraintFixture() // 'other' sits 15 units away, inside both retention (20) and acquisition (16) radii.
+    const state = patchCombatant(base, 'self', { nextDecisionTick: 1, staggerUntilTick: 999, targetId: undefined })
+    const withTick: EncounterState = { ...state, tick: 0 } // advances to tick 1, matching nextDecisionTick
+
+    const { state: next } = advanceEncounterTick(withTick)
+
+    expect(next.combatants.self.targetId).toBeUndefined()
+  })
+
+  it('does not make a decision (or consume its decision stream) for a staggered combatant that already has a valid target', () => {
+    const base = movementConstraintFixture()
+    const state = patchCombatant(base, 'self', {
+      nextDecisionTick: 1,
+      staggerUntilTick: 999,
+      targetId: 'other',
+      locomotionIntent: 'hold-range',
+    })
+    const withTick: EncounterState = { ...state, tick: 0 }
+    const decisionStreamBefore = withTick.randomByCombatant.self.decision
+
+    const { state: next, events } = advanceEncounterTick(withTick)
+
+    // Heavy at distance 15 (well outside its 1.2-1.7 preferred range) would
+    // ordinarily select advance/pressure with a strongly positive weight --
+    // if a real decision had run, locomotionIntent would very likely have
+    // changed away from 'hold-range'. Staggered, it must not run at all.
+    expect(next.combatants.self.locomotionIntent).toBe('hold-range')
+    expect(next.randomByCombatant.self.decision).toEqual(decisionStreamBefore)
+    expect(events.some((event) => event.type === 'movement-intent-changed' || event.type === 'action-started')).toBe(false)
+  })
+})
+
+describe("advanceEncounterTick: Fast's forced disengage (design.md; Task 7's hasFastForcedDisengageEnded)", () => {
+  function fastDisengageFixture(otherPosition: Vec2 = { x: 10, z: 0 }): EncounterState {
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('self', 'home', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
+        combatant('other', 'away', { archetype: 'fast', startPosition: otherPosition }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'different-factions' },
+      combatStyles: COMBAT_STYLES,
+    })
+    return patchCombatant(created.state, 'other', { nextDecisionTick: 999_999 })
+  }
+
+  it('forces disengage the instant a fast-burst-lunge recovery ends, stamping forcedDisengageStartTick and emitting movement-intent-changed', () => {
+    const base = fastDisengageFixture()
+    const state = patchCombatant(base, 'self', {
+      targetId: 'other',
+      nextDecisionTick: 999_999,
+      locomotionIntent: 'advance',
+      action: {
+        type: 'active',
+        instanceId: 'self:0',
+        definitionId: 'fast-burst-lunge',
+        phase: 'recovery',
+        phaseStartedTick: 0,
+        phaseEndsAtTick: 6,
+        targetId: 'other',
+        attackRolls: { accuracy: 0.5, critical: 0.5 },
+      },
+    })
+    const withTick: EncounterState = { ...state, tick: 5 } // recovery ends exactly at the new tick (6)
+
+    const { state: next, events } = advanceEncounterTick(withTick)
+
+    expect(next.combatants.self.action).toEqual({ type: 'neutral' })
+    expect(next.combatants.self.locomotionIntent).toBe('disengage')
+    expect(next.combatants.self.forcedDisengageStartTick).toBe(6)
+    expect(events).toContainEqual({
+      id: expect.any(Number),
+      tick: 6,
+      type: 'movement-intent-changed',
+      combatantId: 'self',
+      from: 'advance',
+      to: 'disengage',
+    })
+  })
+
+  it('ends the forced disengage once distance to target falls to at most 2.4 units, and immediately re-enters ordinary weighted choice', () => {
+    const base = fastDisengageFixture({ x: 2.3, z: 0 }) // within FAST_FORCED_DISENGAGE_END_RANGE (2.4)
+    const state = patchCombatant(base, 'self', {
+      targetId: 'other',
+      nextDecisionTick: 999_999,
+      locomotionIntent: 'disengage',
+      forcedDisengageStartTick: 0,
+      action: { type: 'neutral' },
+    })
+    const withTick: EncounterState = { ...state, tick: 4 } // ticksSinceForced becomes 5, well under the 30-tick timeout
+    const decisionStreamBefore = withTick.randomByCombatant.self.decision
+
+    const { state: next } = advanceEncounterTick(withTick)
+
+    expect(next.combatants.self.forcedDisengageStartTick).toBeUndefined()
+    // Clearing the forced state makes the combatant decision-ready again on
+    // this same tick (design: "re-enters ordinary weighted choice"), so a
+    // real decision runs immediately -- the decision stream is consumed,
+    // and nextDecisionTick reflects that fresh ordinary decision rather than
+    // the sentinel this fixture set for the (bypassed) forced period.
+    expect(next.randomByCombatant.self.decision).not.toEqual(decisionStreamBefore)
+    expect(next.combatants.self.nextDecisionTick).toBeGreaterThan(5)
+  })
+
+  it('ends the forced disengage after 30 ticks regardless of distance', () => {
+    const base = fastDisengageFixture({ x: 10, z: 0 }) // far outside the 2.4-unit range
+    const state = patchCombatant(base, 'self', {
+      targetId: 'other',
+      nextDecisionTick: 999_999,
+      locomotionIntent: 'disengage',
+      forcedDisengageStartTick: 0,
+      action: { type: 'neutral' },
+    })
+    const withTick: EncounterState = { ...state, tick: 29 } // ticksSinceForced becomes 30 this tick
+    const decisionStreamBefore = withTick.randomByCombatant.self.decision
+
+    const { state: next } = advanceEncounterTick(withTick)
+
+    expect(next.combatants.self.forcedDisengageStartTick).toBeUndefined()
+    expect(next.randomByCombatant.self.decision).not.toEqual(decisionStreamBefore)
+  })
+
+  it('keeps forcing disengage -- no ordinary decision, no decision-stream draw -- while neither exit condition is met', () => {
+    const base = fastDisengageFixture({ x: 10, z: 0 })
+    const state = patchCombatant(base, 'self', {
+      targetId: 'other',
+      nextDecisionTick: 1, // would otherwise already be decision-ready
+      locomotionIntent: 'disengage',
+      forcedDisengageStartTick: 0,
+      action: { type: 'neutral' },
+    })
+    const withTick: EncounterState = { ...state, tick: 4 } // ticksSinceForced 5, distance 10 -- neither exit condition holds
+    const decisionStreamBefore = withTick.randomByCombatant.self.decision
+
+    const { state: next, events } = advanceEncounterTick(withTick)
+
+    expect(next.combatants.self.forcedDisengageStartTick).toBe(0)
+    expect(next.combatants.self.locomotionIntent).toBe('disengage')
+    expect(next.randomByCombatant.self.decision).toEqual(decisionStreamBefore)
+    expect(events.some((event) => event.type === 'movement-intent-changed' || event.type === 'action-started')).toBe(false)
   })
 })
 
