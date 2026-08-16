@@ -296,6 +296,135 @@ export function calculateContactDamage(
 }
 
 // ---------------------------------------------------------------------------
+// Contact resolution constants and pure geometry/multiplier helpers
+//
+// These back Task 9's contact resolution (`encounter.ts`'s stateful phase
+// 9/10 wiring, which owns `FighterCombatState`/`EncounterEvent` and so
+// cannot live in this file without a circular type dependency). Everything
+// here is pure Vec2/number math with no encounter-state coupling, matching
+// this file's existing `calculateContactPoint`/`calculateContactDamage`.
+// ---------------------------------------------------------------------------
+
+/** Heavy guard's damage/push/stagger attenuation (design.md's "Heavy guard" section). */
+export const GUARD_DAMAGE_MULTIPLIER = 0.35
+export const GUARD_PUSH_MULTIPLIER = 0.30
+export const GUARD_STAGGER_MULTIPLIER = 0.40
+
+/** Critical multiplies damage by this factor; block and critical are mutually exclusive. */
+export const CRITICAL_DAMAGE_MULTIPLIER = 1.5
+
+/** Fixed stagger a successful parry applies to the attacker (design.md's "Technical parry" section). */
+export const PARRY_ATTACKER_STAGGER_TICKS = 24
+
+/** `Math.max(1, Math.round(baseStaggerTicks * GUARD_STAGGER_MULTIPLIER))`, the explicit integer rounding design.md specifies for a blocked hit's stagger duration. */
+export function calculateBlockedStaggerTicks(baseStaggerTicks: number): number {
+  return Math.max(1, Math.round(baseStaggerTicks * GUARD_STAGGER_MULTIPLIER))
+}
+
+/**
+ * `true` when `targetPosition` is within `[contactRange.min, contactRange.max]`
+ * of `actorPosition` *and* within `actorFacing`'s minimum-dot sector toward
+ * it. Coincident roots (distance ~0) are treated as directly in front,
+ * matching `calculateContactPoint`'s own degenerate-distance convention.
+ * Shared by ordinary attack geometry misses and a bound Fast evade's
+ * success check (both ask the identical geometric question against the
+ * contact snapshot).
+ */
+export function isWithinAttackGeometry(
+  actorPosition: Readonly<Vec2>,
+  actorFacing: Readonly<Vec2>,
+  targetPosition: Readonly<Vec2>,
+  contactRange: Readonly<{ min: number; max: number }>,
+  minimumFacingDot: number,
+): boolean {
+  const dx = targetPosition.x - actorPosition.x
+  const dz = targetPosition.z - actorPosition.z
+  const distance = Math.sqrt(dx * dx + dz * dz)
+  if (distance < contactRange.min || distance > contactRange.max) return false
+  if (distance <= CONTACT_EPSILON) return true
+  const dot = (actorFacing.x * dx + actorFacing.z * dz) / distance
+  return dot >= minimumFacingDot
+}
+
+/**
+ * `true` when the attacker at `attackerPosition` falls within the
+ * defender's incoming-facing arc: `dot(defenderFacing,
+ * normalize(attackerPosition - defenderPosition)) >= minimumIncomingFacingDot`.
+ * Backs Heavy guard's and Technical parry's defender-facing gate; Fast evade
+ * has no facing gate and never calls this. Coincident roots default to
+ * "within arc" (no meaningful direction to fail against).
+ */
+export function isWithinIncomingFacingArc(
+  defenderFacing: Readonly<Vec2>,
+  defenderPosition: Readonly<Vec2>,
+  attackerPosition: Readonly<Vec2>,
+  minimumIncomingFacingDot: number,
+): boolean {
+  const dx = attackerPosition.x - defenderPosition.x
+  const dz = attackerPosition.z - defenderPosition.z
+  const distance = Math.sqrt(dx * dx + dz * dz)
+  if (distance <= CONTACT_EPSILON) return true
+  const dot = (defenderFacing.x * dx + defenderFacing.z * dz) / distance
+  return dot >= minimumIncomingFacingDot
+}
+
+/**
+ * The unit direction a hit pushes its target: away from the actor along the
+ * snapshot line between roots, falling back to `actorFacing` for coincident
+ * roots -- the same convention `calculateContactPoint` uses. Also doubles as
+ * the `direction` payload for `fighter-staggered` (a stagger's direction is
+ * always "away from whoever caused it").
+ */
+export function calculatePushDirection(actorPosition: Readonly<Vec2>, targetPosition: Readonly<Vec2>, actorFacing: Readonly<Vec2>): Vec2 {
+  const dx = targetPosition.x - actorPosition.x
+  const dz = targetPosition.z - actorPosition.z
+  const distance = Math.sqrt(dx * dx + dz * dz)
+  if (distance <= CONTACT_EPSILON) return { ...actorFacing }
+  return { x: dx / distance, z: dz / distance }
+}
+
+/** Fast evade's authored defense-dash total distance: `0.9 + 0.3 * directionRoll`, read back from `CombatActionState.defenseRoll.direction` and never re-drawn. */
+export function calculateEvadeDisplacementDistance(directionRoll: number): number {
+  return 0.9 + 0.3 * directionRoll
+}
+
+export type EvadeDirection = 'circle-left' | 'circle-right' | 'backstep'
+
+/**
+ * Ranks Fast evade's three candidate directions from the same `directionRoll`
+ * that also picks the dash distance, splitting `[0,1)` into equal thirds.
+ * This slice's phase-7 windup-displacement wiring only ever uses the primary
+ * (first) ranked direction for the whole dash -- design.md's "blocked
+ * directions fall through" dynamic per-tick fallback is not implemented
+ * here; see the Task 9 report for this documented simplification.
+ */
+export function rankEvadeDirections(directionRoll: number): readonly EvadeDirection[] {
+  if (directionRoll < 1 / 3) return ['circle-left', 'circle-right', 'backstep']
+  if (directionRoll < 2 / 3) return ['circle-right', 'circle-left', 'backstep']
+  return ['backstep', 'circle-left', 'circle-right']
+}
+
+/**
+ * The unit displacement direction for one of Fast evade's three ranked
+ * intents, relative to `facing`: `circle-left`/`circle-right` are the left/
+ * right perpendiculars (matching `movement.ts`'s private
+ * `leftPerpendicular`/`rightPerpendicular` convention exactly, duplicated
+ * here since `movement.ts` exports neither), `backstep` is the negated
+ * facing. `+0` normalizes any `-0` result, matching `movement.ts`'s own
+ * `scaleVec2` idiom.
+ */
+export function evadeDirectionVector(intent: EvadeDirection, facing: Readonly<Vec2>): Vec2 {
+  switch (intent) {
+    case 'circle-left':
+      return { x: -facing.z + 0, z: facing.x + 0 }
+    case 'circle-right':
+      return { x: facing.z + 0, z: -facing.x + 0 }
+    case 'backstep':
+      return { x: -facing.x + 0, z: -facing.z + 0 }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
 

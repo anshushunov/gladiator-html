@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { COMBAT_STYLES } from '../content/combatStyles'
 import { combatant, duelArena, freeArena } from '../testSupport/combatFixtures'
+import type { AttackActionId, CombatActionState } from './combatActions'
 import {
   advanceEncounterTick,
   advanceEncounterTicks,
@@ -14,7 +15,9 @@ import {
   type EncounterResult,
   type EncounterState,
 } from './encounter'
+import type { Archetype } from './fighters'
 import type { Vec2 } from './movement'
+import { derivedUnitValue } from './random'
 
 function baseConfig(overrides: Partial<EncounterConfig> = {}): EncounterConfig {
   return {
@@ -390,7 +393,7 @@ describe('advanceEncounterTick: movement/action trace (brief Step 1 fixture)', (
 })
 
 describe('advanceEncounterTick: actor-local action instance IDs', () => {
-  it('pins a:0, a:1, and b:0 (in a:0 before a:1 order) for a fast-vs-fast duel', () => {
+  it('pins a:0 and b:0 (both present) for a fast-vs-fast duel, each id actor-prefixed with strictly increasing per-actor serials', () => {
     const created = createEncounter({
       seed: 4,
       combatants: [
@@ -402,13 +405,29 @@ describe('advanceEncounterTick: actor-local action instance IDs', () => {
       combatStyles: COMBAT_STYLES,
     })
 
+    // 300 ticks, not the full 3600-tick brief window: Task 9's contact
+    // resolution now genuinely staggers/interrupts, so a fast-vs-fast duel's
+    // cadence of *further* actions is no longer a fixed count within a short
+    // window (see the Task 9 report's TDD-evidence section for the traced
+    // example this regression check replaces). What stays invariant
+    // regardless of contact-resolution outcomes is the actor-local ID
+    // scheme itself: both starting actions land on tick 1's earliest
+    // opportunity, and the per-actor serial only ever increases.
     const { events } = advanceEncounterTicks(created.state, 300)
     const instanceIds = events
       .filter((event): event is Extract<EncounterEvent, { type: 'action-started' }> => event.type === 'action-started')
       .map((event) => event.actionInstanceId)
 
-    expect(instanceIds).toEqual(expect.arrayContaining(['a:0', 'a:1', 'b:0']))
-    expect(instanceIds.indexOf('a:0')).toBeLessThan(instanceIds.indexOf('a:1'))
+    expect(instanceIds).toEqual(expect.arrayContaining(['a:0', 'b:0']))
+
+    const lastSerialByActor = new Map<string, number>()
+    for (const instanceId of instanceIds) {
+      const [actorId, serialText] = instanceId.split(':')
+      const serial = Number(serialText)
+      const previous = lastSerialByActor.get(actorId)
+      expect(previous === undefined || serial > previous).toBe(true)
+      lastSerialByActor.set(actorId, serial)
+    }
   })
 })
 
@@ -952,5 +971,895 @@ describe('advanceEncounterTick: defense cancellation and reaction-ledger pruning
     const { state: afterResolution } = advanceEncounterTick(resolved)
 
     expect(afterResolution.combatants.def.reactionLedger).toHaveLength(0)
+  })
+})
+
+// ===========================================================================
+// Task 9: phases 9-10 -- contact resolution (snapshot, ordering, evade/
+// guard/parry effectiveness, damage/push/stagger/critical) and accumulated
+// push. All fixtures below directly construct an intermediate `EncounterState`
+// (Task 8's own whitebox pattern) so a single `advanceEncounterTick` call
+// exercises exactly the phase-9/10 behavior under test: the actor's action
+// is built already in `windup` with `phaseEndsAtTick` equal to the tick
+// being advanced *to*, so phase 1 transitions it into `contact` before
+// phase 9 resolves it in that same call. Both combatants' own
+// `FighterCombatState.targetId` (decision target, distinct from the bound
+// action's own `targetId`) is left `undefined` so phase 7 never rotates
+// their facing mid-fixture -- geometry stays exactly what each test sets.
+// ===========================================================================
+
+function types(events: readonly EncounterEvent[]): string[] {
+  return events.map((event) => event.type)
+}
+
+const CONTACT_TICK = 50
+
+interface ContactFixtureOptions {
+  actorArchetype: Archetype
+  targetArchetype: Archetype
+  actionId: AttackActionId
+  actorPosition: Vec2
+  targetPosition: Vec2
+  actorFacing: Vec2
+  targetFacing?: Vec2
+  accuracyRoll: number
+  criticalRoll: number
+  actorOverrides?: Partial<FighterCombatState>
+  targetOverrides?: Partial<FighterCombatState>
+}
+
+/** Builds a two-combatant state whose `actor:0` action is in `windup`, ending exactly at `CONTACT_TICK` -- so advancing one tick from `CONTACT_TICK - 1` transitions it to `contact` and resolves it. */
+function contactFixture(options: ContactFixtureOptions): EncounterState {
+  const created = createEncounter({
+    seed: 1,
+    combatants: [
+      combatant('actor', 'home', { archetype: options.actorArchetype, startPosition: options.actorPosition }),
+      combatant('target', 'away', { archetype: options.targetArchetype, startPosition: options.targetPosition }),
+    ],
+    arena: freeArena,
+    hostility: { mode: 'different-factions' },
+    combatStyles: COMBAT_STYLES,
+  })
+
+  let state = patchCombatant(created.state, 'actor', {
+    targetId: undefined,
+    nextDecisionTick: 999_999,
+    facing: options.actorFacing,
+    action: {
+      type: 'active',
+      instanceId: 'actor:0',
+      definitionId: options.actionId,
+      phase: 'windup',
+      phaseStartedTick: CONTACT_TICK - 1,
+      phaseEndsAtTick: CONTACT_TICK,
+      targetId: 'target',
+      attackRolls: { accuracy: options.accuracyRoll, critical: options.criticalRoll },
+    },
+    ...options.actorOverrides,
+  })
+  state = patchCombatant(state, 'target', {
+    targetId: undefined,
+    nextDecisionTick: 999_999,
+    locomotionIntent: 'hold-range',
+    facing: options.targetFacing ?? { x: -1, z: 0 },
+    action: { type: 'neutral' },
+    ...options.targetOverrides,
+  })
+
+  return { ...state, tick: CONTACT_TICK - 1 }
+}
+
+/** A bound defense already sitting in its own one-tick `contact` phase, aligned with `actor:0`'s contact. */
+function boundDefense(definitionId: 'heavy-guard' | 'fast-evade' | 'technical-parry', overrides: Partial<Extract<CombatActionState, { type: 'active' }>> = {}): CombatActionState {
+  return {
+    type: 'active',
+    instanceId: 'target:0',
+    definitionId,
+    phase: 'contact',
+    phaseStartedTick: CONTACT_TICK,
+    phaseEndsAtTick: CONTACT_TICK + 1,
+    targetId: 'actor',
+    reactingToActionId: 'actor:0',
+    ...overrides,
+  }
+}
+
+describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome sequences', () => {
+  it('miss: attack-missed(geometry) when the target is out of range', () => {
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 5, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9,
+    })
+
+    const { events } = advanceEncounterTick(state)
+    const missBatch = events.filter((event) => event.type === 'attack-missed')
+
+    expect(types(missBatch)).toEqual(['attack-missed'])
+    expect(missBatch[0]).toMatchObject({ reason: 'geometry', actorId: 'actor', targetId: 'target' })
+  })
+
+  it('miss: attack-missed(geometry) when in range but outside the facing sector', () => {
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash', // minimumFacingDot 0.4226, contactRange 0.9-1.35
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 0, z: 1.0 }, // in range, but directly to the side
+      actorFacing: { x: 1, z: 0 }, // dot(facing, towardTarget) = 0 < 0.4226
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9,
+    })
+
+    const { events } = advanceEncounterTick(state)
+    const missBatch = events.filter((event) => event.type === 'attack-missed')
+
+    expect(types(missBatch)).toEqual(['attack-missed'])
+    expect(missBatch[0]).toMatchObject({ reason: 'geometry' })
+  })
+
+  it('miss: attack-missed(accuracy) when geometry passes but the stored roll fails the clamped probability', () => {
+    // fast-slash accuracy = clamp(0.8 + 0.06) = 0.86; roll 0.9 fails (0.9 < 0.86 is false).
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 1.0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.9,
+      criticalRoll: 0.9,
+    })
+
+    const { events } = advanceEncounterTick(state)
+    const missBatch = events.filter((event) => event.type === 'attack-missed')
+
+    expect(types(missBatch)).toEqual(['attack-missed'])
+    expect(missBatch[0]).toMatchObject({ reason: 'accuracy' })
+  })
+
+  it('miss: attack-missed(target-unavailable) when the target is already defeated', () => {
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 1.0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9,
+      targetOverrides: { status: 'defeated', hp: 0 },
+    })
+
+    const { events } = advanceEncounterTick(state)
+    const missBatch = events.filter((event) => event.type === 'attack-missed')
+
+    expect(types(missBatch)).toEqual(['attack-missed'])
+    expect(missBatch[0]).toMatchObject({ reason: 'target-unavailable' })
+  })
+
+  it('evade: a bound Fast evade whose final geometry lands outside the attack range emits attack-evaded only', () => {
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 5, z: 0 }, // outside contactRange 0.9-1.35: the dash succeeded
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9,
+      targetOverrides: { locomotionIntent: 'circle-left', action: boundDefense('fast-evade', { defenseRoll: { direction: 0.1 } }) },
+    })
+
+    const { events } = advanceEncounterTick(state)
+    const evadeBatch = events.filter((event) => event.type === 'attack-evaded' || event.type === 'defense-failed')
+
+    expect(types(evadeBatch)).toEqual(['attack-evaded'])
+    expect(evadeBatch[0]).toMatchObject({ evadeIntent: 'circle-left', actorId: 'actor', targetId: 'target' })
+  })
+
+  it('failed evade into hit: defense-failed(geometry) -> damage-dealt -> fighter-staggered', () => {
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 1.0, z: 0 }, // still inside contactRange: the dash failed
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1, // passes: clamp(0.8+0.06)=0.86
+      criticalRoll: 0.9,
+      targetOverrides: { action: boundDefense('fast-evade', { defenseRoll: { direction: 0.1 } }) },
+    })
+
+    const { events } = advanceEncounterTick(state)
+    const batch = events.filter((event) => ['defense-failed', 'attack-missed', 'damage-dealt', 'fighter-staggered'].includes(event.type))
+
+    expect(types(batch)).toEqual(['defense-failed', 'damage-dealt', 'fighter-staggered'])
+    expect(batch[0]).toMatchObject({ reason: 'geometry', defenderId: 'target', attackerId: 'actor' })
+  })
+
+  it('failed evade into ordinary miss: defense-failed(geometry) -> attack-missed(accuracy)', () => {
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 1.0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.9, // fails
+      criticalRoll: 0.9,
+      targetOverrides: { action: boundDefense('fast-evade', { defenseRoll: { direction: 0.1 } }) },
+    })
+
+    const { events } = advanceEncounterTick(state)
+    const batch = events.filter((event) => ['defense-failed', 'attack-missed', 'damage-dealt', 'fighter-staggered'].includes(event.type))
+
+    expect(types(batch)).toEqual(['defense-failed', 'attack-missed'])
+    expect(batch[1]).toMatchObject({ reason: 'accuracy' })
+  })
+
+  it('blocked hit: attack-blocked -> damage-dealt -> fighter-staggered, with guard damage/push/stagger multipliers exactly', () => {
+    const state = contactFixture({
+      actorArchetype: 'heavy',
+      targetArchetype: 'heavy',
+      actionId: 'heavy-cleave', // power20 * 1.75 * 1.00(neutral) = 35; push 0.70; staggerTicks 24
+      actorPosition: { x: -1, z: 0 },
+      targetPosition: { x: 0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1, // clamp(0.8-0.06)=0.74; passes
+      criticalRoll: 0.01,
+      targetOverrides: { facing: { x: -1, z: 0 }, action: boundDefense('heavy-guard') }, // faces the actor: incoming-facing gate (>=0.3420) passes
+    })
+
+    const { state: next, events } = advanceEncounterTick(state)
+    const batch = events.filter((event) => ['attack-blocked', 'damage-dealt', 'fighter-staggered', 'critical-hit'].includes(event.type))
+    const blockBatch = batch
+
+    expect(types(blockBatch)).toEqual(['attack-blocked', 'damage-dealt', 'fighter-staggered'])
+    expect(blockBatch[0]).toMatchObject({ contactZone: 'shield' })
+    expect(blockBatch[1]).toMatchObject({ amount: 12, remainingHp: 88, contactZone: 'shield' }) // round(35*0.35)=12.25->12
+    expect(blockBatch[2]).toMatchObject({ durationTicks: 10 }) // max(1,round(24*0.40))=10
+    expect((blockBatch[2] as Extract<EncounterEvent, { type: 'fighter-staggered' }>).direction.x).toBeCloseTo(1, 9)
+
+    expect(next.combatants.target.hp).toBe(88)
+    // push 0.70 * 0.30 = 0.21 away from the actor (toward +x); no separation correction needed at this distance.
+    expect(next.combatants.target.position.x).toBeCloseTo(0.21, 6)
+  })
+
+  it('blocked hit and critical are mutually exclusive: a passing guard suppresses critical-hit even against an open target', () => {
+    const state = contactFixture({
+      actorArchetype: 'heavy',
+      targetArchetype: 'heavy',
+      actionId: 'heavy-cleave',
+      actorPosition: { x: -1, z: 0 },
+      targetPosition: { x: 0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.01, // would win a critical roll (< 0.1 criticalChance) if unblocked
+      targetOverrides: {
+        facing: { x: -1, z: 0 },
+        staggerUntilTick: CONTACT_TICK + 5, // "open" in the snapshot
+        action: boundDefense('heavy-guard'),
+      },
+    })
+
+    const { events } = advanceEncounterTick(state)
+
+    expect(events.some((event) => event.type === 'critical-hit')).toBe(false)
+    expect(events.some((event) => event.type === 'attack-blocked')).toBe(true)
+  })
+
+  it('guard facing-gate failure: defense-failed(facing) -> ordinary (unblocked) damage-dealt -> fighter-staggered', () => {
+    const state = contactFixture({
+      actorArchetype: 'heavy',
+      targetArchetype: 'heavy',
+      actionId: 'heavy-cleave',
+      actorPosition: { x: -1, z: 0 },
+      targetPosition: { x: 0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9,
+      // Defender faces away from the actor: dot(defenderFacing, towardActor) = dot((0,1),(-1,0)) = 0 < 0.3420.
+      targetOverrides: { facing: { x: 0, z: 1 }, action: boundDefense('heavy-guard') },
+    })
+
+    const { state: next, events } = advanceEncounterTick(state)
+    const batch = events.filter((event) => ['defense-failed', 'attack-blocked', 'damage-dealt', 'fighter-staggered'].includes(event.type))
+
+    expect(types(batch)).toEqual(['defense-failed', 'damage-dealt', 'fighter-staggered'])
+    expect(batch[0]).toMatchObject({ reason: 'facing' })
+    expect(batch[1]).toMatchObject({ amount: 35, remainingHp: 65 }) // unblocked: round(20*1.75*1.00)=35
+    expect(next.combatants.target.hp).toBe(65)
+  })
+
+  it('parry: attack-parried -> fighter-staggered(attacker, 24 ticks), no damage-dealt, and queues the defender\'s forced counter', () => {
+    const state = contactFixture({
+      actorArchetype: 'technical',
+      targetArchetype: 'technical',
+      actionId: 'technical-thrust', // parryable, contactRange 1.2-2.8, minimumFacingDot 0.9397 (~20°)
+      actorPosition: { x: -2, z: 0 },
+      targetPosition: { x: 0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9,
+      targetOverrides: { facing: { x: -1, z: 0 }, action: boundDefense('technical-parry') }, // wide gate (>= -0.1736): passes
+    })
+
+    const { state: next, events } = advanceEncounterTick(state)
+    const parryBatch = events.filter((event) => ['attack-parried', 'damage-dealt', 'fighter-staggered'].includes(event.type))
+
+    expect(types(parryBatch)).toEqual(['attack-parried', 'fighter-staggered'])
+    expect(parryBatch[0]).toMatchObject({ actorId: 'actor', defenderId: 'target', contactZone: 'weapon' })
+    expect(parryBatch[1]).toMatchObject({ combatantId: 'actor', sourceId: 'target', durationTicks: 24 })
+
+    expect(next.combatants.actor.hp).toBe(100) // parry cancels damage entirely
+    expect(next.combatants.actor.staggerUntilTick).toBe(CONTACT_TICK + 24)
+    expect(next.combatants.target.forcedActionId).toBe('technical-parry-counter')
+  })
+
+  it('opening-only critical: critical-hit -> damage-dealt -> fighter-staggered against a target in recovery in the snapshot', () => {
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 1.0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.05, // < criticalChance 0.1
+      targetOverrides: {
+        action: {
+          type: 'active',
+          instanceId: 'target:0',
+          definitionId: 'fast-slash',
+          phase: 'recovery',
+          phaseStartedTick: CONTACT_TICK - 1,
+          phaseEndsAtTick: CONTACT_TICK + 100,
+          targetId: 'actor',
+        },
+      },
+    })
+
+    const { events } = advanceEncounterTick(state)
+    const batch = events.filter((event) => ['critical-hit', 'damage-dealt', 'fighter-staggered'].includes(event.type))
+    const criticalBatch = batch
+
+    expect(types(criticalBatch)).toEqual(['critical-hit', 'damage-dealt', 'fighter-staggered'])
+    expect(criticalBatch[0]).toMatchObject({ multiplier: 1.5 })
+    expect(criticalBatch[1]).toMatchObject({ amount: 23 }) // round(20*0.75*1.00*1.5)=22.5->23
+  })
+
+  it('no critical when the target was not open in the snapshot, even with a winning critical roll', () => {
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 1.0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.01, // would win if the target were open
+      // target.action: neutral, staggerUntilTick 0 -- not open.
+    })
+
+    const { events } = advanceEncounterTick(state)
+
+    expect(events.some((event) => event.type === 'critical-hit')).toBe(false)
+    expect(events.some((event) => event.type === 'damage-dealt')).toBe(true)
+  })
+
+  it('no critical when the target was open but the critical roll fails', () => {
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 1.0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.5, // >= criticalChance 0.1
+      targetOverrides: { staggerUntilTick: CONTACT_TICK + 5 },
+    })
+
+    const { events } = advanceEncounterTick(state)
+
+    expect(events.some((event) => event.type === 'critical-hit')).toBe(false)
+    expect(events.some((event) => event.type === 'damage-dealt')).toBe(true)
+  })
+
+  it('critical defeat: critical-hit -> damage-dealt -> fighter-staggered -> fighter-defeated (no encounter-finished; Task 10 owns completion)', () => {
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 1.0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.05,
+      targetOverrides: { hp: 1, staggerUntilTick: CONTACT_TICK + 5 },
+    })
+
+    const { state: next, events } = advanceEncounterTick(state)
+    const criticalDefeatBatch = events.filter((event) => ['critical-hit', 'damage-dealt', 'fighter-staggered', 'fighter-defeated', 'encounter-finished'].includes(event.type))
+
+    expect(types(criticalDefeatBatch)).toEqual(['critical-hit', 'damage-dealt', 'fighter-staggered', 'fighter-defeated'])
+    expect(criticalDefeatBatch[3]).toMatchObject({ defeatedId: 'target', sourceId: 'actor' })
+    expect(next.combatants.target.status).toBe('defeated')
+    expect(next.combatants.target.hp).toBe(0)
+  })
+
+  it('action-interrupted: an ordinary hit cancels the target\'s own unrelated windup, in damage-dealt -> action-interrupted -> fighter-staggered order', () => {
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 1.0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9,
+      targetOverrides: {
+        action: {
+          type: 'active',
+          instanceId: 'target:0',
+          definitionId: 'fast-slash',
+          phase: 'windup',
+          phaseStartedTick: CONTACT_TICK - 1,
+          phaseEndsAtTick: CONTACT_TICK + 50,
+          targetId: 'actor',
+          attackRolls: { accuracy: 0.5, critical: 0.5 },
+        },
+      },
+    })
+
+    const { state: next, events } = advanceEncounterTick(state)
+    const batch = events.filter((event) => ['damage-dealt', 'action-interrupted', 'fighter-staggered'].includes(event.type))
+
+    expect(types(batch)).toEqual(['damage-dealt', 'action-interrupted', 'fighter-staggered'])
+    expect(batch[1]).toMatchObject({ actorId: 'target', actionInstanceId: 'target:0', reason: 'stagger' })
+    expect(next.combatants.target.action).toEqual({ type: 'neutral' })
+  })
+})
+
+describe('advanceEncounterTick: contact resolution -- snapshot discipline and total ordering', () => {
+  it('non-lethal stagger from an earlier (higher-priority) intent does not cancel a target\'s own already-in-contact action this same tick', () => {
+    // A (fast-slash, priority 40) hits B non-lethally; B's own contact-phase
+    // action (heavy-cleave, priority 10, bound at C) must still resolve
+    // fully afterward -- proving "contact" phase is exempt from
+    // interruption, unlike windup/impact/recovery.
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
+        combatant('b', 'fast-side', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
+        combatant('c', 'away', { archetype: 'heavy', startPosition: { x: 1.2, z: 0 }, fighter: { maxHp: 500 } }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'free-for-all' },
+      combatStyles: COMBAT_STYLES,
+    })
+
+    let state = patchCombatant(created.state, 'a', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      action: {
+        type: 'active',
+        instanceId: 'a:0',
+        definitionId: 'fast-slash',
+        phase: 'windup',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK,
+        targetId: 'b',
+        attackRolls: { accuracy: 0.1, critical: 0.9 },
+      },
+    })
+    state = patchCombatant(state, 'b', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      action: {
+        type: 'active',
+        instanceId: 'b:0',
+        definitionId: 'heavy-cleave',
+        phase: 'windup',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK,
+        targetId: 'c',
+        attackRolls: { accuracy: 0.1, critical: 0.9 },
+      },
+    })
+    state = patchCombatant(state, 'c', { targetId: undefined, nextDecisionTick: 999_999, locomotionIntent: 'hold-range', facing: { x: -1, z: 0 } })
+    state = { ...state, tick: CONTACT_TICK - 1 }
+
+    const { state: next, events } = advanceEncounterTick(state)
+
+    // A's hit against B resolves first (priority 40 > 10) and staggers B non-lethally.
+    const bStagger = events.find((event) => event.type === 'fighter-staggered' && event.combatantId === 'b')
+    expect(bStagger).toBeDefined()
+
+    // B's own attack against C still resolves as an ordinary hit: not skipped, not "action-interrupted".
+    const cDamage = events.find((event) => event.type === 'damage-dealt' && event.actorId === 'b' && event.targetId === 'c')
+    expect(cDamage).toBeDefined()
+    expect(events.some((event) => event.type === 'action-interrupted' && event.actorId === 'b')).toBe(false)
+
+    // B's own action was in `contact` throughout this tick's resolution and is untouched by contact resolution itself
+    // (phase 1 will advance it to `impact` on the *next* tick, per the ordinary phase machine).
+    expect(next.combatants.b.action).toMatchObject({ phase: 'contact', instanceId: 'b:0' })
+  })
+
+  it('total order by priority: a mid-batch defeat produces target-unavailable for a later (lower-priority) intent against the same victim', () => {
+    // Two attackers target the same victim this tick. The higher-priority
+    // attack (fast-slash, 40) defeats the victim outright; the
+    // lower-priority attack (heavy-cleave, 10) against the same
+    // now-defeated victim must resolve as target-unavailable, never a
+    // second damage-dealt/defeat.
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('a1', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
+        combatant('a2', 'home', { archetype: 'heavy', startPosition: { x: 0, z: -1 } }),
+        combatant('v', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 }, fighter: { maxHp: 1 } }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'free-for-all' },
+      combatStyles: COMBAT_STYLES,
+    })
+
+    let state = patchCombatant(created.state, 'a1', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      action: {
+        type: 'active',
+        instanceId: 'a1:0',
+        definitionId: 'fast-slash', // priority 40
+        phase: 'windup',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK,
+        targetId: 'v',
+        attackRolls: { accuracy: 0.1, critical: 0.9 },
+      },
+    })
+    state = patchCombatant(state, 'a2', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 0, z: 1 },
+      action: {
+        type: 'active',
+        instanceId: 'a2:0',
+        definitionId: 'heavy-cleave', // priority 10
+        phase: 'windup',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK,
+        targetId: 'v',
+        attackRolls: { accuracy: 0.1, critical: 0.9 },
+      },
+    })
+    state = patchCombatant(state, 'v', { targetId: undefined, nextDecisionTick: 999_999, locomotionIntent: 'hold-range' })
+    state = { ...state, tick: CONTACT_TICK - 1 }
+
+    const { state: next, events } = advanceEncounterTick(state)
+
+    const relevant = events.filter((event) => event.type === 'damage-dealt' || event.type === 'fighter-defeated' || event.type === 'attack-missed')
+    expect(relevant.map((event) => event.type)).toEqual(['damage-dealt', 'fighter-defeated', 'attack-missed'])
+    expect(relevant[2]).toMatchObject({ actorId: 'a2', reason: 'target-unavailable' })
+    expect(next.combatants.v.status).toBe('defeated')
+  })
+
+  it('priority/time-limit ties never consume combatant streams: two equal-priority intents sort by derivedUnitValue(seed, tick, actionInstanceId), then break ties by ActionInstanceId', () => {
+    // Two independent fast-slash intents (equal priority 40) against two
+    // separate, unreachable-by-each-other targets, so their outcomes don't
+    // causally interact -- only the *order* of their events proves the sort.
+    const created = createEncounter({
+      seed: 9,
+      combatants: [
+        combatant('a1', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
+        combatant('a2', 'home', { archetype: 'fast', startPosition: { x: -1, z: 10 } }),
+        combatant('t1', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
+        combatant('t2', 'away', { archetype: 'fast', startPosition: { x: 0, z: 10 } }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'free-for-all' },
+      combatStyles: COMBAT_STYLES,
+    })
+
+    function attackAction(instanceId: string, targetId: string): CombatActionState {
+      return {
+        type: 'active',
+        instanceId,
+        definitionId: 'fast-slash',
+        phase: 'windup',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK,
+        targetId,
+        attackRolls: { accuracy: 0.1, critical: 0.9 },
+      }
+    }
+
+    let state = patchCombatant(created.state, 'a1', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      action: attackAction('a1:0', 't1'),
+    })
+    state = patchCombatant(state, 'a2', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      action: attackAction('a2:0', 't2'),
+    })
+    state = patchCombatant(state, 't1', { targetId: undefined, nextDecisionTick: 999_999, locomotionIntent: 'hold-range' })
+    state = patchCombatant(state, 't2', { targetId: undefined, nextDecisionTick: 999_999, locomotionIntent: 'hold-range' })
+    state = { ...state, tick: CONTACT_TICK - 1 }
+
+    const tieKeyA1 = derivedUnitValue(9, `contact-tie:${CONTACT_TICK}:a1:0`)
+    const tieKeyA2 = derivedUnitValue(9, `contact-tie:${CONTACT_TICK}:a2:0`)
+    expect(tieKeyA1).not.toBe(tieKeyA2) // both must actually tie-break through tieKey, not coincide
+
+    const { events } = advanceEncounterTick(state)
+    const damageEvents = events.filter((event): event is Extract<EncounterEvent, { type: 'damage-dealt' }> => event.type === 'damage-dealt')
+    expect(damageEvents).toHaveLength(2)
+
+    const expectedFirstActor = tieKeyA1 < tieKeyA2 ? 'a1' : 'a2'
+    expect(damageEvents[0].actorId).toBe(expectedFirstActor)
+  })
+})
+
+describe('advanceEncounterTick: shield jab is unparryable (defense-in-depth at resolution, not only at scheduling)', () => {
+  it('ignores a (mis-)bound technical-parry against an unparryable heavy-shield-jab and resolves an ordinary unblocked hit', () => {
+    const state = contactFixture({
+      actorArchetype: 'heavy',
+      targetArchetype: 'technical',
+      actionId: 'heavy-shield-jab', // tags: unparryable
+      actorPosition: { x: -1, z: 0 },
+      targetPosition: { x: 0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1, // clamp(0.8+0.08)=0.88
+      criticalRoll: 0.9,
+      targetOverrides: { facing: { x: -1, z: 0 }, action: boundDefense('technical-parry') }, // gate would pass if it were parryable
+    })
+
+    const { events } = advanceEncounterTick(state)
+    const batch = events.filter((event) => ['attack-parried', 'attack-blocked', 'damage-dealt', 'fighter-staggered'].includes(event.type))
+
+    expect(types(batch)).toEqual(['damage-dealt', 'fighter-staggered'])
+  })
+
+  it('a shield jab can still miss by range like any other attack', () => {
+    const state = contactFixture({
+      actorArchetype: 'heavy',
+      targetArchetype: 'technical',
+      actionId: 'heavy-shield-jab',
+      actorPosition: { x: -5, z: 0 },
+      targetPosition: { x: 0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9,
+    })
+
+    const { events } = advanceEncounterTick(state)
+    expect(types(events.filter((event) => event.type === 'attack-missed'))).toEqual(['attack-missed'])
+  })
+})
+
+describe('advanceEncounterTick: accumulated push (phase 10)', () => {
+  it('sums push vectors from two hits landing on the same target this tick, applied once through the ordinary movement pipeline', () => {
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('a1', 'home', { archetype: 'fast', startPosition: { x: -1.0, z: 0 } }),
+        combatant('a2', 'home', { archetype: 'fast', startPosition: { x: 0, z: -1.0 } }),
+        combatant('v', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 }, fighter: { maxHp: 500 } }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'free-for-all' },
+      combatStyles: COMBAT_STYLES,
+    })
+
+    function slash(targetId: string, instanceId: string): CombatActionState {
+      return {
+        type: 'active',
+        instanceId,
+        definitionId: 'fast-slash',
+        phase: 'windup',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK,
+        targetId,
+        attackRolls: { accuracy: 0.1, critical: 0.9 },
+      }
+    }
+
+    let state = patchCombatant(created.state, 'a1', { targetId: undefined, nextDecisionTick: 999_999, facing: { x: 1, z: 0 }, action: slash('v', 'a1:0') })
+    state = patchCombatant(state, 'a2', { targetId: undefined, nextDecisionTick: 999_999, facing: { x: 0, z: 1 }, action: slash('v', 'a2:0') })
+    state = patchCombatant(state, 'v', { targetId: undefined, nextDecisionTick: 999_999, locomotionIntent: 'hold-range' })
+    state = { ...state, tick: CONTACT_TICK - 1 }
+
+    const { state: next, events } = advanceEncounterTick(state)
+
+    expect(events.filter((event) => event.type === 'damage-dealt')).toHaveLength(2)
+    // fast-slash pushDistance 0.18; a1 pushes v toward +x, a2 pushes v toward +z. No separation correction expected at this distance.
+    expect(next.combatants.v.position.x).toBeCloseTo(0.18, 6)
+    expect(next.combatants.v.position.z).toBeCloseTo(0.18, 6)
+  })
+})
+
+describe('advanceEncounterTick: Fast evade windup dash (carried forward from Task 8)', () => {
+  it('applies 0.9 + 0.3 * directionRoll distributed across the remaining windup ticks, reading the stored roll back without re-drawing', () => {
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('self', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
+        combatant('other', 'home', { archetype: 'fast', startPosition: { x: 20, z: 0 } }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'different-factions' },
+      combatStyles: COMBAT_STYLES,
+    })
+
+    // directionRoll 0.1 -> primary ranked direction 'circle-left' (bottom third).
+    const directionRoll = 0.1
+    let state = patchCombatant(created.state, 'self', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      action: {
+        type: 'active',
+        instanceId: 'self:0',
+        definitionId: 'fast-evade',
+        phase: 'windup',
+        phaseStartedTick: 0,
+        phaseEndsAtTick: 7, // fast's 7-tick reaction lead: 7 remaining windup ticks
+        targetId: 'other',
+        reactingToActionId: 'other:0',
+        defenseRoll: { direction: directionRoll },
+      },
+    })
+    state = patchCombatant(state, 'other', { targetId: undefined, nextDecisionTick: 999_999 })
+    state = { ...state, tick: 1 } // still well inside windup (ends at 7): not a contact-resolution tick
+
+    const { state: next } = advanceEncounterTick(state)
+
+    const totalDistance = 0.9 + 0.3 * directionRoll
+    const expectedStep = totalDistance / 7 // windupSpan = phaseEndsAtTick(7) - phaseStartedTick(0)
+    expect(next.combatants.self.position.x).toBeCloseTo(0, 9)
+    expect(next.combatants.self.position.z).toBeCloseTo(expectedStep, 9) // circle-left of facing (1,0) is +z
+  })
+
+  it('a started bound evade that never leaves contact geometry resolves as an ordinary geometry-eligible defense-failed, not a crash or a free evade', () => {
+    // Regression guard for reading defenseRoll back correctly even when the
+    // dash's direction doesn't matter to the outcome (still inside range).
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 1.0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9,
+      targetOverrides: { action: boundDefense('fast-evade', { defenseRoll: { direction: 0.99 } }) },
+    })
+
+    const { events } = advanceEncounterTick(state)
+    expect(events[0]).toMatchObject({ type: 'defense-failed', reason: 'geometry' })
+  })
+})
+
+describe("advanceEncounterTick: Technical's forced parry-counter start (carried forward from Task 8)", () => {
+  function forcedCounterFixture(otherPosition: Vec2): EncounterState {
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('self', 'home', { archetype: 'technical', startPosition: { x: 0, z: 0 } }),
+        combatant('other', 'away', { archetype: 'technical', startPosition: otherPosition }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'different-factions' },
+      combatStyles: COMBAT_STYLES,
+    })
+    let state = patchCombatant(created.state, 'self', {
+      targetId: 'other', // the forced-start check reads this, unlike ordinary contact fixtures
+      nextDecisionTick: 999_999,
+      forcedActionId: 'technical-parry-counter',
+      action: { type: 'neutral' },
+    })
+    state = patchCombatant(state, 'other', { targetId: undefined, nextDecisionTick: 999_999 })
+    return { ...state, tick: 9 }
+  }
+
+  it('starts the forced counter (bypassing weighted selection) when the target remains within 2.3 units', () => {
+    const state = forcedCounterFixture({ x: 2.0, z: 0 })
+    const decisionStreamBefore = state.randomByCombatant.self.decision
+
+    const { state: next, events } = advanceEncounterTick(state)
+
+    expect(next.combatants.self.forcedActionId).toBeUndefined()
+    expect(next.combatants.self.action).toMatchObject({ type: 'active', definitionId: 'technical-parry-counter', phase: 'windup', targetId: 'other' })
+    expect(next.randomByCombatant.self.decision).toEqual(decisionStreamBefore) // no decision-stream draw: bypassed weighted selection
+    expect(events).toContainEqual(expect.objectContaining({ type: 'action-started', actorId: 'self', actionId: 'technical-parry-counter' }))
+  })
+
+  it('clears the forced counter and falls back to ordinary weighted selection when the target is out of range', () => {
+    const state = forcedCounterFixture({ x: 10, z: 0 }) // outside 2.3 units
+    const decisionStreamBefore = state.randomByCombatant.self.decision
+
+    const { state: next } = advanceEncounterTick(state)
+
+    expect(next.combatants.self.forcedActionId).toBeUndefined()
+    expect(next.combatants.self.action.type === 'neutral' || next.combatants.self.action.type === 'active').toBe(true)
+    expect(next.randomByCombatant.self.decision).not.toEqual(decisionStreamBefore) // an ordinary decision ran instead
+  })
+
+  it('allowed counter miss: a started counter can still miss by geometry once ordinary movement drifts the target out of contactRange', () => {
+    // The start check does not guarantee contact -- this directly exercises
+    // the generic geometry-miss path with technical-parry-counter's own
+    // contactRange (0.9-2.3), simulating movement drift during its windup.
+    const state = contactFixture({
+      actorArchetype: 'technical',
+      targetArchetype: 'technical',
+      actionId: 'technical-parry-counter',
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 3.0, z: 0 }, // outside 0.9-2.3
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9,
+    })
+
+    const { events } = advanceEncounterTick(state)
+    expect(types(events.filter((event) => event.type === 'attack-missed'))).toEqual(['attack-missed'])
+    expect(events.find((event) => event.type === 'attack-missed')).toMatchObject({ reason: 'geometry' })
+  })
+})
+
+describe('advanceEncounterTick: defeated combatants leave targeting/collision the tick AFTER defeat, not immediately', () => {
+  it('a seeker can still acquire a target that is defeated later the same tick, then loses it on the very next tick', () => {
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
+        combatant('v', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 }, fighter: { maxHp: 1 } }),
+        combatant('s', 'third', { archetype: 'fast', startPosition: { x: 0, z: 3 } }), // within 16-unit acquisition radius of v
+      ],
+      arena: freeArena,
+      hostility: { mode: 'free-for-all' },
+      combatStyles: COMBAT_STYLES,
+    })
+
+    let state = patchCombatant(created.state, 'a', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      action: {
+        type: 'active',
+        instanceId: 'a:0',
+        definitionId: 'fast-slash',
+        phase: 'windup',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK,
+        targetId: 'v',
+        attackRolls: { accuracy: 0.1, critical: 0.9 },
+      },
+    })
+    state = patchCombatant(state, 'v', { targetId: undefined, nextDecisionTick: 999_999, locomotionIntent: 'hold-range' })
+    // 's' is targetless and decision-ready exactly on CONTACT_TICK: phase 3 of that same tick must still see 'v' as
+    // active (defeat happens later, in phase 9), so acquisition succeeds this tick.
+    state = patchCombatant(state, 's', { targetId: undefined, nextDecisionTick: CONTACT_TICK })
+    state = { ...state, tick: CONTACT_TICK - 1 }
+
+    const { state: afterDefeatTick } = advanceEncounterTick(state)
+
+    expect(afterDefeatTick.combatants.v.status).toBe('defeated')
+    expect(afterDefeatTick.combatants.s.targetId).toBe('v') // acquired before phase 9 defeated v this same tick
+
+    const { state: nextTick } = advanceEncounterTick(afterDefeatTick)
+
+    expect(nextTick.combatants.s.targetId).toBeUndefined() // retainTarget clears it: v is no longer active
   })
 })

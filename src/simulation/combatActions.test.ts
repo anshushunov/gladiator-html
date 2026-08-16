@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
   actionContactTick,
+  calculateBlockedStaggerTicks,
   calculateContactDamage,
   calculateContactPoint,
+  calculateEvadeDisplacementDistance,
+  calculatePushDirection,
+  evadeDirectionVector,
+  GUARD_DAMAGE_MULTIPLIER,
+  GUARD_PUSH_MULTIPLIER,
+  GUARD_STAGGER_MULTIPLIER,
+  isWithinAttackGeometry,
+  isWithinIncomingFacingArc,
+  PARRY_ATTACKER_STAGGER_TICKS,
+  rankEvadeDirections,
   startAttackAction,
   startDefenseAction,
   transitionActionPhase,
@@ -276,5 +287,143 @@ describe('calculateContactDamage', () => {
 
   it('never rounds below 1 even for a tiny result', () => {
     expect(calculateContactDamage(1, 0.01, 0.90, 1, 0.35)).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Task 9: pure contact-resolution helpers (guard/parry multipliers, geometry
+// gates, push direction, Fast evade dash math). The stateful orchestration
+// (`resolveContactIntents`-equivalent phase 9/10 wiring) lives in
+// `encounter.ts`/`encounter.test.ts` since it needs `FighterCombatState`/
+// `EncounterEvent`, which this file cannot import without a circular
+// dependency (encounter.ts already imports this file).
+// ---------------------------------------------------------------------------
+
+describe('guard/parry multiplier constants', () => {
+  it('matches design.md exactly: damage 0.35, push 0.30, stagger 0.40, parry-attacker stagger 24', () => {
+    expect(GUARD_DAMAGE_MULTIPLIER).toBe(0.35)
+    expect(GUARD_PUSH_MULTIPLIER).toBe(0.30)
+    expect(GUARD_STAGGER_MULTIPLIER).toBe(0.40)
+    expect(PARRY_ATTACKER_STAGGER_TICKS).toBe(24)
+  })
+})
+
+describe('calculateBlockedStaggerTicks', () => {
+  it('applies max(1, round(base * 0.40))', () => {
+    expect(calculateBlockedStaggerTicks(24)).toBe(10) // 9.6 -> 10
+    expect(calculateBlockedStaggerTicks(8)).toBe(3) // 3.2 -> 3
+  })
+
+  it('never rounds below 1', () => {
+    expect(calculateBlockedStaggerTicks(1)).toBe(1) // 0.4 -> floors to 0, clamped to 1
+  })
+})
+
+describe('isWithinAttackGeometry', () => {
+  const actorPosition: Vec2 = { x: 0, z: 0 }
+  const actorFacing: Vec2 = { x: 1, z: 0 }
+  const contactRange = { min: 0.9, max: 1.35 }
+  const minimumFacingDot = 0.4226
+
+  it('is true when the target is within range and inside the facing sector', () => {
+    expect(isWithinAttackGeometry(actorPosition, actorFacing, { x: 1.2, z: 0 }, contactRange, minimumFacingDot)).toBe(true)
+  })
+
+  it('is false when the target is closer than contactRange.min', () => {
+    expect(isWithinAttackGeometry(actorPosition, actorFacing, { x: 0.5, z: 0 }, contactRange, minimumFacingDot)).toBe(false)
+  })
+
+  it('is false when the target is farther than contactRange.max', () => {
+    expect(isWithinAttackGeometry(actorPosition, actorFacing, { x: 2, z: 0 }, contactRange, minimumFacingDot)).toBe(false)
+  })
+
+  it('is false when the target is in range but outside the facing sector', () => {
+    // distance 1.2, but directly to the side: dot(facing, towardTarget) = 0 < 0.4226.
+    expect(isWithinAttackGeometry(actorPosition, actorFacing, { x: 0, z: 1.2 }, contactRange, minimumFacingDot)).toBe(false)
+  })
+
+  it('treats coincident roots as directly in front (degenerate distance 0, likely fails range anyway)', () => {
+    expect(isWithinAttackGeometry(actorPosition, actorFacing, actorPosition, { min: 0, max: 1 }, minimumFacingDot)).toBe(true)
+  })
+})
+
+describe('isWithinIncomingFacingArc', () => {
+  const defenderPosition: Vec2 = { x: 0, z: 0 }
+  const defenderFacing: Vec2 = { x: 1, z: 0 }
+
+  it('is true when the attacker sits inside the incoming-facing arc (heavy-guard front ~70°)', () => {
+    expect(isWithinIncomingFacingArc(defenderFacing, defenderPosition, { x: 1, z: 0 }, 0.3420)).toBe(true)
+  })
+
+  it('is false when the attacker sits outside the incoming-facing arc', () => {
+    expect(isWithinIncomingFacingArc(defenderFacing, defenderPosition, { x: 0, z: 1 }, 0.3420)).toBe(false)
+  })
+
+  it('is true for technical-parry-style wide gates just past the side (~96°)', () => {
+    // dx=-0.1, dz=1 -> dot ~= -0.0995, inside the -0.1736 (~front ±100°) gate.
+    expect(isWithinIncomingFacingArc(defenderFacing, defenderPosition, { x: -0.1, z: 1 }, -0.1736)).toBe(true)
+  })
+
+  it('is false just outside a wide gate, from nearly directly behind', () => {
+    // dx=-1, dz=0.05 -> dot ~= -0.99875, outside the -0.1736 gate.
+    expect(isWithinIncomingFacingArc(defenderFacing, defenderPosition, { x: -1, z: 0.05 }, -0.1736)).toBe(false)
+  })
+
+  it('falls back to true for coincident roots', () => {
+    expect(isWithinIncomingFacingArc(defenderFacing, defenderPosition, defenderPosition, 0.99)).toBe(true)
+  })
+})
+
+describe('calculatePushDirection', () => {
+  it('points from the actor toward the target', () => {
+    expect(calculatePushDirection({ x: 0, z: 0 }, { x: 2, z: 0 }, { x: 1, z: 0 })).toEqual({ x: 1, z: 0 })
+  })
+
+  it('normalizes an arbitrary separation vector', () => {
+    const direction = calculatePushDirection({ x: 0, z: 0 }, { x: 3, z: 4 }, { x: 1, z: 0 })
+    expect(direction.x).toBeCloseTo(0.6, 9)
+    expect(direction.z).toBeCloseTo(0.8, 9)
+  })
+
+  it('falls back to actor facing for coincident roots', () => {
+    expect(calculatePushDirection({ x: 5, z: 5 }, { x: 5, z: 5 }, { x: 0, z: 1 })).toEqual({ x: 0, z: 1 })
+  })
+})
+
+describe('calculateEvadeDisplacementDistance', () => {
+  it('is 0.9 + 0.3 * directionRoll', () => {
+    expect(calculateEvadeDisplacementDistance(0)).toBeCloseTo(0.9, 9)
+    expect(calculateEvadeDisplacementDistance(1)).toBeCloseTo(1.2, 9)
+    expect(calculateEvadeDisplacementDistance(0.5)).toBeCloseTo(1.05, 9)
+  })
+})
+
+describe('rankEvadeDirections', () => {
+  it('ranks circle-left first for the bottom third of the roll', () => {
+    expect(rankEvadeDirections(0)).toEqual(['circle-left', 'circle-right', 'backstep'])
+  })
+
+  it('ranks circle-right first for the middle third of the roll', () => {
+    expect(rankEvadeDirections(0.5)).toEqual(['circle-right', 'circle-left', 'backstep'])
+  })
+
+  it('ranks backstep first for the top third of the roll', () => {
+    expect(rankEvadeDirections(0.9)).toEqual(['backstep', 'circle-left', 'circle-right'])
+  })
+})
+
+describe('evadeDirectionVector', () => {
+  const facing: Vec2 = { x: 1, z: 0 }
+
+  it('circle-left is the left perpendicular of facing', () => {
+    expect(evadeDirectionVector('circle-left', facing)).toEqual({ x: 0, z: 1 })
+  })
+
+  it('circle-right is the right perpendicular of facing', () => {
+    expect(evadeDirectionVector('circle-right', facing)).toEqual({ x: 0, z: -1 })
+  })
+
+  it('backstep is the negated facing', () => {
+    expect(evadeDirectionVector('backstep', facing)).toEqual({ x: -1, z: 0 })
   })
 })

@@ -25,6 +25,19 @@
 
 import {
   actionContactTick,
+  calculateBlockedStaggerTicks,
+  calculateContactDamage,
+  calculateContactPoint,
+  calculateEvadeDisplacementDistance,
+  calculatePushDirection,
+  CRITICAL_DAMAGE_MULTIPLIER,
+  evadeDirectionVector,
+  GUARD_DAMAGE_MULTIPLIER,
+  GUARD_PUSH_MULTIPLIER,
+  isWithinAttackGeometry,
+  isWithinIncomingFacingArc,
+  PARRY_ATTACKER_STAGGER_TICKS,
+  rankEvadeDirections,
   startAttackAction,
   transitionActionPhase,
   type AttackActionDefinition,
@@ -45,17 +58,18 @@ import {
   hasFastForcedDisengageEnded,
   isDefenseReactionOpportunity,
   processDefenseBatch,
+  resolveForcedParryCounterStart,
   retainTarget,
   TARGET_ACQUISITION_RADIUS,
   TARGET_RETENTION_RADIUS,
   type IncomingThreat,
 } from './combatDecision'
 import type { FighterDefinition } from './fighters'
-import { validateFighterDefinition } from './fighters'
+import { compareArchetypes, comparisonDamageMultiplier, validateFighterDefinition } from './fighters'
 import type { CombatArenaDefinition, LocomotionIntent, MovementRequest, TurnStep, Vec2 } from './movement'
 import { intentDisplacement, normalizeVec2, resolveSimultaneousMovement, turnFacing } from './movement'
 import type { CombatantRandomState } from './random'
-import { createCombatantRandomState, drawPair } from './random'
+import { createCombatantRandomState, derivedUnitValue, drawPair } from './random'
 import { buildSpatialHash, queryRadius, type SpatialHash } from './spatialHash'
 
 // ---------------------------------------------------------------------------
@@ -185,9 +199,10 @@ export interface FighterCombatState {
    * `fast-burst-lunge` recovery ends), cleared once
    * `hasFastForcedDisengageEnded` (combatDecision.ts) reports the range or
    * tick-count exit condition. `undefined` whenever the fighter is not
-   * currently in this forced state. Technical's forced parry-counter has no
-   * equivalent persistent field here: its trigger (a successful parry) is a
-   * contact-resolution outcome that belongs to Task 9.
+   * currently in this forced state. Technical's forced parry-counter instead
+   * uses `forcedActionId` above (a contact-resolution outcome, phase 9):
+   * that field is a one-shot flag consumed by `resolveForcedActionStarts`,
+   * not a persistent multi-tick state like this one.
    */
   forcedDisengageStartTick?: number
 }
@@ -647,13 +662,13 @@ export function finishEncounter(state: EncounterState, result: EncounterResult):
 // ---------------------------------------------------------------------------
 // Tick loop
 //
-// `advanceEncounterTick` wires tick-order phases 1-8 (design.md's "Encounter
-// tick order"): phase transitions, cleanup, targeting, weighted decisions,
-// action starts, batched defense reactions, and simultaneous movement.
-// Phases 9-12 (contact resolution, pushback, persistence-of-the-rest,
-// completion) are later tasks: actions reach `contact` here (phase 1's plain
-// phase-machine advance) but nothing computes what a contact tick *means* --
-// no damage, push, stagger, or defeat is ever applied by this file.
+// `advanceEncounterTick` wires tick-order phases 1-10 (design.md's
+// "Encounter tick order"): phase transitions, cleanup, targeting, weighted
+// decisions, action starts, batched defense reactions, simultaneous
+// movement, contact resolution, and accumulated pushback. Phases 11-12
+// (local-clock persistence beyond what contact resolution already writes,
+// the exhaustive stagger phase matrix, and no-hostile-pairs/time-limit
+// completion) are Task 10's.
 //
 // Each phase below is one named helper, in tick order, so the loop itself
 // reads as a table of contents. Every helper receives only the state slices
@@ -663,6 +678,13 @@ export function finishEncounter(state: EncounterState, result: EncounterResult):
 // ---------------------------------------------------------------------------
 
 const TICKS_PER_SECOND = 60
+
+/** One action about to start, whether from an ordinary phase-4 decision or a forced behavior (Technical's parry-counter) that bypasses it -- shared so phase 5 (`startSelectedActions`) treats both sources identically. */
+interface PendingActionStart {
+  actorId: CombatantId
+  targetId: CombatantId
+  actionId: AttackActionId
+}
 
 /** Resolves an active action's `impactTicks`/`recoveryTicks`, whether it is an attack or a defense. */
 function resolveActionPhaseDefinition(
@@ -720,8 +742,9 @@ function transitionExpiredPhases(
 //
 // Design's phase 2 bundles four concerns:
 // - "Clear expired stagger" needs no code: `staggerUntilTick` is a plain
-//   comparison against `tick` (see `isDecisionReady`), nothing to reset, and
-//   Task 8 never produces a non-zero value.
+//   comparison against `tick` (see `isDecisionReady`), nothing to reset, even
+//   now that contact resolution (phase 9, this task) produces non-zero
+//   values.
 // - `pruneReactionLedgerAndCancelThreats` prunes `reactionLedger` entries
 //   once their referenced attack has resolved (passed contact) or vanished,
 //   and interrupts a still-windup-phase bound defense whose threat vanished
@@ -730,9 +753,13 @@ function transitionExpiredPhases(
 //   (below): its trigger -- a `fast-burst-lunge` recovery ending -- is a
 //   pure phase-clock event phase 1 already observes, needing nothing from
 //   contact resolution.
-// - Technical's forced parry-counter is deliberately **not** started here:
-//   its trigger is a *successful parry*, a contact-resolution outcome that
-//   belongs to Task 9. `forcedActionId` is never populated by this file.
+// - Technical's forced parry-counter *start check* is `resolveForcedActionStarts`,
+//   below, called right before phase 4 (after phase 3's target refresh, not
+//   from this function): its trigger -- a successful parry setting
+//   `forcedActionId` -- is a contact-resolution outcome (phase 9, this
+//   task's own new code), but the *start* itself only makes sense once the
+//   defender's own action returns to `neutral`, which needs the freshly
+//   refreshed target phase 3 just computed.
 
 /**
  * Prunes a `reactionLedger` entry once the referenced attacker action either
@@ -882,6 +909,55 @@ function completeForcedStateTransitions(
   return { combatants: next, events }
 }
 
+/**
+ * Technical's forced parry-counter (design.md's "Technical parry" section;
+ * carried forward from Task 8 into this task): a successful parry
+ * (contact-resolution phase 9, this task) stamps the defender's
+ * `forcedActionId = 'technical-parry-counter'`. This checks that flag once
+ * the defender's own action returns to `neutral` -- i.e. their parry's own
+ * windup/contact/impact/recovery has already run its ordinary course, this
+ * uses the same uniform phase machinery as every other action, no special
+ * termination -- so "the defender's forced NEXT action" is read literally:
+ * whichever tick the defender becomes free again, still using the current
+ * (post phase-3 target-refresh) target. `resolveForcedParryCounterStart`
+ * (Task 7's existing helper) decides whether the target is still close
+ * enough; either way `forcedActionId` is a one-shot flag, always cleared
+ * here. Bypasses phase 4's weighted selection entirely for this tick when it
+ * fires -- see `forcedActionActorIds` there.
+ */
+function resolveForcedActionStarts(
+  combatants: Readonly<Record<CombatantId, FighterCombatState>>,
+  combatantIds: readonly CombatantId[],
+  tick: number,
+): { combatants: Record<CombatantId, FighterCombatState>; pendingActionStarts: PendingActionStart[] } {
+  const next: Record<CombatantId, FighterCombatState> = { ...combatants }
+  const pendingActionStarts: PendingActionStart[] = []
+
+  for (const id of combatantIds) {
+    const combatant = next[id]
+    if (combatant.status !== 'active' || combatant.forcedActionId === undefined || combatant.action.type !== 'neutral') continue
+
+    const targetId = combatant.targetId
+    const target = targetId ? combatants[targetId] : undefined
+    const distanceToTarget = target ? distanceBetween(combatant.position, target.position) : Infinity
+    const resolvedActionId = resolveForcedParryCounterStart(distanceToTarget)
+
+    if (resolvedActionId !== undefined && targetId !== undefined) {
+      pendingActionStarts.push({ actorId: id, targetId, actionId: resolvedActionId })
+      next[id] = { ...combatant, forcedActionId: undefined }
+    } else {
+      // Cleared: "Technical selects advance/hold-range normally" -- pull
+      // `nextDecisionTick` to the current tick so ordinary weighted
+      // selection resumes immediately this same tick, matching Fast's own
+      // forced-disengage exit convention (`completeForcedStateTransitions`
+      // above).
+      next[id] = { ...combatant, forcedActionId: undefined, nextDecisionTick: tick }
+    }
+  }
+
+  return { combatants: next, pendingActionStarts }
+}
+
 // --- Phase 3: pre-movement spatial hash; target invalidation/reacquisition -
 
 /** Builds the tick's transient spatial hash from sorted *active* combatants only (design.md: defeated combatants leave targeting/collision the tick after defeat). */
@@ -929,12 +1005,6 @@ function refreshTargets(
 
 // --- Phase 4: weighted decisions --------------------------------------------
 
-interface PendingActionStart {
-  actorId: CombatantId
-  targetId: CombatantId
-  actionId: AttackActionId
-}
-
 /**
  * Draws exactly one decision-stream pair per decision-ready combatant with a
  * valid hostile target, choosing between ordinary weighted locomotion (which
@@ -954,6 +1024,7 @@ function makeCombatDecisions(
   combatStyles: CombatStyleCatalog,
   spatialHash: SpatialHash,
   cursor: EventIdCursor,
+  forcedActionActorIds: ReadonlySet<CombatantId>,
 ): {
   combatants: Record<CombatantId, FighterCombatState>
   randomByCombatant: Record<CombatantId, CombatantRandomState>
@@ -967,9 +1038,10 @@ function makeCombatDecisions(
 
   for (const id of combatantIds) {
     const self = nextCombatants[id]
-    // Forced behavior (Fast's disengage, wired in phase 2) bypasses weighted
+    // Forced behavior (Fast's disengage wired in phase 2; Technical's
+    // parry-counter start resolved just above this phase) bypasses weighted
     // selection entirely: no decision-stream draw, no candidate scoring.
-    if (self.forcedDisengageStartTick !== undefined) continue
+    if (self.forcedDisengageStartTick !== undefined || forcedActionActorIds.has(id)) continue
     if (!isDecisionReady(self, tick) || self.targetId === undefined) continue
 
     const nearbyIds = queryRadius(spatialHash, self.position, TARGET_RETENTION_RADIUS)
@@ -1182,10 +1254,10 @@ function computeUpdatedFacing(combatant: Readonly<FighterCombatState>, target: R
  * root motion; `recovery` allows at most 35% of normal style speed along the
  * last ordinary `locomotionIntent`; staggered allows no locomotion (Task 8
  * never produces `staggerUntilTick > tick`, kept for forward compatibility).
- * A defense action's own windup has no authored root travel field in this
- * task's scope -- Fast evade's ranked dash needs geometry/blocked-direction
- * resolution that belongs to Task 9's contact resolution -- so it
- * contributes zero displacement here.
+ * A defense action's own windup has no authored root travel field for Heavy
+ * guard or Technical parry (both hold root); Fast evade is the one
+ * exception -- see `fastEvadeWindupDisplacement` below, wired here per
+ * Task 9's carried-forward requirement.
  */
 function computeDesiredDisplacement(
   combatant: Readonly<FighterCombatState>,
@@ -1202,11 +1274,13 @@ function computeDesiredDisplacement(
     switch (combatant.action.phase) {
       case 'windup': {
         const attackDefinition: AttackActionDefinition | undefined = combatStyles.attacks[combatant.action.definitionId as AttackActionId]
-        if (!attackDefinition) return { x: 0, z: 0 }
-        const perTick = attackDefinition.rootTravel / attackDefinition.windupTicks
-        const target = combatants[combatant.action.targetId]
-        const step = target ? Math.min(perTick, Math.max(0, distanceBetween(combatant.position, target.position) - minimumSeparation)) : perTick
-        return { x: facing.x * step, z: facing.z * step }
+        if (attackDefinition) {
+          const perTick = attackDefinition.rootTravel / attackDefinition.windupTicks
+          const target = combatants[combatant.action.targetId]
+          const step = target ? Math.min(perTick, Math.max(0, distanceBetween(combatant.position, target.position) - minimumSeparation)) : perTick
+          return { x: facing.x * step, z: facing.z * step }
+        }
+        return fastEvadeWindupDisplacement(combatant.action, facing)
       }
       case 'contact':
       case 'impact':
@@ -1219,6 +1293,32 @@ function computeDesiredDisplacement(
   }
 
   return intentDisplacement(combatant.locomotionIntent, style.locomotion, facing, TICKS_PER_SECOND)
+}
+
+/**
+ * Fast evade's authored defense dash (design.md's "Fast evade" section;
+ * carried forward from Task 8 into this task): a total distance of
+ * `0.9 + 0.3 * directionRoll` distributed evenly across the defense's
+ * *remaining* windup ticks (`phaseEndsAtTick - phaseStartedTick`, fixed once
+ * the defense starts), along the primary ranked direction from that same
+ * stored roll -- read back from `CombatActionState.defenseRoll.direction`,
+ * never re-drawn (Task 7 already consumed it from the defense stream).
+ * Independent of the style's ordinary locomotion speed profile; the result
+ * still flows through this tick's ordinary arena/movement-policy/separation
+ * resolution (phase 8) like any other displacement. Heavy guard and
+ * Technical parry hold root (return zero); this only ever fires for
+ * `fast-evade`.
+ */
+function fastEvadeWindupDisplacement(action: Extract<CombatActionState, { type: 'active' }>, facing: Readonly<Vec2>): Vec2 {
+  if (action.definitionId !== 'fast-evade' || !action.defenseRoll) return { x: 0, z: 0 }
+
+  const windupSpan = action.phaseEndsAtTick - action.phaseStartedTick
+  if (windupSpan <= 0) return { x: 0, z: 0 }
+
+  const totalDistance = calculateEvadeDisplacementDistance(action.defenseRoll.direction)
+  const perTick = totalDistance / windupSpan
+  const direction = evadeDirectionVector(rankEvadeDirections(action.defenseRoll.direction)[0], facing)
+  return { x: direction.x * perTick, z: direction.z * perTick }
 }
 
 /** Computes every active combatant's updated facing and desired displacement from the same pre-movement snapshot; nothing here applies arena/policy/separation constraints yet (phase 8). */
@@ -1290,13 +1390,463 @@ function resolveMovementConstraints(
   return next
 }
 
+// --- Phase 9: resolve contact intents ---------------------------------------
+//
+// design.md's "Contact resolution" algorithm: snapshot geometry/defenses,
+// build one intent per action currently in its one-tick `contact` phase,
+// resolve evade/parry/guard against that snapshot, sort by total order, then
+// resolve each intent whose actor remains live-active.
+// ---------------------------------------------------------------------------
+
+export interface ContactIntent {
+  actorId: CombatantId
+  targetId: CombatantId
+  actionInstanceId: ActionInstanceId
+  actionId: AttackActionId
+  priority: number
+  tieKey: number
+}
+
+/**
+ * The exact `tieKey` label format -- FROZEN from this task onward. Task 13
+ * freezes canonical trace hashes that depend on it; Task 19 reuses one of
+ * those literals for a cross-runtime check. Fed through
+ * `derivedUnitValue(seed, label)` (random.ts), which derives and draws
+ * without consuming any combatant stream, matching "priority and time-limit
+ * ties never consume combatant streams."
+ */
+function contactTieKeyLabel(tick: number, actionInstanceId: ActionInstanceId): string {
+  return `contact-tie:${tick}:${actionInstanceId}`
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value))
+}
+
+function requireAttackRolls(action: CombatActionState): { accuracy: number; critical: number } {
+  if (action.type !== 'active' || !action.attackRolls) {
+    throw new Error('resolveContactIntents requires an active action with attackRolls')
+  }
+  return action.attackRolls
+}
+
+/** One intent per actor currently in `contact` phase with an attack action (`attackRolls` present tells an attack apart from a defense, matching phase 6's own discriminator). Never retargets: `targetId` is read once from the action's own `targetId`, set at action start and never changed. */
+function buildContactIntents(
+  snapshot: Readonly<Record<CombatantId, FighterCombatState>>,
+  combatantIds: readonly CombatantId[],
+  combatStyles: CombatStyleCatalog,
+  seed: number,
+  tick: number,
+): ContactIntent[] {
+  const intents: ContactIntent[] = []
+  for (const actorId of combatantIds) {
+    const actor = snapshot[actorId]
+    if (actor.status !== 'active' || actor.action.type !== 'active' || actor.action.phase !== 'contact' || !actor.action.attackRolls) continue
+    const actionId = actor.action.definitionId as AttackActionId
+    const definition = combatStyles.attacks[actionId]
+    intents.push({
+      actorId,
+      targetId: actor.action.targetId,
+      actionInstanceId: actor.action.instanceId,
+      actionId,
+      priority: definition.contactPriority,
+      tieKey: derivedUnitValue(seed, contactTieKeyLabel(tick, actor.action.instanceId)),
+    })
+  }
+  return intents
+}
+
+/** Descending priority, then ascending `tieKey`, then ascending `ActionInstanceId` -- a stable total order over explicit keys, never a pairwise random comparator. */
+function sortContactIntents(intents: readonly ContactIntent[]): ContactIntent[] {
+  return [...intents].sort((a, b) => {
+    if (a.priority !== b.priority) return b.priority - a.priority
+    if (a.tieKey !== b.tieKey) return a.tieKey - b.tieKey
+    return a.actionInstanceId < b.actionInstanceId ? -1 : a.actionInstanceId > b.actionInstanceId ? 1 : 0
+  })
+}
+
+/**
+ * Applies non-lethal stagger to `target`, interrupting its current action
+ * first when applicable. "Non-lethal stagger from the first intent does not
+ * cancel a second action already in contact": an action currently in
+ * `contact` phase is exempt from interruption (it either already resolved
+ * its own intent this batch or still will, unaffected by this stagger);
+ * `windup`/`impact`/`recovery` are interrupted, resetting to `neutral` and
+ * emitting `action-interrupted(reason: 'stagger')`. Shared by both the
+ * ordinary/blocked-hit target-stagger case and the parry attacker-stagger
+ * case: the attacker's own action is always in `contact` phase during its
+ * own resolution, so this exemption naturally protects it too, with no
+ * special-casing needed.
+ */
+function applyStaggerAndInterrupt(
+  target: Readonly<FighterCombatState>,
+  tick: number,
+  durationTicks: number,
+  sourceId: CombatantId,
+  actionInstanceId: ActionInstanceId,
+  direction: Readonly<Vec2>,
+  cursor: EventIdCursor,
+): { combatant: FighterCombatState; events: EncounterEvent[] } {
+  const events: EncounterEvent[] = []
+  let next = target
+
+  if (next.action.type === 'active' && next.action.phase !== 'contact') {
+    events.push({
+      id: allocateEventId(cursor),
+      tick,
+      type: 'action-interrupted',
+      actorId: next.id,
+      actionInstanceId: next.action.instanceId,
+      actionId: next.action.definitionId,
+      reason: 'stagger',
+    })
+    next = { ...next, action: { type: 'neutral' } }
+  }
+
+  next = { ...next, staggerUntilTick: Math.max(next.staggerUntilTick, tick + durationTicks) }
+
+  events.push({
+    id: allocateEventId(cursor),
+    tick,
+    type: 'fighter-staggered',
+    combatantId: next.id,
+    sourceId,
+    actionInstanceId,
+    durationTicks,
+    direction: { ...direction },
+  })
+
+  return { combatant: next, events }
+}
+
+interface ContactIntentResolution {
+  combatants: Record<CombatantId, FighterCombatState>
+  events: EncounterEvent[]
+  pushVector?: Vec2
+}
+
+/**
+ * Resolves one intent per design.md's numbered algorithm (target-unavailable
+ * -> bound evade -> geometry -> accuracy -> bound guard/parry facing gate ->
+ * critical -> damage/push/stagger/zone/point -> events in canonical order).
+ * `snapshot` supplies every geometry/defense-binding/critical-opening read
+ * (position, facing, the bound defense's own state, the target's
+ * pre-batch action phase and `staggerUntilTick`); `live` supplies the
+ * target's current HP/status, mutated progressively by earlier intents this
+ * batch. A bound `technical-parry` is only ever treated as a block when the
+ * attack itself is tagged `parryable` -- defense-in-depth for "a shield jab
+ * is deliberately unparryable," even though scheduling (`combatDecision.ts`'s
+ * `canDefenseAnswerTags`) already prevents a mismatched binding from ever
+ * existing.
+ */
+function resolveOneIntent(
+  intent: ContactIntent,
+  snapshot: Readonly<Record<CombatantId, FighterCombatState>>,
+  live: Readonly<Record<CombatantId, FighterCombatState>>,
+  combatStyles: CombatStyleCatalog,
+  tick: number,
+  cursor: EventIdCursor,
+): ContactIntentResolution {
+  const actionDef = combatStyles.attacks[intent.actionId]
+  const actorSnapshot = snapshot[intent.actorId]
+  const events: EncounterEvent[] = []
+  let next: Record<CombatantId, FighterCombatState> = { ...live }
+
+  const targetLive = next[intent.targetId]
+  if (!targetLive || targetLive.status !== 'active') {
+    events.push({
+      id: allocateEventId(cursor),
+      tick,
+      type: 'attack-missed',
+      actorId: intent.actorId,
+      targetId: intent.targetId,
+      actionInstanceId: intent.actionInstanceId,
+      actionId: intent.actionId,
+      reason: 'target-unavailable',
+    })
+    return { combatants: next, events }
+  }
+
+  const targetSnapshot = snapshot[intent.targetId]
+  const boundDefense = targetSnapshot.action.type === 'active' && targetSnapshot.action.reactingToActionId === intent.actionInstanceId ? targetSnapshot.action : undefined
+
+  const geometryOk = isWithinAttackGeometry(actorSnapshot.position, actorSnapshot.facing, targetSnapshot.position, actionDef.contactRange, actionDef.minimumFacingDot)
+
+  if (boundDefense && boundDefense.definitionId === 'fast-evade') {
+    if (!geometryOk) {
+      events.push({
+        id: allocateEventId(cursor),
+        tick,
+        type: 'attack-evaded',
+        actorId: intent.actorId,
+        targetId: intent.targetId,
+        actionInstanceId: intent.actionInstanceId,
+        actionId: intent.actionId,
+        evadeIntent: targetLive.locomotionIntent,
+      })
+      return { combatants: next, events }
+    }
+    events.push({
+      id: allocateEventId(cursor),
+      tick,
+      type: 'defense-failed',
+      defenderId: intent.targetId,
+      attackerId: intent.actorId,
+      incomingActionId: intent.actionInstanceId,
+      defenseActionId: 'fast-evade',
+      reason: 'geometry',
+    })
+  }
+
+  if (!geometryOk) {
+    events.push({
+      id: allocateEventId(cursor),
+      tick,
+      type: 'attack-missed',
+      actorId: intent.actorId,
+      targetId: intent.targetId,
+      actionInstanceId: intent.actionInstanceId,
+      actionId: intent.actionId,
+      reason: 'geometry',
+    })
+    return { combatants: next, events }
+  }
+
+  const attackRolls = requireAttackRolls(actorSnapshot.action)
+  const accuracyProbability = clamp01(actorSnapshot.definition.accuracy + actionDef.accuracyModifier)
+  if (!(attackRolls.accuracy < accuracyProbability)) {
+    events.push({
+      id: allocateEventId(cursor),
+      tick,
+      type: 'attack-missed',
+      actorId: intent.actorId,
+      targetId: intent.targetId,
+      actionInstanceId: intent.actionInstanceId,
+      actionId: intent.actionId,
+      reason: 'accuracy',
+    })
+    return { combatants: next, events }
+  }
+
+  let blocked: 'guard' | 'parry' | undefined
+  const boundBlockingDefenseId: 'heavy-guard' | 'technical-parry' | undefined =
+    boundDefense?.definitionId === 'heavy-guard'
+      ? 'heavy-guard'
+      : boundDefense?.definitionId === 'technical-parry' && actionDef.tags.includes('parryable')
+        ? 'technical-parry'
+        : undefined
+
+  if (boundBlockingDefenseId) {
+    const defenseDef = combatStyles.defenses[boundBlockingDefenseId]
+    const gateOk = isWithinIncomingFacingArc(targetSnapshot.facing, targetSnapshot.position, actorSnapshot.position, defenseDef.minimumIncomingFacingDot ?? -1)
+    if (gateOk) {
+      blocked = boundBlockingDefenseId === 'heavy-guard' ? 'guard' : 'parry'
+    } else {
+      events.push({
+        id: allocateEventId(cursor),
+        tick,
+        type: 'defense-failed',
+        defenderId: intent.targetId,
+        attackerId: intent.actorId,
+        incomingActionId: intent.actionInstanceId,
+        defenseActionId: boundBlockingDefenseId,
+        reason: 'facing',
+      })
+    }
+  }
+
+  if (blocked === 'parry') {
+    const contactPoint = calculateContactPoint(actorSnapshot.position, targetSnapshot.position, actorSnapshot.facing, 'weapon')
+    events.push({
+      id: allocateEventId(cursor),
+      tick,
+      type: 'attack-parried',
+      actorId: intent.actorId,
+      defenderId: intent.targetId,
+      actionInstanceId: intent.actionInstanceId,
+      actionId: intent.actionId,
+      contactZone: 'weapon',
+      contactPoint,
+    })
+
+    const direction = calculatePushDirection(targetSnapshot.position, actorSnapshot.position, targetSnapshot.facing)
+    const staggerResult = applyStaggerAndInterrupt(next[intent.actorId], tick, PARRY_ATTACKER_STAGGER_TICKS, intent.targetId, intent.actionInstanceId, direction, cursor)
+    next = { ...next, [intent.actorId]: staggerResult.combatant }
+    events.push(...staggerResult.events)
+
+    next = { ...next, [intent.targetId]: { ...next[intent.targetId], forcedActionId: 'technical-parry-counter' } }
+
+    return { combatants: next, events }
+  }
+
+  const targetWasOpen = (targetSnapshot.action.type === 'active' && targetSnapshot.action.phase === 'recovery') || targetSnapshot.staggerUntilTick > tick
+  const isCritical = !blocked && targetWasOpen && attackRolls.critical < actorSnapshot.definition.criticalChance
+
+  const comparisonMultiplier = comparisonDamageMultiplier(compareArchetypes(actorSnapshot.definition.archetype, targetSnapshot.definition.archetype))
+  const blockMultiplier = blocked === 'guard' ? GUARD_DAMAGE_MULTIPLIER : 1
+  const criticalMultiplier = isCritical ? CRITICAL_DAMAGE_MULTIPLIER : 1
+  const damage = calculateContactDamage(actorSnapshot.definition.power, actionDef.damageMultiplier, comparisonMultiplier, criticalMultiplier, blockMultiplier)
+
+  const zone: ContactZone = blocked === 'guard' ? 'shield' : 'body'
+  const contactPoint = calculateContactPoint(actorSnapshot.position, targetSnapshot.position, actorSnapshot.facing, zone)
+
+  const newHp = Math.max(0, targetLive.hp - damage)
+  const defeated = newHp <= 0
+  next = { ...next, [intent.targetId]: { ...targetLive, hp: newHp, status: defeated ? 'defeated' : 'active' } }
+
+  if (isCritical) {
+    events.push({
+      id: allocateEventId(cursor),
+      tick,
+      type: 'critical-hit',
+      actorId: intent.actorId,
+      targetId: intent.targetId,
+      actionInstanceId: intent.actionInstanceId,
+      actionId: intent.actionId,
+      multiplier: CRITICAL_DAMAGE_MULTIPLIER,
+    })
+  } else if (blocked === 'guard') {
+    events.push({
+      id: allocateEventId(cursor),
+      tick,
+      type: 'attack-blocked',
+      actorId: intent.actorId,
+      targetId: intent.targetId,
+      actionInstanceId: intent.actionInstanceId,
+      actionId: intent.actionId,
+      contactZone: 'shield',
+      contactPoint,
+    })
+  }
+
+  events.push({
+    id: allocateEventId(cursor),
+    tick,
+    type: 'damage-dealt',
+    actorId: intent.actorId,
+    targetId: intent.targetId,
+    actionInstanceId: intent.actionInstanceId,
+    actionId: intent.actionId,
+    amount: damage,
+    remainingHp: newHp,
+    contactZone: zone,
+    contactPoint,
+  })
+
+  const appliedStagger = blocked === 'guard' ? calculateBlockedStaggerTicks(actionDef.staggerTicks) : actionDef.staggerTicks
+  const direction = calculatePushDirection(actorSnapshot.position, targetSnapshot.position, actorSnapshot.facing)
+  const staggerResult = applyStaggerAndInterrupt(next[intent.targetId], tick, appliedStagger, intent.actorId, intent.actionInstanceId, direction, cursor)
+  next = { ...next, [intent.targetId]: staggerResult.combatant }
+  events.push(...staggerResult.events)
+
+  if (defeated) {
+    events.push({
+      id: allocateEventId(cursor),
+      tick,
+      type: 'fighter-defeated',
+      defeatedId: intent.targetId,
+      sourceId: intent.actorId,
+    })
+  }
+
+  const pushMagnitude = blocked === 'guard' ? actionDef.pushDistance * GUARD_PUSH_MULTIPLIER : actionDef.pushDistance
+  return { combatants: next, events, pushVector: { x: direction.x * pushMagnitude, z: direction.z * pushMagnitude } }
+}
+
+export interface ContactResolutionResult {
+  combatants: Record<CombatantId, FighterCombatState>
+  events: EncounterEvent[]
+  pushByTarget: Readonly<Record<CombatantId, Vec2>>
+}
+
+/**
+ * Phase 9: resolves every attack action currently in its one-tick `contact`
+ * phase. `combatants` (the state as it stands right after phase 8) doubles
+ * as the frozen geometry/defense-binding snapshot for the whole batch --
+ * position, facing, and every relevant action-phase value are never
+ * mutated anywhere in this module, only read from this same input, so no
+ * earlier intent's resolution can shift a later intent's geometry. A
+ * separate `live` record threads HP/status/stagger/action-state mutations
+ * forward intent by intent; `resolveOneIntent` reads geometry/defense-
+ * binding/critical-opening from the frozen snapshot but status/HP from
+ * `live`, so a mid-batch defeat correctly produces `target-unavailable` for
+ * a later intent while a mid-batch non-lethal stagger never perturbs a
+ * later intent's already-snapshotted geometry or opening-critical
+ * eligibility. Skips an intent outright only when its actor is no longer
+ * live-active (defeated earlier in this batch).
+ */
+export function resolveContactIntents(
+  combatants: Readonly<Record<CombatantId, FighterCombatState>>,
+  combatantIds: readonly CombatantId[],
+  combatStyles: CombatStyleCatalog,
+  seed: number,
+  tick: number,
+  cursor: EventIdCursor,
+): ContactResolutionResult {
+  const snapshot = combatants
+  let live: Record<CombatantId, FighterCombatState> = { ...combatants }
+  const events: EncounterEvent[] = []
+  const pushByTarget: Record<CombatantId, Vec2> = {}
+
+  const sortedIntents = sortContactIntents(buildContactIntents(snapshot, combatantIds, combatStyles, seed, tick))
+
+  for (const intent of sortedIntents) {
+    const actorLive = live[intent.actorId]
+    if (!actorLive || actorLive.status !== 'active') continue
+
+    const result = resolveOneIntent(intent, snapshot, live, combatStyles, tick, cursor)
+    live = result.combatants
+    events.push(...result.events)
+
+    if (result.pushVector) {
+      const existing = pushByTarget[intent.targetId] ?? { x: 0, z: 0 }
+      pushByTarget[intent.targetId] = { x: existing.x + result.pushVector.x, z: existing.z + result.pushVector.z }
+    }
+  }
+
+  return { combatants: live, events, pushByTarget }
+}
+
+// --- Phase 10: apply accumulated push, then re-run arena/policy/separation -
+
+/**
+ * Push moves the target away from the actor along the snapshot line between
+ * roots; same-tick push vectors already accumulated per target (phase 9).
+ * Applies that accumulated displacement to every active combatant in one
+ * collection-wide pass -- zero for anyone untouched this tick -- reusing
+ * phase 8's own `resolveMovementConstraints` (arena clamp, movement-policy
+ * constraint, three fixed separation passes) so push is constrained
+ * identically to ordinary movement, applied once to the whole collection,
+ * never per intent.
+ */
+function applyAccumulatedPush(
+  combatants: Readonly<Record<CombatantId, FighterCombatState>>,
+  combatantIds: readonly CombatantId[],
+  pushByTarget: Readonly<Record<CombatantId, Vec2>>,
+  arena: Readonly<CombatArenaDefinition>,
+): Record<CombatantId, FighterCombatState> {
+  const updatedFacing: Record<CombatantId, Vec2> = {}
+  const requests: MovementRequest[] = []
+
+  for (const id of combatantIds) {
+    const combatant = combatants[id]
+    updatedFacing[id] = combatant.facing
+    if (combatant.status !== 'active') continue
+    requests.push({ id, position: combatant.position, desiredDisplacement: pushByTarget[id] ?? { x: 0, z: 0 } })
+  }
+
+  return resolveMovementConstraints(combatants, combatantIds, { requests, updatedFacing }, arena)
+}
+
 // --- The tick loop itself ---------------------------------------------------
 
 /**
- * Advances `previous` by exactly one tick through phases 1-8. Outside
+ * Advances `previous` by exactly one tick through phases 1-10. Outside
  * `running`, this returns `previous` itself (referential identity, empty
  * event batch) -- a finished encounter is inert. Never mutates `previous` or
- * anything reachable from it.
+ * anything reachable from it. Phases 11-12 (local-clock persistence beyond
+ * what contact resolution already writes, the exhaustive stagger phase
+ * matrix, and `no-hostile-pairs`/time-limit completion) are Task 10's.
  */
 export function advanceEncounterTick(previous: EncounterState): EncounterTransition {
   if (previous.phase !== 'running') {
@@ -1323,6 +1873,14 @@ export function advanceEncounterTick(previous: EncounterState): EncounterTransit
   const preMovementHash = buildActivePreMovementHash(combatants, previous.combatantIds)
   combatants = refreshTargets(combatants, previous.combatantIds, previous.hostility, preMovementHash, tick)
 
+  // Technical's forced parry-counter start check (carried forward into this
+  // task; see `resolveForcedActionStarts`) runs against the freshly
+  // refreshed targets, right before phase 4 so it can bypass weighted
+  // selection for any actor it fires for.
+  const forcedActionStarts = resolveForcedActionStarts(combatants, previous.combatantIds, tick)
+  combatants = forcedActionStarts.combatants
+  const forcedActionActorIds = new Set(forcedActionStarts.pendingActionStarts.map((start) => start.actorId))
+
   // Phase 4
   let randomByCombatant = previous.randomByCombatant
   const decisions = makeCombatDecisions(
@@ -1335,13 +1893,19 @@ export function advanceEncounterTick(previous: EncounterState): EncounterTransit
     previous.combatStyles,
     preMovementHash,
     cursor,
+    forcedActionActorIds,
   )
   combatants = decisions.combatants
   randomByCombatant = decisions.randomByCombatant
   events.push(...decisions.events)
 
-  // Phase 5
-  const starts = startSelectedActions(combatants, randomByCombatant, decisions.pendingActionStarts, tick, previous.combatStyles, cursor)
+  // Phase 5 (forced-counter starts merged with ordinary decisions, sorted by
+  // actor so this stays a single canonical-order pass; the two sources are
+  // always disjoint sets of actors)
+  const pendingActionStarts = [...forcedActionStarts.pendingActionStarts, ...decisions.pendingActionStarts].sort((a, b) =>
+    a.actorId < b.actorId ? -1 : a.actorId > b.actorId ? 1 : 0,
+  )
+  const starts = startSelectedActions(combatants, randomByCombatant, pendingActionStarts, tick, previous.combatStyles, cursor)
   combatants = starts.combatants
   randomByCombatant = starts.randomByCombatant
   events.push(...starts.events)
@@ -1357,6 +1921,14 @@ export function advanceEncounterTick(previous: EncounterState): EncounterTransit
 
   // Phase 8
   combatants = resolveMovementConstraints(combatants, previous.combatantIds, intents, previous.arena)
+
+  // Phase 9
+  const contactResolution = resolveContactIntents(combatants, previous.combatantIds, previous.combatStyles, previous.seed, tick, cursor)
+  combatants = contactResolution.combatants
+  events.push(...contactResolution.events)
+
+  // Phase 10
+  combatants = applyAccumulatedPush(combatants, previous.combatantIds, contactResolution.pushByTarget, previous.arena)
 
   const nextState: EncounterState = {
     ...previous,
