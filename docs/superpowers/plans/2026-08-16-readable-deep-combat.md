@@ -688,9 +688,11 @@ expect(scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)).toEqual([
   { decision: { type: 'locomotion', locomotionIntent: 'pressure' }, weight: 24 },
   { decision: { type: 'locomotion', locomotionIntent: 'circle-left' }, weight: 2 },
   { decision: { type: 'locomotion', locomotionIntent: 'circle-right' }, weight: 2 },
-  { decision: { type: 'action', actionId: 'heavy-cleave' }, weight: 19.11111111111111 },
+  { decision: { type: 'action', actionId: 'heavy-cleave' }, weight: 19.111111111111114 },
 ])
 ```
+
+> **Amendment (2026-08-16, corrected during execution):** this weight was authored as `19.11111111111111`, which is the double nearest the *exact* rational `172/9`. Faithfully evaluating the design's own formula in IEEE-754 — `8 + 20 × (1 − |(2.0 − 0.45) − 1.35| / 0.45)` — yields `19.111111111111114`, one ULP higher, because `1.55 − 1.35` is not exact in binary. The formula is normative and the implementation evaluates it straightforwardly; the authored decimal was the idealized value rather than the formula's result. The assertion stays exact, on the value the normative formula actually produces. There is no behavioral consequence: the weight feeds proportional selection against a continuous roll.
 
 Assert total approximately `71.11`; shield jab and zero-weight hold are absent. Add range reach, boundary `-20`, opening `+18/+6`, pressure `±8 × level`, matchup `+5/0/-5`, and all-zero deterministic fallback tests.
 
