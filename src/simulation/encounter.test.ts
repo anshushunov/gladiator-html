@@ -2477,6 +2477,31 @@ describe('advanceEncounterTick: phase 12 completion (no-hostile-pairs) -- Task 1
     expect(still).toBe(finished)
     expect(events).toEqual([])
   })
+
+  it('produces an empty winner/survivor result for the degenerate zero-survivor (mutual-defeat) case', () => {
+    // `resolveNoHostilePairsCompletion`'s own doc comment names this case
+    // explicitly (encounter.ts): every combatant already defeated is safe by
+    // construction (`hasAnyHostilePair` requires both sides `status ===
+    // 'active'`, so zero active combatants trivially has no hostile pair),
+    // but nothing exercised it. Directly constructs the degenerate state
+    // (both combatants pre-defeated) rather than choreographing a same-tick
+    // mutual kill: with exactly two combatants, ordinary contact resolution
+    // cannot actually produce a same-tick double-KO in the first place (the
+    // total-order intent loop skips a defeated actor's own later intent, so
+    // whichever side's attack resolves first is the only one that lands) --
+    // this test targets the completion branch itself, not that choreography.
+    const created = createEncounter(baseConfig())
+    let state = patchCombatant(created.state, 'a', { status: 'defeated', hp: 0 })
+    state = patchCombatant(state, 'b', { status: 'defeated', hp: 0 })
+    state = { ...state, tick: 0 }
+
+    const { state: next, events } = advanceEncounterTick(state)
+
+    expect(next.phase).toBe('finished')
+    expect(next.result).toMatchObject({ reason: 'no-hostile-pairs', survivorIds: [], winnerIds: [], winningFactionIds: [] })
+    const finishedEvent = events.find((event) => event.type === 'encounter-finished')
+    expect(finishedEvent).toMatchObject({ survivorIds: [], winnerIds: [], winningFactionIds: [] })
+  })
 })
 
 describe('advanceEncounterTick: stagger phase matrix (Task 10 Step 1) -- every attack/defense phase x non-lethal stagger', () => {
@@ -2505,27 +2530,86 @@ describe('advanceEncounterTick: stagger phase matrix (Task 10 Step 1) -- every a
     expect(next.combatants.target.action).toEqual({ type: 'neutral' })
   })
 
-  it('windup: cancelled before contact, emitting action-interrupted(stagger); stored attack rolls are simply discarded with it', () => {
-    const state = staggeringHitFixture({
-      type: 'active',
-      instanceId: 'target:0',
-      definitionId: 'fast-slash',
-      phase: 'windup',
-      phaseStartedTick: CONTACT_TICK - 1,
-      phaseEndsAtTick: CONTACT_TICK + 50,
-      targetId: 'actor',
-      attackRolls: { accuracy: 0.5, critical: 0.5 },
+  // windup/impact/recovery are exercised for BOTH an attack-shaped action
+  // (fast-slash, carries attackRolls) and a defense-shaped action
+  // (technical-parry, never carries attackRolls) -- design.md's table gives
+  // "Attack outcome"/"Defense outcome" as two columns, identical in every
+  // row, and `applyStaggerToAction` (combatActions.ts) is provably keyed
+  // only on `action.phase`, but the brief asks for every attack *and*
+  // defense phase x stagger cell to actually be covered by a test, not
+  // inferred from the implementation being phase-only.
+  describe.each([
+    { shape: 'attack', definitionId: 'fast-slash' as const, attackRolls: { accuracy: 0.5, critical: 0.5 } },
+    { shape: 'defense', definitionId: 'technical-parry' as const, attackRolls: undefined },
+  ])('$shape-shaped action ($definitionId)', ({ definitionId, attackRolls }) => {
+    it('windup: cancelled before contact, emitting action-interrupted(stagger); stored attack rolls (if any) are simply discarded with it', () => {
+      const state = staggeringHitFixture({
+        type: 'active',
+        instanceId: 'target:0',
+        definitionId,
+        phase: 'windup',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK + 50,
+        targetId: 'actor',
+        ...(attackRolls ? { attackRolls } : {}),
+      })
+
+      const { state: next, events } = advanceEncounterTick(state)
+
+      expect(events.find((event) => event.type === 'action-interrupted')).toMatchObject({
+        actorId: 'target',
+        actionInstanceId: 'target:0',
+        actionId: definitionId,
+        reason: 'stagger',
+      })
+      expect(next.combatants.target.action).toEqual({ type: 'neutral' })
     })
 
-    const { state: next, events } = advanceEncounterTick(state)
+    it('impact: the remaining impact/recovery is cleared, emitting action-interrupted(stagger)', () => {
+      const state = staggeringHitFixture({
+        type: 'active',
+        instanceId: 'target:0',
+        definitionId,
+        phase: 'impact',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK + 50,
+        targetId: 'actor',
+        ...(attackRolls ? { attackRolls } : {}),
+      })
 
-    expect(events.find((event) => event.type === 'action-interrupted')).toMatchObject({
-      actorId: 'target',
-      actionInstanceId: 'target:0',
-      actionId: 'fast-slash',
-      reason: 'stagger',
+      const { state: next, events } = advanceEncounterTick(state)
+
+      expect(events.find((event) => event.type === 'action-interrupted')).toMatchObject({
+        actorId: 'target',
+        actionInstanceId: 'target:0',
+        actionId: definitionId,
+        reason: 'stagger',
+      })
+      expect(next.combatants.target.action).toEqual({ type: 'neutral' })
     })
-    expect(next.combatants.target.action).toEqual({ type: 'neutral' })
+
+    it('recovery: the remaining recovery is cleared, emitting action-interrupted(stagger)', () => {
+      const state = staggeringHitFixture({
+        type: 'active',
+        instanceId: 'target:0',
+        definitionId,
+        phase: 'recovery',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK + 50,
+        targetId: 'actor',
+        ...(attackRolls ? { attackRolls } : {}),
+      })
+
+      const { state: next, events } = advanceEncounterTick(state)
+
+      expect(events.find((event) => event.type === 'action-interrupted')).toMatchObject({
+        actorId: 'target',
+        actionInstanceId: 'target:0',
+        actionId: definitionId,
+        reason: 'stagger',
+      })
+      expect(next.combatants.target.action).toEqual({ type: 'neutral' })
+    })
   })
 
   it('contact: the already-snapshotted contact survives this tick untouched (no action-interrupted), then clears silently on the following tick instead of advancing to impact', () => {
@@ -2549,48 +2633,6 @@ describe('advanceEncounterTick: stagger phase matrix (Task 10 Step 1) -- every a
 
     // Stagger owns control: not advanced to `impact` on its ordinary schedule.
     expect(nextTick.combatants.target.action).toEqual({ type: 'neutral' })
-  })
-
-  it('impact: the remaining impact/recovery is cleared, emitting action-interrupted(stagger)', () => {
-    const state = staggeringHitFixture({
-      type: 'active',
-      instanceId: 'target:0',
-      definitionId: 'fast-slash',
-      phase: 'impact',
-      phaseStartedTick: CONTACT_TICK - 1,
-      phaseEndsAtTick: CONTACT_TICK + 50,
-      targetId: 'actor',
-    })
-
-    const { state: next, events } = advanceEncounterTick(state)
-
-    expect(events.find((event) => event.type === 'action-interrupted')).toMatchObject({
-      actorId: 'target',
-      actionInstanceId: 'target:0',
-      reason: 'stagger',
-    })
-    expect(next.combatants.target.action).toEqual({ type: 'neutral' })
-  })
-
-  it('recovery: the remaining recovery is cleared, emitting action-interrupted(stagger)', () => {
-    const state = staggeringHitFixture({
-      type: 'active',
-      instanceId: 'target:0',
-      definitionId: 'fast-slash',
-      phase: 'recovery',
-      phaseStartedTick: CONTACT_TICK - 1,
-      phaseEndsAtTick: CONTACT_TICK + 50,
-      targetId: 'actor',
-    })
-
-    const { state: next, events } = advanceEncounterTick(state)
-
-    expect(events.find((event) => event.type === 'action-interrupted')).toMatchObject({
-      actorId: 'target',
-      actionInstanceId: 'target:0',
-      reason: 'stagger',
-    })
-    expect(next.combatants.target.action).toEqual({ type: 'neutral' })
   })
 
   it('lethal defeat overrides the whole table: no action-interrupted even mid-windup, action and forcedActionId silently cleared, fighter-staggered still fires', () => {
@@ -2618,11 +2660,19 @@ describe('advanceEncounterTick: stagger phase matrix (Task 10 Step 1) -- every a
     expect(next.combatants.target.status).toBe('defeated')
   })
 
-  it('lethal defeat does not cancel a different surviving combatant\'s already-scheduled contact this same tick', () => {
+  it('lethal defeat cancels the defeated fighter\'s own later intent this same tick, silently -- not the "surviving combatant" clause, see the next test for that', () => {
     // Reuses Task 9's snapshot-discipline scenario (a hits b lethally; b's own
     // contact-phase attack against c must still resolve) but with b's hp
-    // dropped to 1 so a's hit is now lethal, proving the "does not cancel
-    // another surviving combatant's already scheduled contact" clause.
+    // dropped to 1 so a's hit is now lethal. This proves design.md's "cancels
+    // only later contact intents whose actor is that fighter" half of the
+    // lethal-defeat clause: b (the defeated fighter) never gets to resolve
+    // its own already-scheduled attack against c. It does NOT prove the
+    // other half ("does not cancel another surviving combatant's already
+    // scheduled contact") -- c here is b's own *target*, not an independent
+    // third party with its own unrelated intent, so this fixture cannot tell
+    // "cancelled because b died" apart from "cancelled because b's own
+    // intent specifically was skipped." The next test isolates that other
+    // clause with a genuinely unrelated surviving pair.
     const created = createEncounter({
       seed: 1,
       combatants: [
@@ -2676,6 +2726,74 @@ describe('advanceEncounterTick: stagger phase matrix (Task 10 Step 1) -- every a
     // silent skip artifact -- c never took a hit.
     expect(events.some((event) => (event.type === 'damage-dealt' || event.type === 'attack-missed') && event.actorId === 'b')).toBe(false)
     expect(next.combatants.c.hp).toBe(500)
+  })
+
+  it('lethal defeat elsewhere in the batch does not cancel a different, unrelated surviving pair\'s already-scheduled contact this same tick', () => {
+    // Four combatants: 'killer' lethally defeats 'victim' (fast-slash,
+    // priority 40, resolves FIRST in the sorted order), while a wholly
+    // unrelated pair -- 'p1' attacking 'p2', sharing no target/attacker with
+    // either killer or victim -- has its own already-scheduled contact-phase
+    // attack resolving SECOND in the very same batch (heavy-cleave, priority
+    // 10). This isolates design.md's other lethal-defeat clause ("does not
+    // cancel another surviving combatant's already scheduled contact") from
+    // the previous test's "defeated fighter's own intent is cancelled"
+    // clause: p1 and p2 are neither the killer, the victim, nor either
+    // one's own target, so nothing about their own contact should be
+    // affected by an unrelated defeat resolving earlier in the same batch.
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('killer', 'faction-a', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
+        combatant('victim', 'faction-b', { archetype: 'fast', startPosition: { x: 0, z: 0 }, fighter: { maxHp: 1 } }),
+        combatant('p1', 'faction-c', { archetype: 'heavy', startPosition: { x: 0, z: 10 } }),
+        combatant('p2', 'faction-d', { archetype: 'heavy', startPosition: { x: 1.0, z: 10 } }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'free-for-all' },
+      combatStyles: COMBAT_STYLES,
+    })
+
+    let state = patchCombatant(created.state, 'killer', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      action: {
+        type: 'active',
+        instanceId: 'killer:0',
+        definitionId: 'fast-slash', // priority 40: resolves before p1's intent
+        phase: 'windup',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK,
+        targetId: 'victim',
+        attackRolls: { accuracy: 0.1, critical: 0.9 },
+      },
+    })
+    state = patchCombatant(state, 'victim', { targetId: undefined, nextDecisionTick: 999_999, locomotionIntent: 'hold-range', facing: { x: -1, z: 0 } })
+    state = patchCombatant(state, 'p1', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      action: {
+        type: 'active',
+        instanceId: 'p1:0',
+        definitionId: 'heavy-cleave', // priority 10: resolves after killer's lethal hit, sharing nothing with killer/victim
+        phase: 'windup',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK,
+        targetId: 'p2',
+        attackRolls: { accuracy: 0.1, critical: 0.9 },
+      },
+    })
+    state = patchCombatant(state, 'p2', { targetId: undefined, nextDecisionTick: 999_999, locomotionIntent: 'hold-range', facing: { x: -1, z: 0 } })
+    state = { ...state, tick: CONTACT_TICK - 1 }
+
+    const { state: next, events } = advanceEncounterTick(state)
+
+    expect(next.combatants.victim.status).toBe('defeated')
+    // p1's attack against p2 resolves as an ordinary unblocked hit, wholly
+    // unaffected by victim's defeat elsewhere in the same batch.
+    expect(events.some((event) => event.type === 'damage-dealt' && event.actorId === 'p1' && event.targetId === 'p2')).toBe(true)
+    expect(next.combatants.p2.hp).toBeLessThan(next.combatants.p2.definition.maxHp)
   })
 
   it('clears a just-queued forced action (technical-parry-counter) when a second, lower-priority intent staggers the same defender later in the same contact-resolution batch', () => {
@@ -2980,8 +3098,18 @@ describe('Task 10 Step 4: informational pacing probe -- Brutus vs. Drusus, 20 se
 
     if (invariantViolations.length > 0) {
       // eslint-disable-next-line no-console
-      console.log(`[Task 10 pacing probe] ${invariantViolations.length}/${PROBE_SEED_COUNT} seeds hit a pre-existing, out-of-scope arena-boundary invariant violation (see task report):\n  ${invariantViolations.join('\n  ')}`)
+      console.log(`[Task 10 pacing probe] ${invariantViolations.length}/${PROBE_SEED_COUNT} seeds hit an invariant violation:\n  ${invariantViolations.join('\n  ')}`)
     }
+
+    // Invariant assertion (the whole reason this probe's per-tick try/catch
+    // exists): this is the only test in the suite that runs 1000+ ticks of
+    // real duel play, exactly the regime a movement/separation/arena-bounds
+    // regression would hide from every shorter-lived test. The try/catch
+    // above exists to keep collecting every other seed's numbers and to
+    // report every violation with its seed/tick (more useful than dying on
+    // the first one), never to let a violation pass silently -- the probe
+    // must go red the instant any seed hits one.
+    expect(invariantViolations).toEqual([])
 
     const sortedDurations = [...durations].sort((a, b) => a - b)
     const mid = Math.floor(sortedDurations.length / 2)
