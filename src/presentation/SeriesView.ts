@@ -1,7 +1,7 @@
 import { formatBattleFeed } from './battleFeed'
 import { getAssignmentComparison, type BoutIndex, type SeriesPhase, type SeriesState } from '../simulation/series'
 import type { Archetype, FighterDefinition, FighterSide } from '../simulation/fighters'
-import type { BattleState } from '../simulation/battle'
+import { fighterBySide, type BattleState } from '../simulation/battle'
 
 export type SeriesIntent =
   | { type: 'assign'; fighterId: string; boutIndex: BoutIndex }
@@ -402,7 +402,7 @@ export class SeriesView {
   }
 
   private buildFighterCard(container: HTMLElement, side: FighterSide, battle: BattleState | undefined): void {
-    const fighter = battle?.fighters[side]
+    const fighter = battle ? fighterBySide(battle, side) : undefined
     if (!fighter) {
       container.replaceChildren()
       return
@@ -421,7 +421,7 @@ export class SeriesView {
   }
 
   private updateHp(container: HTMLElement | null, side: FighterSide, battle: BattleState | undefined): void {
-    const fighter = battle?.fighters[side]
+    const fighter = battle ? fighterBySide(battle, side) : undefined
     if (!fighter || !container?.firstChild) return
     const hp = container.querySelector<HTMLElement>(`[data-hp="${side}"]`)
     const bar = container.querySelector<HTMLElement>(`[data-health="${side}"]`)
@@ -435,7 +435,7 @@ export class SeriesView {
       status.textContent = ''
       return
     }
-    status.textContent = `Bout ${BOUT_NUMERALS[state.activeBoutIndex]} ${RC.middleDot} ${battle.fighters.home.definition.name} vs ${battle.fighters.away.definition.name}`
+    status.textContent = `Bout ${BOUT_NUMERALS[state.activeBoutIndex]} ${RC.middleDot} ${fighterBySide(battle, 'home').definition.name} vs ${fighterBySide(battle, 'away').definition.name}`
   }
 
   private updateFeed(feed: HTMLElement, state: SeriesState): void {
@@ -449,8 +449,8 @@ export class SeriesView {
     if (latestEventId === this.lastFeedEventId) return
     this.lastFeedEventId = latestEventId
     const entries = formatBattleFeed(battle.events, {
-      home: battle.fighters.home.definition.name,
-      away: battle.fighters.away.definition.name,
+      [battle.descriptor.homeId]: fighterBySide(battle, 'home').definition.name,
+      [battle.descriptor.awayId]: fighterBySide(battle, 'away').definition.name,
     })
     feed.replaceChildren(...entries.slice().reverse().map((entry) => {
       const item = document.createElement('li')

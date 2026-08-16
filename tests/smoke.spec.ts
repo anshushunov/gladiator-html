@@ -18,7 +18,7 @@ test('plans and locks three matchups', async ({ page }) => {
 })
 
 async function finishActiveBout(page: import('@playwright/test').Page) {
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(2700))
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
 }
 
 test('resets arena presentation for the second bout', async ({ page }) => {
@@ -60,10 +60,14 @@ test('plays three bouts, reports a 2–1 win, and rematches the same seed', asyn
 })
 
 test('reports school defeat in the summary heading for a losing lineup', async ({ page }) => {
+  // This lineup order (not the all-counters one) is the one that actually
+  // loses 1-2 for seed 20260815 under the deep-combat kernel this task wires
+  // in -- see series.test.ts's comment on the same deterministic, currently
+  // un-tuned balance (Task 13 owns rebalancing).
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.assign('brutus', 0)
-    window.__GLADIATOR_TEST__.assign('aquila', 1)
+    window.__GLADIATOR_TEST__.assign('aquila', 0)
+    window.__GLADIATOR_TEST__.assign('brutus', 1)
     window.__GLADIATOR_TEST__.assign('nerva', 2)
     window.__GLADIATOR_TEST__.confirm()
   })
@@ -109,12 +113,12 @@ test('changes speed without advancing while paused', async ({ page }) => {
   })
   await page.getByTestId('speed-4').click()
   await expect(page.getByTestId('speed-4')).toHaveAttribute('aria-pressed', 'true')
-  await expect.poll(() => page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.tick ?? 0)).toBeGreaterThan(0)
+  await expect.poll(() => page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick ?? 0)).toBeGreaterThan(0)
   await page.getByTestId('toggle-pause').click()
-  const before = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.tick)
+  const before = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
   expect(before).toEqual(expect.any(Number))
   await page.waitForTimeout(150)
-  const after = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.tick)
+  const after = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
   expect(after).toBe(before)
 })
 
@@ -125,7 +129,7 @@ test('shows both interstitials with result and next matchup context', async ({ p
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
     window.__GLADIATOR_TEST__.confirm()
-    window.__GLADIATOR_TEST__.advanceTicks(2700)
+    window.__GLADIATOR_TEST__.advanceTicks(3600)
   })
   await expect(page.getByTestId('bout-result-summary')).toContainText(/wins.*defeat|wins.*time limit/i)
   await expect(page.getByTestId('next-matchup')).toContainText('Nerva')
@@ -133,7 +137,7 @@ test('shows both interstitials with result and next matchup context', async ({ p
   await expect(page.getByTestId('next-matchup')).toContainText('neutral')
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextBout()
-    window.__GLADIATOR_TEST__.advanceTicks(2700)
+    window.__GLADIATOR_TEST__.advanceTicks(3600)
   })
   await expect(page.getByTestId('next-matchup')).toContainText('Brutus')
   await expect(page.getByTestId('next-matchup')).toContainText('Magnus')

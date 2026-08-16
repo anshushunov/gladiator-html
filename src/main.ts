@@ -1,6 +1,7 @@
 import './style.css'
 import { ArenaView } from './presentation/ArenaView'
 import { SeriesView, type RuntimeViewState, type SeriesIntent } from './presentation/SeriesView'
+import { COMBAT_STYLES } from './content/combatStyles'
 import { homeRoster, opponents } from './content/mvpSeries'
 import {
   advanceSeriesTicks,
@@ -15,7 +16,7 @@ import {
   type SeriesCommandResult,
   type SeriesState,
 } from './simulation/series'
-import { TICKS_PER_SECOND } from './simulation/battle'
+import { fighterBySide, TICKS_PER_SECOND } from './simulation/battle'
 
 type TestCommandResult = { ok: true } | { ok: false; reason: SeriesCommandFailure }
 
@@ -39,7 +40,7 @@ const canvas = required<HTMLCanvasElement>('canvas')
 const seriesView = new SeriesView(shell, applyIntent)
 const arenaView = new ArenaView(canvas)
 
-let series: SeriesState = createSeries({ homeRoster, opponents, seed })
+let series: SeriesState = createSeries({ homeRoster, opponents, seed, combatStyles: COMBAT_STYLES })
 const runtime: RuntimeViewState = { paused: snapshotMode, speed: 1 }
 let previousFrame = performance.now()
 let lastPhase = series.phase
@@ -81,8 +82,8 @@ function renderDom(): void {
 function handleArenaPhaseChange(): void {
   if (series.phase === 'fighting') {
     if (series.activeBoutIndex !== null && series.activeBoutIndex !== lastActiveBoutIndex && series.activeBattle) {
-      const { home, away } = series.activeBattle.fighters
-      arenaView.startBout(series.activeBoutIndex, home.definition, away.definition)
+      const battle = series.activeBattle
+      arenaView.startBout(series.activeBoutIndex, fighterBySide(battle, 'home').definition, fighterBySide(battle, 'away').definition)
     }
   } else if (series.phase === 'planning' || series.phase === 'summary') {
     arenaView.clearBout()

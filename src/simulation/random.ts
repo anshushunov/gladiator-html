@@ -1,7 +1,4 @@
-import type { FighterSide } from './fighters'
-
 export interface RandomState { value: number }
-export interface AttackRolls { accuracy: number; block: number; critical: number }
 export interface CombatantRandomState {
   decision: RandomState
   defense: RandomState
@@ -34,14 +31,6 @@ export function deriveSeed(seed: number, label: string): number {
 }
 
 export const deriveBoutSeed = (seriesSeed: number, boutIndex: number): number => deriveSeed(seriesSeed, `bout:${boutIndex}`)
-export const deriveSideSeed = (boutSeed: number, side: FighterSide): number => deriveSeed(boutSeed, `side:${side}`)
-
-export function drawAttackRolls(state: RandomState): { rolls: AttackRolls; next: RandomState } {
-  const [accuracy, afterAccuracy] = nextRandom(state)
-  const [block, afterBlock] = nextRandom(afterAccuracy)
-  const [critical, next] = nextRandom(afterBlock)
-  return { rolls: { accuracy, block, critical }, next }
-}
 
 export function createCombatantRandomState(seed: number, combatantId: string): CombatantRandomState {
   return {

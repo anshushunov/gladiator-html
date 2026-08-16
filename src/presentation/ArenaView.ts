@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import type { BattleEvent, BattleState } from '../simulation/battle'
+import { fighterBySide, sideForCombatantId, type BattleState } from '../simulation/battle'
+import type { EncounterEvent } from '../simulation/encounter'
 import type { Archetype, FighterDefinition, FighterSide } from '../simulation/fighters'
 
 const SIDES: readonly FighterSide[] = ['home', 'away']
@@ -104,7 +105,7 @@ export class ArenaView {
 
     for (const event of state.events) {
       if (event.id <= this.lastEventId) continue
-      this.applyEvent(event)
+      this.applyEvent(state, event)
       this.lastEventId = event.id
     }
     this.canvas.dataset.lastEventId = String(this.lastEventId)
@@ -121,44 +122,42 @@ export class ArenaView {
     this.renderer.dispose()
   }
 
-  private applyEvent(event: BattleEvent): void {
+  private applyEvent(state: BattleState, event: EncounterEvent): void {
     switch (event.type) {
-      case 'attack-started':
+      case 'action-started':
       case 'attack-missed':
       case 'critical-hit': {
-        const actor = this.reactions[event.actorSide]
+        const actor = this.reactions[sideForCombatantId(state, event.actorId)]
         if (actor.defeated) break
-        if (event.type === 'attack-started') actor.lunge = 1
+        if (event.type === 'action-started') actor.lunge = 1
         else if (event.type === 'attack-missed') actor.recovery = 1
         else actor.critical = 1
         break
       }
       case 'attack-blocked':
       case 'damage-dealt': {
-        const target = this.reactions[event.targetSide]
+        const target = this.reactions[sideForCombatantId(state, event.targetId)]
         if (target.defeated) break
         if (event.type === 'attack-blocked') target.block = 1
         else target.hit = 1
         break
       }
       case 'fighter-defeated':
-        this.reactions[event.defeatedSide].defeated = true
+        this.reactions[sideForCombatantId(state, event.defeatedId)].defeated = true
         break
-      case 'bout-started':
-      case 'approach-started':
-      case 'bout-finished':
+      default:
         break
     }
   }
 
   private applySimulation(state: BattleState): void {
     for (const side of SIDES) {
-      const fighter = state.fighters[side]
+      const fighter = fighterBySide(state, side)
       const group = this.fighters[side]
       const reactions = this.reactions[side]
       const forward = side === 'home' ? 1 : -1
 
-      group.position.x = fighter.x
+      group.position.x = fighter.position.x
       group.position.y = 0
       group.position.z = 0
       group.rotation.y = side === 'home' ? Math.PI / 2 : -Math.PI / 2

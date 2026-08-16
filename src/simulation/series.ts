@@ -1,4 +1,5 @@
-import { advanceBattleTicks, createBattle, type BattleFinishReason, type BattleState } from './battle'
+import { advanceBattleTicks, createBattle, fighterBySide, type BattleFinishReason, type BattleState } from './battle'
+import type { CombatStyleCatalog } from './combatActions'
 import { compareArchetypes, type FighterDefinition, type FighterSide, type MatchupComparison } from './fighters'
 import { deriveBoutSeed } from './random'
 
@@ -24,6 +25,7 @@ export interface SeriesState {
   homeRoster: readonly FighterDefinition[]
   opponents: readonly FighterDefinition[]
   seed: number
+  combatStyles: CombatStyleCatalog
   assignments: Assignments
   activeBoutIndex: BoutIndex | null
   activeBattle?: BattleState
@@ -35,6 +37,7 @@ export interface SeriesConfig {
   homeRoster: readonly FighterDefinition[]
   opponents: readonly FighterDefinition[]
   seed: number
+  combatStyles: CombatStyleCatalog
 }
 
 export function createSeries(config: SeriesConfig): SeriesState {
@@ -43,6 +46,7 @@ export function createSeries(config: SeriesConfig): SeriesState {
     homeRoster: config.homeRoster,
     opponents: config.opponents,
     seed: config.seed,
+    combatStyles: config.combatStyles,
     assignments: [null, null, null],
     activeBoutIndex: null,
     results: [],
@@ -84,7 +88,7 @@ export function confirmLineup(state: SeriesState): SeriesCommandResult {
   const [first, second, third] = state.assignments
   if (first === null || second === null || third === null) return { ok: false, state, reason: 'lineup-incomplete' }
   const homeFighterId = state.assignments[0] as string
-  const battle = createBattle({ home: homeFighter(state, homeFighterId), away: state.opponents[0], seed: deriveBoutSeed(state.seed, 0) })
+  const battle = createBattle({ home: homeFighter(state, homeFighterId), away: state.opponents[0], seed: deriveBoutSeed(state.seed, 0), combatStyles: state.combatStyles })
   return { ok: true, state: { ...state, phase: 'fighting', activeBoutIndex: 0, activeBattle: battle } }
 }
 
@@ -93,7 +97,7 @@ export function startNextBout(state: SeriesState): SeriesCommandResult {
   if (state.activeBoutIndex === null) throw new Error(`Invalid bout index: ${state.activeBoutIndex}`)
   const boutIndex = (state.activeBoutIndex + 1) as BoutIndex
   const homeFighterId = state.assignments[boutIndex] as string
-  const battle = createBattle({ home: homeFighter(state, homeFighterId), away: state.opponents[boutIndex], seed: deriveBoutSeed(state.seed, boutIndex) })
+  const battle = createBattle({ home: homeFighter(state, homeFighterId), away: state.opponents[boutIndex], seed: deriveBoutSeed(state.seed, boutIndex), combatStyles: state.combatStyles })
   return { ok: true, state: { ...state, phase: 'fighting', activeBoutIndex: boutIndex, activeBattle: battle } }
 }
 
@@ -121,23 +125,27 @@ export function advanceSeriesTicks(state: SeriesState, ticks: number): SeriesSta
   const battle = advanceBattleTicks(state.activeBattle, ticks)
   if (battle.phase !== 'finished') return { ...state, activeBattle: battle }
 
-  const winnerSide = battle.winnerSide as FighterSide
+  const home = fighterBySide(battle, 'home')
+  const away = fighterBySide(battle, 'away')
+  if (battle.winnerSide === undefined || battle.finishReason === undefined) {
+    throw new Error('Finished battle is missing winnerSide/finishReason')
+  }
   const result: BoutResult = {
     boutIndex: state.activeBoutIndex,
-    homeFighterId: battle.fighters.home.definition.id,
-    opponentId: battle.fighters.away.definition.id,
-    winnerSide,
-    advantage: battle.comparison,
-    endedBy: battle.finishReason as BattleFinishReason,
-    durationTicks: battle.tick,
+    homeFighterId: home.definition.id,
+    opponentId: away.definition.id,
+    winnerSide: battle.winnerSide,
+    advantage: compareArchetypes(home.definition.archetype, away.definition.archetype),
+    endedBy: battle.finishReason,
+    durationTicks: battle.encounter.tick,
     remainingHpRatio: {
-      home: battle.fighters.home.hp / battle.fighters.home.definition.maxHp,
-      away: battle.fighters.away.hp / battle.fighters.away.definition.maxHp,
+      home: home.hp / home.definition.maxHp,
+      away: away.hp / away.definition.maxHp,
     },
   }
   const score: SeriesScore = {
-    home: state.score.home + (winnerSide === 'home' ? 1 : 0),
-    away: state.score.away + (winnerSide === 'away' ? 1 : 0),
+    home: state.score.home + (battle.winnerSide === 'home' ? 1 : 0),
+    away: state.score.away + (battle.winnerSide === 'away' ? 1 : 0),
   }
   const phase: SeriesPhase = state.activeBoutIndex === 2 ? 'summary' : 'between-bouts'
   return { ...state, phase, activeBattle: battle, results: [...state.results, result], score }
