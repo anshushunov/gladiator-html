@@ -169,7 +169,13 @@ export function intentDisplacement(
  *   using the transposed matrix `(x*cos + z*sin, -x*sin + z*cos)`.
  * - The exact-opposite case (`cross === 0 && dot < 0`) has no shorter side to
  *   prefer, so it deterministically takes the counter-clockwise ("left")
- *   branch, removing the 180-degree deadlock.
+ *   branch, removing the 180-degree deadlock. CHOSEN CONVENTION: the design
+ *   only requires *some* deterministic side here, not counter-clockwise
+ *   specifically — this file picks counter-clockwise (matching the same
+ *   branch used whenever `cross > 0`) and applies it consistently, including
+ *   to `leftPerpendicular`/`circle-left` below. It is not a value the design
+ *   doc fixes; a reviewer preferring the opposite fixed direction only needs
+ *   to flip `turnsLeft`'s `cross === 0` branch and the perpendicular helpers.
  *
  * The rotated result is renormalized to absorb literal floating-point
  * rounding drift carried by the authored sine/cosine pair.
@@ -226,6 +232,13 @@ function clampAll(positions: Record<string, Vec2>, arena: Readonly<CombatArenaDe
  * axis; lateral movement lives on z). If separation/clamping has pushed
  * `firstId` past `secondId`'s x coordinate, both are projected onto their
  * shared midpoint x so they touch rather than cross. `free` never calls this.
+ *
+ * CHOSEN CONVENTION: `CombatArenaDefinition` carries no explicit axis field,
+ * so "x" here is this file's own choice, not a value fixed by the design
+ * doc — it matches the current duel adapter's convention that `home` starts
+ * at negative x and `away` at positive x. A future arena shape that needs a
+ * different non-crossing axis is expected to pass its own projection axis
+ * rather than assuming x.
  */
 function applyOrderedPairPolicy(positions: Record<string, Vec2>, arena: Readonly<CombatArenaDefinition>): void {
   if (arena.movementPolicy !== 'ordered-pair' || !arena.orderedPair) return
