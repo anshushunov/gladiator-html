@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   actionContactTick,
+  applyStaggerToAction,
   calculateBlockedStaggerTicks,
   calculateContactDamage,
   calculateContactPoint,
@@ -19,6 +20,8 @@ import {
   startDefenseAction,
   transitionActionPhase,
   type AttackActionDefinition,
+  type CombatActionPhase,
+  type CombatActionState,
 } from './combatActions'
 import type { CombatArenaDefinition, Vec2 } from './movement'
 
@@ -426,6 +429,56 @@ describe('evadeDirectionVector', () => {
 
   it('backstep is the negated facing', () => {
     expect(evadeDirectionVector('backstep', facing)).toEqual({ x: -1, z: 0 })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Task 10 Step 1: the stagger phase-matrix's pure per-action-phase effect
+// (design.md's table). The `FighterCombatState`-level parts -- clearing
+// `forcedActionId`, lethal-defeat's silent override, emitting
+// `fighter-staggered`, bumping `staggerUntilTick`, and deferring the
+// one-tick `contact` case's clear to the *following* tick's phase machine --
+// live in `encounter.ts`/`encounter.test.ts`, which alone hold
+// `FighterCombatState`.
+// ---------------------------------------------------------------------------
+
+describe('applyStaggerToAction', () => {
+  const activeAction = (phase: CombatActionPhase): CombatActionState => ({
+    type: 'active',
+    instanceId: 'a:0',
+    definitionId: 'fast-slash',
+    phase,
+    phaseStartedTick: 10,
+    phaseEndsAtTick: 20,
+    targetId: 'b',
+    attackRolls: { accuracy: 0.5, critical: 0.5 },
+  })
+
+  it('neutral: nothing to interrupt, action unchanged', () => {
+    const result = applyStaggerToAction({ type: 'neutral' })
+    expect(result).toEqual({ action: { type: 'neutral' }, interrupted: false })
+  })
+
+  it('windup: cancelled immediately, interrupted: true', () => {
+    const result = applyStaggerToAction(activeAction('windup'))
+    expect(result).toEqual({ action: { type: 'neutral' }, interrupted: true })
+  })
+
+  it('contact: exempt this tick -- action returned unchanged (by reference), interrupted: false', () => {
+    const action = activeAction('contact')
+    const result = applyStaggerToAction(action)
+    expect(result.interrupted).toBe(false)
+    expect(result.action).toBe(action) // unchanged, not even a shallow clone
+  })
+
+  it('impact: cancelled immediately, interrupted: true', () => {
+    const result = applyStaggerToAction(activeAction('impact'))
+    expect(result).toEqual({ action: { type: 'neutral' }, interrupted: true })
+  })
+
+  it('recovery: cancelled immediately, interrupted: true', () => {
+    const result = applyStaggerToAction(activeAction('recovery'))
+    expect(result).toEqual({ action: { type: 'neutral' }, interrupted: true })
   })
 })
 

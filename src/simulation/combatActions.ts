@@ -222,6 +222,42 @@ function requirePhaseDefinition(
   return definition
 }
 
+export interface StaggerActionEffect {
+  action: CombatActionState
+  interrupted: boolean
+}
+
+/**
+ * Non-lethal stagger's exact effect on `action`, from design.md's stagger
+ * phase-matrix table (the "Attack outcome"/"Defense outcome" columns are
+ * identical in every row, so one function covers both, keyed only on
+ * `action.phase`):
+ *
+ * - `neutral` (`action.type !== 'active'`): nothing to interrupt --
+ *   `interrupted: false`, `action` unchanged. Clearing a queued forced
+ *   action (the table's other "neutral" trigger) is a `FighterCombatState`-
+ *   level concern (`forcedActionId`) this action-only function cannot see;
+ *   the caller clears it separately, every time stagger applies, regardless
+ *   of phase.
+ * - one-tick `contact`: exempt *this* tick -- the contact already resolved
+ *   against the frozen snapshot, unaffected by a stagger landing during the
+ *   very same batch -- so `interrupted: false`, `action` unchanged. The
+ *   design's "then clear the action" is deferred by exactly one tick: the
+ *   caller's phase-1 phase machine (`transitionExpiredPhases` in
+ *   `encounter.ts`) is what silently forces this action to `neutral` on the
+ *   *following* tick, once `staggerUntilTick` proves the fighter is still
+ *   stagger-owned, instead of letting it advance to `impact` on schedule.
+ * - `windup`, `impact`, `recovery`: cancelled immediately -- `action:
+ *   { type: 'neutral' }`, `interrupted: true`, telling the caller to emit
+ *   `action-interrupted` with reason `'stagger'`.
+ */
+export function applyStaggerToAction(action: CombatActionState): StaggerActionEffect {
+  if (action.type !== 'active' || action.phase === 'contact') {
+    return { action, interrupted: false }
+  }
+  return { action: { type: 'neutral' }, interrupted: true }
+}
+
 /**
  * The tick contact occurs on for an action currently in `windup` (its
  * `phaseEndsAtTick`, since contact begins the instant windup ends) or already

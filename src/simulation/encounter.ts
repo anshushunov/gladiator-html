@@ -25,6 +25,7 @@
 
 import {
   actionContactTick,
+  applyStaggerToAction,
   calculateBlockedStaggerTicks,
   calculateContactDamage,
   calculateContactPoint,
@@ -663,13 +664,13 @@ export function finishEncounter(state: EncounterState, result: EncounterResult):
 // ---------------------------------------------------------------------------
 // Tick loop
 //
-// `advanceEncounterTick` wires tick-order phases 1-10 (design.md's
-// "Encounter tick order"): phase transitions, cleanup, targeting, weighted
+// `advanceEncounterTick` wires the complete tick-order phases 1-12 (design.md's
+// "Encounter tick order"): phase transitions (including the stagger phase
+// matrix's deferred `contact` clear), cleanup, targeting, weighted
 // decisions, action starts, batched defense reactions, simultaneous
-// movement, contact resolution, and accumulated pushback. Phases 11-12
-// (local-clock persistence beyond what contact resolution already writes,
-// the exhaustive stagger phase matrix, and no-hostile-pairs/time-limit
-// completion) are Task 10's.
+// movement, contact resolution, accumulated pushback, local anti-stall
+// clock persistence, and no-hostile-pairs completion. The duel time-limit
+// policy is a later task's, layered on top of this generic kernel.
 //
 // Each phase below is one named helper, in tick order, so the loop itself
 // reads as a table of contents. Every helper receives only the state slices
@@ -720,7 +721,20 @@ function distanceBetween(a: Readonly<Vec2>, b: Readonly<Vec2>): number {
  * to its next phase (`windup -> contact -> impact -> recovery -> neutral`).
  * This is a plain phase-machine advance: it says nothing about what a
  * contact tick resolves to (Task 9), only that contact always lasts exactly
- * one tick and the machine keeps moving on schedule regardless.
+ * one tick and the machine keeps moving on schedule regardless -- with one
+ * exception, completing the stagger phase-matrix's `contact` row
+ * (Task 10, `applyStaggerToAction` in `combatActions.ts`): when a fighter's
+ * `contact` phase is about to advance to `impact` but `staggerUntilTick >
+ * tick`, stagger owns control instead. This can only be true here because
+ * that same fighter was staggered by a *different* intent during the very
+ * tick their own `contact` phase resolved (`applyStaggerAndInterrupt` below
+ * exempts `contact` from immediate interruption -- see its own doc comment);
+ * any other stagger source would already have cancelled a `windup`/`impact`/
+ * `recovery` action outright, long before it could ever reach this point
+ * still `active`. The action is forced silently to `neutral` -- no
+ * `action-interrupted`, since the contact itself already completed on
+ * schedule against the frozen snapshot; only the *following* impact/recovery
+ * is what stagger pre-empts.
  */
 function transitionExpiredPhases(
   combatants: Readonly<Record<CombatantId, FighterCombatState>>,
@@ -732,6 +746,10 @@ function transitionExpiredPhases(
   for (const id of combatantIds) {
     const combatant = next[id]
     if (combatant.action.type !== 'active' || combatant.action.phaseEndsAtTick !== tick) continue
+    if (combatant.action.phase === 'contact' && combatant.staggerUntilTick > tick) {
+      next[id] = { ...combatant, action: { type: 'neutral' } }
+      continue
+    }
     const needsDefinition = combatant.action.phase === 'contact' || combatant.action.phase === 'impact'
     const definition = needsDefinition ? resolveActionPhaseDefinition(combatStyles, combatant.action.definitionId) : undefined
     next[id] = { ...combatant, action: transitionActionPhase(combatant.action, tick, definition) }
@@ -1556,16 +1574,29 @@ export function sortContactIntents(intents: readonly ContactIntent[]): ContactIn
 
 /**
  * Applies non-lethal stagger to `target`, interrupting its current action
- * first when applicable. "Non-lethal stagger from the first intent does not
- * cancel a second action already in contact": an action currently in
- * `contact` phase is exempt from interruption (it either already resolved
- * its own intent this batch or still will, unaffected by this stagger);
- * `windup`/`impact`/`recovery` are interrupted, resetting to `neutral` and
- * emitting `action-interrupted(reason: 'stagger')`. Shared by both the
- * ordinary/blocked-hit target-stagger case and the parry attacker-stagger
- * case: the attacker's own action is always in `contact` phase during its
- * own resolution, so this exemption naturally protects it too, with no
- * special-casing needed.
+ * first when applicable -- unless `target` was just defeated by this same
+ * resolution (`target.status === 'defeated'`), in which case lethal defeat
+ * overrides the entire stagger phase-matrix table (design.md): the
+ * defeated fighter's current action and any queued forced action are
+ * cleared silently, with no `action-interrupted` (defeat is not an
+ * "interruption"), while `fighter-staggered` still fires below, matching
+ * the canonical critical-defeat event sequence
+ * (`critical-hit -> damage-dealt -> fighter-staggered -> fighter-defeated`).
+ *
+ * For a still-living target, the phase-matrix effect on `action` itself is
+ * `applyStaggerToAction` (`combatActions.ts`): `windup`/`impact`/`recovery`
+ * are interrupted, resetting to `neutral` and emitting
+ * `action-interrupted(reason: 'stagger')`; a one-tick `contact` is exempt
+ * this same tick (its own tick-1 phase machine, `transitionExpiredPhases`,
+ * defers the actual clearing to the *following* tick). Either way, any
+ * queued forced action (`forcedActionId`) is cleared unconditionally --
+ * design.md's "neutral / queued forced action" row: stagger owns control
+ * over what happens next, regardless of what the fighter's own current
+ * action phase happens to be. Shared by both the ordinary/blocked-hit
+ * target-stagger case and the parry attacker-stagger case: the attacker's
+ * own action is always in `contact` phase during its own resolution, so the
+ * `contact` exemption naturally protects it too, with no special-casing
+ * needed.
  */
 function applyStaggerAndInterrupt(
   target: Readonly<FighterCombatState>,
@@ -1577,19 +1608,24 @@ function applyStaggerAndInterrupt(
   cursor: EventIdCursor,
 ): { combatant: FighterCombatState; events: EncounterEvent[] } {
   const events: EncounterEvent[] = []
-  let next = target
+  let next: FighterCombatState
 
-  if (next.action.type === 'active' && next.action.phase !== 'contact') {
-    events.push({
-      id: allocateEventId(cursor),
-      tick,
-      type: 'action-interrupted',
-      actorId: next.id,
-      actionInstanceId: next.action.instanceId,
-      actionId: next.action.definitionId,
-      reason: 'stagger',
-    })
-    next = { ...next, action: { type: 'neutral' } }
+  if (target.status === 'defeated') {
+    next = { ...target, action: { type: 'neutral' }, forcedActionId: undefined }
+  } else {
+    const effect = applyStaggerToAction(target.action)
+    next = { ...target, action: effect.action, forcedActionId: undefined }
+    if (effect.interrupted && target.action.type === 'active') {
+      events.push({
+        id: allocateEventId(cursor),
+        tick,
+        type: 'action-interrupted',
+        actorId: target.id,
+        actionInstanceId: target.action.instanceId,
+        actionId: target.action.definitionId,
+        reason: 'stagger',
+      })
+    }
   }
 
   next = { ...next, staggerUntilTick: Math.max(next.staggerUntilTick, tick + durationTicks) }
@@ -1956,15 +1992,115 @@ function applyAccumulatedPush(
   return resolveMovementConstraints(combatants, combatantIds, { requests, updatedFacing }, arena)
 }
 
+// --- Phase 11: persist local anti-stall clocks ------------------------------
+//
+// design.md's "Anti-stall pressure": two local clocks per combatant, both
+// initialized to encounter-start tick 0 (`buildFighterCombatState`).
+// HP/status, targets, action/reaction metadata, event IDs, and combatant
+// random states are already persisted incrementally by the phases above
+// (phase 3's target refresh, phase 9's HP/status/action writes, each phase's
+// own event-ID cursor, phases 4-6's random-state threading); this phase is
+// only the two clocks contact resolution does not already touch directly.
+// ---------------------------------------------------------------------------
+
+/**
+ * The two `CombatantId`s a resolved contact-intent event names as its
+ * "participants" for anti-stall clock purposes, or `undefined` for an event
+ * that either isn't a per-intent resolution outcome at all, or is one but
+ * names a target that was never really a participant
+ * (`attack-missed(reason: 'target-unavailable')` -- the target had already
+ * left before this intent resolved against it).
+ */
+function resolutionParticipantIds(event: EncounterEvent): readonly [CombatantId, CombatantId] | undefined {
+  switch (event.type) {
+    case 'damage-dealt':
+    case 'attack-evaded':
+      return [event.actorId, event.targetId]
+    case 'attack-parried':
+      return [event.actorId, event.defenderId]
+    case 'attack-missed':
+      return event.reason === 'target-unavailable' ? undefined : [event.actorId, event.targetId]
+    default:
+      return undefined
+  }
+}
+
+/** `lastContactTick` updates for damage or parry only (design.md: "damage, block, or parry" -- a blocked hit is still a `damage-dealt` event, just with a reduced `amount`). */
+function resolutionUpdatesContactClock(event: EncounterEvent): boolean {
+  return event.type === 'damage-dealt' || event.type === 'attack-parried'
+}
+
+/**
+ * Persists `lastContactTick`/`lastResolutionTick` from this tick's own
+ * phase-9 contact-resolution events (never the whole tick's event batch --
+ * `movement-intent-changed`/`action-started`/etc. are not resolutions).
+ * `lastResolutionTick` updates for both participants of every resolved
+ * intent except `target-unavailable`; `lastContactTick` updates for both
+ * participants only on `damage-dealt`/`attack-parried`. Both fields are
+ * simple `= tick` assignments (never "keep the max"): a resolution can only
+ * ever happen on the current tick, so there is nothing to compare against.
+ */
+function persistLocalClocks(
+  combatants: Readonly<Record<CombatantId, FighterCombatState>>,
+  contactEvents: readonly EncounterEvent[],
+  tick: number,
+): Record<CombatantId, FighterCombatState> {
+  let next: Record<CombatantId, FighterCombatState> = { ...combatants }
+  for (const event of contactEvents) {
+    const participants = resolutionParticipantIds(event)
+    if (!participants) continue
+    const updatesContact = resolutionUpdatesContactClock(event)
+    for (const id of participants) {
+      const combatant = next[id]
+      if (!combatant) continue
+      next = {
+        ...next,
+        [id]: {
+          ...combatant,
+          lastResolutionTick: tick,
+          lastContactTick: updatesContact ? tick : combatant.lastContactTick,
+        },
+      }
+    }
+  }
+  return next
+}
+
+// --- Phase 12: resolve no-hostile-pairs completion --------------------------
+//
+// The duel time-limit policy is Task 11's, layered on top of this generic
+// kernel as a different `EncounterResult` passed through the same
+// `finishEncounter`, not special-cased here.
+// ---------------------------------------------------------------------------
+
+/**
+ * Finishes `state` with reason `'no-hostile-pairs'` when no living hostile
+ * pair remains: every living combatant is both a survivor and a winner
+ * (design.md: "all living allied survivors win"), including the degenerate
+ * zero-survivor case (mutual defeat on the same tick). Returns `undefined`
+ * (no completion) while a hostile pair still exists.
+ */
+function resolveNoHostilePairsCompletion(state: EncounterState): EncounterTransition | undefined {
+  if (hasAnyHostilePair(state, state.combatantIds)) return undefined
+
+  const survivorIds = state.combatantIds.filter((id) => state.combatants[id].status === 'active')
+  const winningFactionIds = [...new Set(survivorIds.map((id) => state.combatants[id].factionId))].sort()
+
+  return finishEncounter(state, {
+    reason: 'no-hostile-pairs',
+    survivorIds,
+    winnerIds: survivorIds,
+    winningFactionIds,
+  })
+}
+
 // --- The tick loop itself ---------------------------------------------------
 
 /**
- * Advances `previous` by exactly one tick through phases 1-10. Outside
- * `running`, this returns `previous` itself (referential identity, empty
- * event batch) -- a finished encounter is inert. Never mutates `previous` or
- * anything reachable from it. Phases 11-12 (local-clock persistence beyond
- * what contact resolution already writes, the exhaustive stagger phase
- * matrix, and `no-hostile-pairs`/time-limit completion) are Task 10's.
+ * Advances `previous` by exactly one tick through the complete phase 1-12
+ * order. Outside `running`, this returns `previous` itself (referential
+ * identity, empty event batch) -- a finished encounter is inert. Never
+ * mutates `previous` or anything reachable from it.
  */
 export function advanceEncounterTick(previous: EncounterState): EncounterTransition {
   if (previous.phase !== 'running') {
@@ -2053,6 +2189,9 @@ export function advanceEncounterTick(previous: EncounterState): EncounterTransit
   // position-mutating phases (8 and 10) have finished.
   combatants = applyTickMotionDiagnostics(previous.combatants, combatants, previous.combatantIds)
 
+  // Phase 11
+  combatants = persistLocalClocks(combatants, contactResolution.events, tick)
+
   const nextState: EncounterState = {
     ...previous,
     tick,
@@ -2062,6 +2201,15 @@ export function advanceEncounterTick(previous: EncounterState): EncounterTransit
   }
 
   assertEncounterInvariants(nextState)
+
+  // Phase 12: `encounter-finished` is emitted only after every phase above
+  // has persisted this tick's contact effects, so its payload (survivor/
+  // winner IDs, and whatever a listener reads off `nextState.combatants`)
+  // reflects post-contact HP/status.
+  const completion = resolveNoHostilePairsCompletion(nextState)
+  if (completion) {
+    return { state: completion.state, events: [...events, ...completion.events] }
+  }
 
   return { state: nextState, events }
 }
