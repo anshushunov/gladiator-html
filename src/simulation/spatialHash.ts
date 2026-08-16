@@ -6,11 +6,10 @@
 // structuredClone payload — it is pure derived data used only to narrow down
 // candidate pairs before doing exact (squared-distance) checks.
 //
-// TODO(task-4): `Vec2` belongs conceptually to movement. It is declared here
-// only because movement.ts does not exist yet. Task 4 will move the
-// canonical `Vec2` into movement.ts and update this file to import it from
-// there instead of declaring its own copy.
-export interface Vec2 { x: number; z: number }
+// `Vec2` belongs conceptually to movement; this file only consumes it as a
+// type, so importing it back from movement.ts (which imports runtime values
+// from here) creates no runtime circular dependency.
+import type { Vec2 } from './movement'
 
 export interface SpatialEntry { id: string; position: Readonly<Vec2> }
 
