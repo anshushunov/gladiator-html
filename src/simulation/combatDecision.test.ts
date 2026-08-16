@@ -672,6 +672,21 @@ describe('anti-stall suppression yields to movement that restores action legalit
     })
   })
 
+  it('does not credit a movement the arena would refuse', () => {
+    // Technical pressed to the lateral limit, facing inward, with the wall
+    // directly behind it. Unclamped, `backstep` looks like it opens distance
+    // and restores `technical-thrust`; in reality the arena clamp pins it and
+    // it stands still. Crediting that move would leave the policy believing it
+    // had already escaped a stall it is still in, so the lookahead projects
+    // through `movement.ts`'s own clamp.
+    const self = fighterState('self', 'technical', { position: { x: 0, z: 2.5 }, facing: { x: 0, z: -1 }, lastResolutionTick: 0 })
+    const target = fighterState('foe', 'technical', { factionId: 'other', position: { x: 0, z: 1.6 } })
+    const stalled = makeContext({ self, target, tick: 400, arena: duel })
+
+    const scored = scoreCombatCandidates(stalled, COMBAT_STYLES.styles.technical)
+    expect(scored.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'backstep')).toBe(false)
+  })
+
   it('still suppresses ordinary kiting for a stalled combatant that movement would not help', () => {
     // The exemption must not silently disable anti-stall. A Fast fighter far
     // from its target also has no legal action, but circling or retreating at

@@ -36,7 +36,7 @@ import {
   type DefenseActionDefinition,
   type ReactionRecord,
 } from './combatActions'
-import { intentDisplacement } from './movement'
+import { clampToArena, intentDisplacement } from './movement'
 import type { CombatArenaDefinition, LocomotionIntent, Vec2 } from './movement'
 import type { Archetype, MatchupComparison } from './fighters'
 import { compareArchetypes } from './fighters'
@@ -394,19 +394,26 @@ function viableActionCandidates(
  * combatant an action it cannot currently take?
  *
  * The horizon is the archetype's longest decision interval, because that is
- * how long the combatant is committed to the intent it picks now. The
- * hypothetical position is deliberately not clamped to the arena: a move the
- * arena would refuse genuinely does not help, and leaving it unclamped makes
- * the boundary margin go further negative, which is exactly the answer
- * "this direction does not restore anything".
+ * how long the combatant is committed to the intent it picks now.
+ *
+ * The hypothetical position goes through `movement.ts`'s own `clampToArena`,
+ * the same projection real locomotion uses. Skipping that clamp is not a
+ * conservative simplification, it is wrong in the exact case this exemption
+ * exists for: a fighter already pressed against the lateral limit computes an
+ * unclamped `backstep` that opens distance and so appears to restore a legal
+ * attack, while the arena in fact refuses the move and it stands still. That
+ * is a stall the policy would then believe it had already solved. Separation
+ * against the other combatant is deliberately NOT modelled here -- it depends
+ * on the whole collection's simultaneous movement, and over-modelling it would
+ * make this predicate depend on state the decision seam does not own.
  */
 function projectedPosition(context: CombatDecisionContext, style: CombatStyleDefinition, intent: LocomotionIntent): Vec2 {
   const step = intentDisplacement(intent, style.locomotion, context.self.facing, LOOKAHEAD_TICKS_PER_SECOND)
   const horizon = DECISION_INTERVAL_RANGES[style.archetype].max
-  return {
-    x: context.self.position.x + step.x * horizon,
-    z: context.self.position.z + step.z * horizon,
-  }
+  return clampToArena(
+    { x: context.self.position.x + step.x * horizon, z: context.self.position.z + step.z * horizon },
+    context.arena,
+  )
 }
 
 function movementRestoresAction(

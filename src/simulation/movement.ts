@@ -205,8 +205,14 @@ export function turnFacing(current: Readonly<Vec2>, desired: Readonly<Vec2>, ste
  * simultaneously — this is a safe sequential projection, not necessarily the
  * mathematically nearest point in the lateral-band-intersect-disk region,
  * which is not needed here.
+ *
+ * Exported so `combatDecision.ts` can project a hypothetical "where would this
+ * intent put me" position through the exact same clamp real movement uses. A
+ * private copy there would be free to drift out of agreement with actual
+ * locomotion, which is precisely the kind of disagreement that makes a
+ * movement look useful to the decision policy while the arena refuses it.
  */
-function clampToArena(position: Readonly<Vec2>, arena: Readonly<CombatArenaDefinition>): Vec2 {
+export function clampToArena(position: Readonly<Vec2>, arena: Readonly<CombatArenaDefinition>): Vec2 {
   let x = position.x
   let z = Math.min(arena.lateralLimit, Math.max(-arena.lateralLimit, position.z))
 
