@@ -224,10 +224,36 @@ describe('scoreCombatCandidates (Heavy brief fixture)', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Range reach legality.
+//
+// `rootTravel` is a MAXIMUM forward displacement that "stops early at minimum
+// separation" (design.md, action definitions), not a mandatory step. So an
+// action is legal iff the actor is not already inside `contactRange.min` AND
+// can close to within `contactRange.max` using at most its authored travel:
+//
+//     currentDistance >= contactRange.min
+//     currentDistance - rootTravel <= contactRange.max
+//
+// This block previously asserted the opposite for the near side -- that an
+// action is illegal whenever `currentDistance - rootTravel < contactRange.min`.
+// That reading made root travel mandatory, and because every attack's
+// `contactRange.min` (0.9) equals the duel arena's `minimumSeparation` (0.9)
+// while every attack has a strictly positive `rootTravel`, it made EVERY
+// action illegal for EVERY style at the separation floor. Task 13's cohort
+// measurements found fighters deadlocked there: timed-out bouts spent 91.9% of
+// their ticks at `d <= 0.9` with no legal attack for either side on 98.1% of
+// ticks, and 8 of the 9 roster pairings could not finish inside 3600 ticks.
+// The far-side fixtures below are unchanged and still pin design.md's own
+// worked example.
+// ---------------------------------------------------------------------------
+
 describe('scoreCombatCandidates: range reach legality', () => {
   it('excludes an action whose predicted contact distance overshoots contactRange.max', () => {
     // heavy-shield-jab: rootTravel 0.25, contactRange 0.9-1.4. At distance
-    // 2.0, predicted = 1.75 > 1.4, illegal.
+    // 2.0, even a full 0.25 of travel only reaches 1.75 > 1.4, illegal. This
+    // is design.md's authored example verbatim: "heavy-shield-jab is illegal
+    // because its 0.25 root travel cannot reach 1.4".
     const self = fighterState('self', 'heavy')
     const target = fighterState('foe', 'heavy', { position: { x: 2, z: 0 } })
     const context = makeContext({ self, target })
@@ -244,13 +270,40 @@ describe('scoreCombatCandidates: range reach legality', () => {
     expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')).toBe(true)
   })
 
-  it('excludes an action whose predicted contact distance undershoots contactRange.min', () => {
-    // At distance 1.0, predicted = 1.0 - 0.25 = 0.75 < 0.9, illegal.
+  it('keeps an action legal inside contactRange.min + rootTravel, stopping short instead of overshooting', () => {
+    // At distance 1.0 the jab does not need its full 0.25 travel: it stops
+    // early and contacts at `contactRange.min` (0.9), which is legal.
     const self = fighterState('self', 'heavy')
     const target = fighterState('foe', 'heavy', { position: { x: 1.0, z: 0 } })
     const context = makeContext({ self, target })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
-    expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')).toBe(false)
+    expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')).toBe(true)
+  })
+
+  it('keeps every style able to attack at exactly the arena minimum separation', () => {
+    // The regression that mattered: at the 0.9 separation floor each style
+    // must still have at least one legal attack, or two fighters that close
+    // to contact can never resolve anything again.
+    for (const archetype of ['heavy', 'fast', 'technical'] as const) {
+      const self = fighterState('self', archetype)
+      const target = fighterState('foe', archetype, { position: { x: freeArena.minimumSeparation, z: 0 } })
+      const context = makeContext({ self, target })
+      const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles[archetype])
+      expect(scored.some((c) => c.decision.type === 'action')).toBe(true)
+    }
+  })
+
+  it('scores a stopped-short action at contactRange.min rather than at a distance it never occupies', () => {
+    // predicted = max(0.9, 1.0 - 0.25) = 0.9. rangeMid 1.15, halfWidth 0.25,
+    // so rangeFit = 20 * clamp(1 - 0.25/0.25, 0, 1) = 0 and the jab keeps its
+    // bare baseWeight of 14 -- legal, but correctly unattractive at a range it
+    // has to stop short to reach.
+    const self = fighterState('self', 'heavy')
+    const target = fighterState('foe', 'heavy', { position: { x: 1.0, z: 0 } })
+    const context = makeContext({ self, target })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    const jab = scored.find((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')
+    expect(jab?.weight).toBeCloseTo(14, 9)
   })
 })
 
@@ -436,6 +489,80 @@ describe('chooseCombatDecision: deterministic all-zero fallback', () => {
 
     expect(scoreCombatCandidates(context, allZeroStyle)).toEqual([])
     expect(chooseCombatDecision(context, allZeroStyle, { selection: 0.1, interval: 0.1 })).toEqual({ type: 'locomotion', locomotionIntent: 'hold-range' })
+  })
+
+  // -------------------------------------------------------------------------
+  // design.md states the fallback without a "if the style authored it" clause:
+  // "If every weight is zero, policy deterministically selects movement toward
+  // the preferred range, or `hold-range` when already inside it."
+  //
+  // Fast is the style that exposes the difference. It authors no `advance` at
+  // all and gates `burst-in` to 2.8..4.0 units, so at a duel's 8.4-unit
+  // opening separation it has NO style-authored closing candidate. Falling
+  // back to `hold-range` there made two Fast fighters stand still for the
+  // whole bout: Task 13's cohort measured literally zero events -- no action,
+  // no movement resolution, nothing -- across all 200 seeds of the
+  // Aquila-vs-Drusus pairing.
+  // -------------------------------------------------------------------------
+
+  it('closes toward the preferred band for a style that authors no reachable forward intent', () => {
+    // Fast at the duel's opening separation, once the anti-stall rule has
+    // suppressed its circles and retreat (tick 400 against a
+    // `lastResolutionTick` of 0). What is left cannot close: `hold-range` nets
+    // to 0 outside the band, `burst-in` is out of its 2.8..4.0 band, and no
+    // attack is in range. The fighter is far ABOVE its 2.4..3.0 preferred band
+    // and must close rather than stand still. This is the exact state the
+    // measured 200-seed Fast-vs-Fast deadlock settled into.
+    const self = fighterState('self', 'fast', { position: { x: -4.2, z: 0 }, lastResolutionTick: 0 })
+    const target = fighterState('foe', 'fast', { factionId: 'other', position: { x: 4.2, z: 0 } })
+    const context = makeContext({ self, target, tick: 400 })
+
+    expect(scoreCombatCandidates(context, COMBAT_STYLES.styles.fast)).toEqual([])
+    expect(chooseCombatDecision(context, COMBAT_STYLES.styles.fast, { selection: 0.5, interval: 0.5 })).toEqual({
+      type: 'locomotion',
+      locomotionIntent: 'advance',
+    })
+  })
+
+  it('closes rather than holding for every style at the duel opening separation', () => {
+    // The invariant that matters for engagement: whatever the style, and
+    // whether or not the anti-stall rule has already stripped its lateral
+    // options, a fighter 8.4 units from its target never answers with a
+    // standstill.
+    for (const archetype of ['heavy', 'fast', 'technical'] as const) {
+      for (const tick of [0, 400]) {
+        const self = fighterState('self', archetype, { position: { x: -4.2, z: 0 }, lastResolutionTick: 0 })
+        const target = fighterState('foe', archetype, { factionId: 'other', position: { x: 4.2, z: 0 } })
+        const context = makeContext({ self, target, tick })
+        const decision = chooseCombatDecision(context, COMBAT_STYLES.styles[archetype], { selection: 0.5, interval: 0.5 })
+        expect(decision).not.toEqual({ type: 'locomotion', locomotionIntent: 'hold-range' })
+      }
+    }
+  })
+
+  it('does not force a suppressed backward intent on a combatant with a stale local resolution clock', () => {
+    // The anti-stall rule suppresses ordinary retreat/backstep/circle/disengage
+    // after LOCAL_RESOLUTION_STALE_TICKS without a resolution. The fallback
+    // must not reintroduce them by the back door: a stale fighter below its
+    // band holds instead of backing off. The forward intents are never
+    // suppressed, so this never blocks a fighter from closing.
+    const backwardOnlyStyle: CombatStyleDefinition = {
+      archetype: 'heavy',
+      locomotion: COMBAT_STYLES.styles.heavy.locomotion,
+      preferredRange: { min: 5, max: 6 },
+      attackActionIds: [],
+      defenseActionId: 'heavy-guard',
+      baseWeights: { 'hold-range': -12 },
+    }
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, lastResolutionTick: 0 })
+    const target = fighterState('foe', 'heavy', { position: { x: 1, z: 0 } }) // below [5,6]
+
+    const fresh = makeContext({ self, target, tick: 10 })
+    expect(scoreCombatCandidates(fresh, backwardOnlyStyle)).toEqual([])
+    expect(chooseCombatDecision(fresh, backwardOnlyStyle, { selection: 0.5, interval: 0.5 })).toEqual({ type: 'locomotion', locomotionIntent: 'retreat' })
+
+    const stale = makeContext({ self, target, tick: 400 })
+    expect(chooseCombatDecision(stale, backwardOnlyStyle, { selection: 0.5, interval: 0.5 })).toEqual({ type: 'locomotion', locomotionIntent: 'hold-range' })
   })
 })
 

@@ -326,11 +326,49 @@ function ordinaryLocomotionCandidates(context: CombatDecisionContext, style: Com
 }
 
 /**
+ * The predicted center-to-center distance at which an action would make
+ * contact.
+ *
+ * `rootTravel` is a MAXIMUM, not a mandatory displacement: design.md's action
+ * definitions state that root travel "is the maximum forward displacement
+ * authored across windup. It stops early at minimum separation and never
+ * expands the legal contact range." A fighter already standing closer than
+ * `contactRange.min + rootTravel` therefore does not overshoot -- it simply
+ * travels less, and contacts no nearer than `contactRange.min`.
+ *
+ * Modelling this as an unconditional `currentDistance - rootTravel` was the
+ * root cause of Task 13's measured timeout wall: every attack's
+ * `contactRange.min` is `0.9`, which equals the duel arena's
+ * `minimumSeparation`, so subtracting a strictly positive `rootTravel` made
+ * EVERY action illegal for EVERY style at the separation floor. Fighters that
+ * closed to `0.9` could never attack again, and 8 of the 9 roster pairings
+ * deadlocked there (91.9% of ticks at `d <= 0.9` with no legal attack for
+ * either side on 98.1% of ticks) until the 3600-tick cap.
+ */
+function predictedContactDistance(currentDistance: number, action: Readonly<AttackActionDefinition>): number {
+  return Math.max(action.contactRange.min, currentDistance - action.rootTravel)
+}
+
+/**
  * Legal action candidates are `style.attackActionIds`, in their authored
- * array order, filtered to those reachable through the action's authored
- * root travel: `predictedContactDistance = currentDistance - rootTravel`
- * must fall within `contactRange`, and a burst attack additionally requires
+ * array order, filtered to those reachable through the action's authored root
+ * travel, and a burst attack additionally requires
  * `currentDistance <= startMaxRange`.
+ *
+ * Reachability is the two-sided test implied by root travel being a maximum
+ * that stops early (see `predictedContactDistance`):
+ *
+ * - `currentDistance >= contactRange.min` -- the actor is not already inside
+ *   the action's minimum contact distance (it cannot back up to create room);
+ * - `currentDistance - rootTravel <= contactRange.max` -- even travelling its
+ *   full authored root travel, the actor can close to within the action's
+ *   maximum contact distance.
+ *
+ * This preserves both of the design's authored fixtures at `d = 2.0`:
+ * `heavy-shield-jab` (travel `0.25`, max `1.4`) stays ILLEGAL because
+ * `1.75 > 1.4` -- exactly design.md's "heavy-shield-jab is illegal because its
+ * 0.25 root travel cannot reach 1.4" -- while `heavy-cleave` (travel `0.45`,
+ * max `1.8`) stays legal with predicted contact `1.55`.
  */
 function legalActionCandidates(context: CombatDecisionContext, style: CombatStyleDefinition): CombatDecision[] {
   const currentDistance = distanceBetween(context.self.position, context.target.position)
@@ -339,8 +377,8 @@ function legalActionCandidates(context: CombatDecisionContext, style: CombatStyl
   for (const actionId of style.attackActionIds) {
     const action = context.attacks[actionId]
     if (action.startMaxRange !== undefined && currentDistance > action.startMaxRange) continue
-    const predicted = currentDistance - action.rootTravel
-    if (predicted < action.contactRange.min || predicted > action.contactRange.max) continue
+    if (currentDistance < action.contactRange.min) continue
+    if (currentDistance - action.rootTravel > action.contactRange.max) continue
     out.push({ type: 'action', actionId })
   }
   return out
@@ -446,7 +484,7 @@ function rawCandidateWeight(context: CombatDecisionContext, style: CombatStyleDe
   const action = context.attacks[decision.actionId]
   let weight = style.baseWeights[decision.actionId] ?? 0
 
-  const predicted = currentDistance - action.rootTravel
+  const predicted = predictedContactDistance(currentDistance, action)
   const rangeMid = (action.contactRange.min + action.contactRange.max) / 2
   const rangeHalfWidth = (action.contactRange.max - action.contactRange.min) / 2
   const rangeFit = rangeHalfWidth > 0 ? 20 * clamp(1 - Math.abs(predicted - rangeMid) / rangeHalfWidth, 0, 1) : predicted === rangeMid ? 20 : 0
@@ -508,11 +546,27 @@ const BACKWARD_FALLBACK_PRIORITY: readonly LocomotionIntent[] = ['retreat', 'bac
 
 /**
  * When every candidate's weight is non-positive, policy deterministically
- * selects movement toward the preferred range (the first legal candidate,
- * in a fixed forward/backward priority order, that would reduce distance
- * error), or `hold-range` when already inside that band or when no
- * directional candidate is legal for this style. Never illegal, never
- * throws.
+ * selects movement toward the preferred range, or `hold-range` when already
+ * inside that band. Never illegal, never throws.
+ *
+ * design.md's decision policy states this without qualification: "If every
+ * weight is zero, policy deterministically selects movement toward the
+ * preferred range, or `hold-range` when already inside it." There is no "if
+ * the style authored that intent" clause, and adding one was the root cause of
+ * Task 13's second measured deadlock: Fast authors no `advance` at all and
+ * gates `burst-in` to `2.8..4.0` units, so at a duel's 8.4-unit opening
+ * separation it had NO legal closing candidate and stood still permanently.
+ * Two Fast fighters produced literally zero events across all 200 cohort
+ * seeds.
+ *
+ * So the style's own authored intents are preferred (first loop), but when
+ * none is available the canonical directional intent is used anyway (second
+ * loop) rather than degrading to a standstill. The second loop still honours
+ * the anti-stall suppression: forcing a `retreat`/`backstep`/`disengage` on a
+ * combatant that has gone `LOCAL_RESOLUTION_STALE_TICKS` without a resolution
+ * would invert the exact behaviour that suppression exists to prevent. The
+ * forward intents are never suppressed, so a fighter that is too far away
+ * always closes.
  */
 function deterministicFallbackDecision(context: CombatDecisionContext, style: CombatStyleDefinition): CombatDecision {
   const currentDistance = distanceBetween(context.self.position, context.target.position)
@@ -527,6 +581,12 @@ function deterministicFallbackDecision(context: CombatDecisionContext, style: Co
     const priority = state === 'above' ? FORWARD_FALLBACK_PRIORITY : BACKWARD_FALLBACK_PRIORITY
     for (const intent of priority) {
       if (legalLocomotion.has(intent)) return { type: 'locomotion', locomotionIntent: intent }
+    }
+
+    const stale = isLocalResolutionStale(context.tick, context.self.lastResolutionTick)
+    for (const intent of priority) {
+      if (stale && STALE_SUPPRESSED_INTENTS.has(intent)) continue
+      return { type: 'locomotion', locomotionIntent: intent }
     }
   }
 

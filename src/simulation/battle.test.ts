@@ -131,9 +131,26 @@ describe('battle duel adapter', () => {
   })
 
   it('breaks an exact HP-ratio tie at the time limit using a value derived from the seed and sorted candidate IDs', () => {
+    // The exact tie is constructed rather than hoped for. This fixture used to
+    // rely on `accuracy: 0` keeping both fighters at full HP for the whole
+    // bout, but that was only ever true because the fighters were barely
+    // attacking: an accuracy of 0 still leaves `heavy-shield-jab`'s `+0.08`
+    // accuracyModifier, so once the root-travel legality fix let jabs actually
+    // fire, ~8% of them landed and the ratios drifted apart. Driving to tick
+    // 3599 and then pinning both fighters to full HP tests the tie-break
+    // policy itself, independent of how often anyone connects.
     const home: FighterDefinition = { ...heavy, id: 'home', accuracy: 0 }
     const away: FighterDefinition = { ...heavy, id: 'away', accuracy: 0 }
-    const state = finished(baseConfig({ home, away, seed: 43 }))
+    const beforeLimit = advanceBattleTicks(createBattle(baseConfig({ home, away, seed: 43 })), MAX_BOUT_TICKS - 1)
+    expect(beforeLimit.phase).toBe('running')
+    expect(beforeLimit.encounter.tick).toBe(MAX_BOUT_TICKS - 1)
+
+    let tied = beforeLimit.encounter
+    for (const id of [beforeLimit.descriptor.homeId, beforeLimit.descriptor.awayId]) {
+      tied = patchCombatant(tied, id, { hp: tied.combatants[id].definition.maxHp })
+    }
+    const state = advanceBattleTick({ ...beforeLimit, encounter: tied })
+
     expect(state.phase).toBe('finished')
     expect(state.finishReason).toBe('time-limit')
     expect(state.encounter.tick).toBe(MAX_BOUT_TICKS)
