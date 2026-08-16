@@ -356,13 +356,31 @@ function predictedContactDistance(currentDistance: number, action: Readonly<Atta
  * `currentDistance <= startMaxRange`.
  *
  * Reachability is the two-sided test implied by root travel being a maximum
- * that stops early (see `predictedContactDistance`):
+ * that stops early (see `predictedContactDistance`). The actor can make
+ * contact anywhere in the interval it can actually occupy --
+ * `[max(minimumSeparation, d - rootTravel), max(d, minimumSeparation)]` -- so
+ * the action is legal iff that interval intersects `contactRange`:
  *
- * - `currentDistance >= contactRange.min` -- the actor is not already inside
- *   the action's minimum contact distance (it cannot back up to create room);
- * - `currentDistance - rootTravel <= contactRange.max` -- even travelling its
- *   full authored root travel, the actor can close to within the action's
- *   maximum contact distance.
+ * - `max(minimumSeparation, d - rootTravel) <= contactRange.max` -- even
+ *   travelling its full authored root travel, the actor can close to within
+ *   the action's maximum contact distance;
+ * - `max(d, minimumSeparation) >= contactRange.min` -- the actor is not
+ *   already inside the action's minimum contact distance (it cannot back up
+ *   to create room).
+ *
+ * Both ends are clamped to the arena's `minimumSeparation` because that is a
+ * hard floor the separation solver enforces: a combatant is never legitimately
+ * closer than it. That clamp is load-bearing rather than cosmetic. Validation
+ * requires `contactRange.min >= arena.minimumSeparation`, and in the duel they
+ * are exactly equal at `0.9` -- but the three-pass separation solver parks a
+ * pressed-together pair at `0.89999999999999991`, one ULP below `0.9`. Without
+ * the clamp, a bare `d >= contactRange.min` rejects every action for both
+ * fighters, and the pair deadlocks at the separation floor exactly as it did
+ * when root travel was treated as mandatory. Measured on the worst-affected
+ * bout, 917 of 1253 stalled ticks sat at precisely that one-ULP-low distance.
+ * The clamp only ever bites below the floor, so an arena whose
+ * `minimumSeparation` is genuinely looser than an action's `contactRange.min`
+ * still correctly reports that action illegal at close quarters.
  *
  * This preserves both of the design's authored fixtures at `d = 2.0`:
  * `heavy-shield-jab` (travel `0.25`, max `1.4`) stays ILLEGAL because
@@ -372,13 +390,15 @@ function predictedContactDistance(currentDistance: number, action: Readonly<Atta
  */
 function legalActionCandidates(context: CombatDecisionContext, style: CombatStyleDefinition): CombatDecision[] {
   const currentDistance = distanceBetween(context.self.position, context.target.position)
+  const separationFloor = context.arena.minimumSeparation
+  const farthestContact = Math.max(currentDistance, separationFloor)
   const out: CombatDecision[] = []
 
   for (const actionId of style.attackActionIds) {
     const action = context.attacks[actionId]
     if (action.startMaxRange !== undefined && currentDistance > action.startMaxRange) continue
-    if (currentDistance < action.contactRange.min) continue
-    if (currentDistance - action.rootTravel > action.contactRange.max) continue
+    if (farthestContact < action.contactRange.min) continue
+    if (Math.max(separationFloor, currentDistance - action.rootTravel) > action.contactRange.max) continue
     out.push({ type: 'action', actionId })
   }
   return out

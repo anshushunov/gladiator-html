@@ -280,6 +280,32 @@ describe('scoreCombatCandidates: range reach legality', () => {
     expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')).toBe(true)
   })
 
+  it('keeps an action legal one ULP below the arena minimum separation', () => {
+    // The three-pass separation solver parks a pressed-together pair at
+    // `0.89999999999999991` -- one ULP below the 0.9 floor that both
+    // `arena.minimumSeparation` and every `contactRange.min` sit on. A bare
+    // `d >= contactRange.min` rejects that, and the pair deadlocks. Both ends
+    // of the reachable contact interval are therefore clamped to the floor.
+    const justBelow = 0.9 - Number.EPSILON / 2
+    expect(justBelow).toBeLessThan(0.9)
+    const self = fighterState('self', 'heavy')
+    const target = fighterState('foe', 'heavy', { position: { x: justBelow, z: 0 } })
+    const context = makeContext({ self, target })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    expect(scored.some((c) => c.decision.type === 'action')).toBe(true)
+  })
+
+  it('still rejects an action when the arena floor is genuinely looser than contactRange.min', () => {
+    // The floor clamp must not become a blanket "always in range" rule: with
+    // a 0.3 minimum separation, a heavy at 0.5 units really is inside
+    // heavy-shield-jab's 0.9 contact minimum and cannot back up to fix it.
+    const self = fighterState('self', 'heavy')
+    const target = fighterState('foe', 'heavy', { position: { x: 0.5, z: 0 } })
+    const context = makeContext({ self, target, arena: { ...freeArena, minimumSeparation: 0.3 } })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    expect(scored.some((c) => c.decision.type === 'action')).toBe(false)
+  })
+
   it('keeps every style able to attack at exactly the arena minimum separation', () => {
     // The regression that mattered: at the 0.9 separation floor each style
     // must still have at least one legal attack, or two fighters that close
