@@ -36,6 +36,7 @@ import {
   type DefenseActionDefinition,
   type ReactionRecord,
 } from './combatActions'
+import { intentDisplacement } from './movement'
 import type { CombatArenaDefinition, LocomotionIntent, Vec2 } from './movement'
 import type { Archetype, MatchupComparison } from './fighters'
 import { compareArchetypes } from './fighters'
@@ -311,18 +312,112 @@ const BURST_IN_MAX_RANGE = 4.0
  * Anti-stall-suppressed intents and `burst-in` outside its authored range
  * band are excluded here (legality), not merely penalized (scoring).
  */
-function ordinaryLocomotionCandidates(context: CombatDecisionContext, style: CombatStyleDefinition): CombatDecision[] {
+function ordinaryLocomotionCandidates(
+  context: CombatDecisionContext,
+  style: CombatStyleDefinition,
+  modifiers: readonly DecisionModifier[] = [],
+): CombatDecision[] {
   const currentDistance = distanceBetween(context.self.position, context.target.position)
   const stale = isLocalResolutionStale(context.tick, context.self.lastResolutionTick)
+  // design.md's anti-stall rule has two sentences, and only the first was
+  // implemented. The exemption applies exactly when the suppression has left
+  // this combatant with nothing to attack with (see `mayUnsuppressMovement`).
+  const mayUnsuppress = stale && viableActionCandidates(context, style, modifiers).length === 0
   const out: CombatDecision[] = []
 
   for (const key of Object.keys(style.baseWeights)) {
     if (!isLocomotionIntent(key)) continue
-    if (stale && STALE_SUPPRESSED_INTENTS.has(key)) continue
     if (key === 'burst-in' && (currentDistance < BURST_IN_MIN_RANGE || currentDistance > BURST_IN_MAX_RANGE)) continue
+    if (stale && STALE_SUPPRESSED_INTENTS.has(key)) {
+      if (!mayUnsuppress) continue
+      if (!movementRestoresAction(context, style, key, modifiers)) continue
+    }
     out.push({ type: 'locomotion', locomotionIntent: key })
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// The anti-stall suppression's own exemption.
+//
+// design.md states the suppression and its escape hatch in consecutive lines:
+//
+//   "At 300 ticks without any local resolution, ordinary `retreat`,
+//    `backstep`, `circle-*`, and `disengage` candidates are suppressed until
+//    that combatant participates in the next resolution."
+//   "Forced movement needed to make an action legal remains available."
+//
+// Only the first was implemented. Without the second the rule is
+// self-defeating: suppression lifts when the combatant "participates in the
+// next resolution", but a combatant whose only route to a resolution is the
+// suppressed movement can never reach one. Task 13's cohorts measured the
+// absorbing state this creates -- 100% of residual stall ticks had at least
+// one fighter inside the arena-boundary dead zone, where the authored `-20`
+// penalty zeroes every action, and the movement that would carry it out of
+// that zone was exactly what suppression had removed. Technical hits the same
+// wall from the other side: below 1.2 units it has no selectable attack at
+// all, and its authored answer (`backstep`) was suppressed.
+//
+// The exemption is deliberately expressed as the design words it -- movement
+// needed to make an ACTION legal -- rather than as a boundary special case, so
+// any stall that movement would resolve benefits from it. It is gated twice so
+// it cannot quietly disable anti-stall:
+//
+//   1. it applies only when the combatant currently has no viable action at
+//      all (a combatant that can attack is never allowed to kite instead);
+//   2. each suppressed intent must individually be shown to restore a viable
+//      action within one decision's commitment, so a fighter that is merely
+//      too far away gains nothing -- circling or retreating at range still
+//      makes no action legal, and closing (never suppressed) remains its only
+//      option.
+// ---------------------------------------------------------------------------
+
+/** Ticks per second. Declared locally, matching `encounter.ts`'s own private copy, so this module stays independent of the duel adapter that also publishes it. */
+const LOOKAHEAD_TICKS_PER_SECOND = 60
+
+/** The action candidates this combatant could actually choose right now: legal, and scored strictly positive. */
+function viableActionCandidates(
+  context: CombatDecisionContext,
+  style: CombatStyleDefinition,
+  modifiers: readonly DecisionModifier[],
+): ScoredCombatDecision[] {
+  const out: ScoredCombatDecision[] = []
+  for (const decision of legalActionCandidates(context, style)) {
+    const weight = Math.max(0, applyModifiers(rawCandidateWeight(context, style, decision), context, decision, modifiers))
+    if (weight > 0) out.push({ decision, weight })
+  }
+  return out
+}
+
+/**
+ * Would committing to `intent` until this style's next decision give the
+ * combatant an action it cannot currently take?
+ *
+ * The horizon is the archetype's longest decision interval, because that is
+ * how long the combatant is committed to the intent it picks now. The
+ * hypothetical position is deliberately not clamped to the arena: a move the
+ * arena would refuse genuinely does not help, and leaving it unclamped makes
+ * the boundary margin go further negative, which is exactly the answer
+ * "this direction does not restore anything".
+ */
+function projectedPosition(context: CombatDecisionContext, style: CombatStyleDefinition, intent: LocomotionIntent): Vec2 {
+  const step = intentDisplacement(intent, style.locomotion, context.self.facing, LOOKAHEAD_TICKS_PER_SECOND)
+  const horizon = DECISION_INTERVAL_RANGES[style.archetype].max
+  return {
+    x: context.self.position.x + step.x * horizon,
+    z: context.self.position.z + step.z * horizon,
+  }
+}
+
+function movementRestoresAction(
+  context: CombatDecisionContext,
+  style: CombatStyleDefinition,
+  intent: LocomotionIntent,
+  modifiers: readonly DecisionModifier[],
+): boolean {
+  const moved = projectedPosition(context, style, intent)
+  const hypothetical: CombatDecisionContext = { ...context, self: { ...context.self, position: moved } }
+  return viableActionCandidates(hypothetical, style, modifiers).length > 0
 }
 
 /**
@@ -404,8 +499,12 @@ function legalActionCandidates(context: CombatDecisionContext, style: CombatStyl
   return out
 }
 
-function buildLegalCandidates(context: CombatDecisionContext, style: CombatStyleDefinition): CombatDecision[] {
-  return [...ordinaryLocomotionCandidates(context, style), ...legalActionCandidates(context, style)]
+function buildLegalCandidates(
+  context: CombatDecisionContext,
+  style: CombatStyleDefinition,
+  modifiers: readonly DecisionModifier[] = [],
+): CombatDecision[] {
+  return [...ordinaryLocomotionCandidates(context, style, modifiers), ...legalActionCandidates(context, style)]
 }
 
 // ---------------------------------------------------------------------------
@@ -469,17 +568,26 @@ function targetHasOpening(target: Readonly<FighterCombatState>, tick: number): b
   return inRecovery || staggered
 }
 
+/** An action finishing within this distance of either arena boundary takes the `-20` penalty. */
+const ARENA_BOUNDARY_MARGIN = 0.4
+
+/** Distance from `position` to the nearer of the two arena boundaries (lateral band or outer radius, matching `movement.ts`'s two-stage clamp). Negative outside. */
+function arenaBoundaryMargin(arena: Readonly<CombatArenaDefinition>, position: Readonly<Vec2>): number {
+  const radialMargin = arena.radius - Math.sqrt(position.x * position.x + position.z * position.z)
+  const lateralMargin = arena.lateralLimit - Math.abs(position.z)
+  return Math.min(radialMargin, lateralMargin)
+}
+
 /**
  * `-20` when the action's predicted finishing position (root travel along
- * current facing) lands within 0.4 units of either arena boundary
- * (lateral band or outer radius, matching `movement.ts`'s two-stage clamp).
+ * current facing) lands within 0.4 units of either arena boundary.
  */
 function isNearArenaBoundary(context: CombatDecisionContext, action: AttackActionDefinition): boolean {
-  const finishX = context.self.position.x + context.self.facing.x * action.rootTravel
-  const finishZ = context.self.position.z + context.self.facing.z * action.rootTravel
-  const radialMargin = context.arena.radius - Math.sqrt(finishX * finishX + finishZ * finishZ)
-  const lateralMargin = context.arena.lateralLimit - Math.abs(finishZ)
-  return Math.min(radialMargin, lateralMargin) < 0.4
+  const finish: Vec2 = {
+    x: context.self.position.x + context.self.facing.x * action.rootTravel,
+    z: context.self.position.z + context.self.facing.z * action.rootTravel,
+  }
+  return arenaBoundaryMargin(context.arena, finish) < ARENA_BOUNDARY_MARGIN
 }
 
 function comparisonScoreAdjustment(comparison: MatchupComparison): number {
@@ -545,7 +653,7 @@ export function scoreCombatCandidates(
   style: CombatStyleDefinition,
   modifiers: readonly DecisionModifier[] = [],
 ): readonly ScoredCombatDecision[] {
-  const candidates = buildLegalCandidates(context, style)
+  const candidates = buildLegalCandidates(context, style, modifiers)
   const scored: ScoredCombatDecision[] = []
 
   for (const decision of candidates) {
@@ -588,11 +696,16 @@ const BACKWARD_FALLBACK_PRIORITY: readonly LocomotionIntent[] = ['retreat', 'bac
  * forward intents are never suppressed, so a fighter that is too far away
  * always closes.
  */
-function deterministicFallbackDecision(context: CombatDecisionContext, style: CombatStyleDefinition): CombatDecision {
+function deterministicFallbackDecision(
+  context: CombatDecisionContext,
+  style: CombatStyleDefinition,
+  modifiers: readonly DecisionModifier[] = [],
+): CombatDecision {
   const currentDistance = distanceBetween(context.self.position, context.target.position)
   const state = preferredRangeState(currentDistance, style.preferredRange)
+  const ordinary = ordinaryLocomotionCandidates(context, style, modifiers)
   const legalLocomotion = new Set(
-    ordinaryLocomotionCandidates(context, style)
+    ordinary
       .filter((candidate): candidate is Extract<CombatDecision, { type: 'locomotion' }> => candidate.type === 'locomotion')
       .map((candidate) => candidate.locomotionIntent),
   )
@@ -608,6 +721,24 @@ function deterministicFallbackDecision(context: CombatDecisionContext, style: Co
       if (stale && STALE_SUPPRESSED_INTENTS.has(intent)) continue
       return { type: 'locomotion', locomotionIntent: intent }
     }
+  }
+
+  // `hold-range` reads "already in a good place", but that is a statement
+  // about the range to the target, not about where the combatant is standing.
+  // A fighter pressed against the arena boundary is in the one position where
+  // every action takes the authored `-20` penalty, so holding there is the
+  // dead zone itself. Prefer whichever legal locomotion most improves the
+  // boundary margin; ties keep authored order, so this stays deterministic.
+  const margin = arenaBoundaryMargin(context.arena, context.self.position)
+  if (margin < ARENA_BOUNDARY_MARGIN) {
+    let best: { intent: LocomotionIntent; margin: number } | undefined
+    for (const candidate of ordinary) {
+      if (candidate.type !== 'locomotion') continue
+      const moved = projectedPosition(context, style, candidate.locomotionIntent)
+      const movedMargin = arenaBoundaryMargin(context.arena, moved)
+      if (movedMargin > (best?.margin ?? margin)) best = { intent: candidate.locomotionIntent, margin: movedMargin }
+    }
+    if (best) return { type: 'locomotion', locomotionIntent: best.intent }
   }
 
   return { type: 'locomotion', locomotionIntent: 'hold-range' }
@@ -641,7 +772,7 @@ export function chooseCombatDecision(
 ): CombatDecision {
   void rolls.interval
   const scored = scoreCombatCandidates(context, style, modifiers)
-  if (scored.length === 0) return deterministicFallbackDecision(context, style)
+  if (scored.length === 0) return deterministicFallbackDecision(context, style, modifiers)
   return selectProportionally(scored, rolls.selection)
 }
 

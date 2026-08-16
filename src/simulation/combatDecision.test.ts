@@ -592,6 +592,118 @@ describe('chooseCombatDecision: deterministic all-zero fallback', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// design.md states the anti-stall suppression and its exemption in consecutive
+// lines: ordinary retreat/backstep/circle-*/disengage are suppressed after 300
+// resolution-less ticks, and "Forced movement needed to make an action legal
+// remains available." Only the first was implemented, which made the rule
+// self-defeating -- suppression lifts on the next resolution, but a combatant
+// whose only route to a resolution is the suppressed movement can never reach
+// one.
+//
+// Task 13 measured the absorbing state: 100% of residual stall ticks had at
+// least one fighter inside the arena-boundary dead zone, where the authored
+// -20 penalty zeroes every action and the movement out of that zone is exactly
+// what suppression removed.
+// ---------------------------------------------------------------------------
+
+describe('anti-stall suppression yields to movement that restores action legality', () => {
+  // Duel-shaped arena so the lateral limit is reachable, matching the geometry
+  // the cohort stalls actually occurred in.
+  const duel = { radius: 6.5, lateralLimit: 2.5, minimumSeparation: 0.9, movementPolicy: 'ordered-pair' as const, orderedPair: ['self', 'foe'] as const }
+  const STALE_SUPPRESSED = new Set<string>(['retreat', 'backstep', 'circle-left', 'circle-right', 'disengage'])
+
+  /** Heavy pinned against the lateral wall at the separation floor, facing its target along +x. */
+  function wallPinned(tick: number) {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 2.34 }, facing: { x: 1, z: 0 }, lastResolutionTick: 0 })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0.9, z: 2.34 } })
+    return makeContext({ self, target, tick, arena: duel })
+  }
+
+  it('leaves a wall-pinned heavy with no action at all -- the state that produced the stall', () => {
+    // Sanity anchor for the two tests below: at the lateral wall every action
+    // takes the -20 boundary penalty and drops out, so movement is the only
+    // thing that can restore this fighter's offence.
+    const context = wallPinned(10)
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    expect(scored.some((c) => c.decision.type === 'action')).toBe(false)
+    expect(arenaMargin(context.self.position)).toBeLessThan(0.4)
+  })
+
+  function arenaMargin(position: { x: number; z: number }): number {
+    return Math.min(6.5 - Math.sqrt(position.x * position.x + position.z * position.z), 2.5 - Math.abs(position.z))
+  }
+
+  it('restores the lateral movement a wall-pinned combatant needs once it is stalled', () => {
+    const fresh = wallPinned(10)
+    const stalled = wallPinned(400)
+
+    // Before the stall threshold the circles are ordinary candidates anyway.
+    expect(scoreCombatCandidates(fresh, COMBAT_STYLES.styles.heavy).some(
+      (c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent.startsWith('circle-'),
+    )).toBe(true)
+
+    // Past it, suppression would ordinarily remove them -- but they are the
+    // movement that restores a legal action, so the exemption keeps them.
+    const scored = scoreCombatCandidates(stalled, COMBAT_STYLES.styles.heavy)
+    const circles = scored.filter((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent.startsWith('circle-'))
+    expect(circles.length).toBeGreaterThan(0)
+
+    const decision = chooseCombatDecision(stalled, COMBAT_STYLES.styles.heavy, { selection: 0.5, interval: 0.5 })
+    expect(decision).not.toEqual({ type: 'locomotion', locomotionIntent: 'hold-range' })
+  })
+
+  it('restores suppressed movement for a wall-pinned technical too -- the clause is not heavy-specific', () => {
+    // Technical pressed to the separation floor against the lateral wall.
+    // Away from a boundary it would still have `technical-parry-counter`
+    // (contact range 0.9-2.3) to fall back on, but at the wall the -20
+    // boundary penalty zeroes that too, leaving movement as its only route to
+    // a resolution.
+    const self = fighterState('self', 'technical', { position: { x: 0, z: 2.34 }, facing: { x: 1, z: 0 }, lastResolutionTick: 0 })
+    const target = fighterState('foe', 'technical', { factionId: 'other', position: { x: 0.9, z: 2.34 } })
+    const stalled = makeContext({ self, target, tick: 400, arena: duel })
+
+    const scored = scoreCombatCandidates(stalled, COMBAT_STYLES.styles.technical)
+    expect(scored.some((c) => c.decision.type === 'action')).toBe(false)
+    expect(scored.some((c) => c.decision.type === 'locomotion' && STALE_SUPPRESSED.has(c.decision.locomotionIntent))).toBe(true)
+    expect(chooseCombatDecision(stalled, COMBAT_STYLES.styles.technical, { selection: 0.5, interval: 0.5 })).not.toEqual({
+      type: 'locomotion',
+      locomotionIntent: 'hold-range',
+    })
+  })
+
+  it('still suppresses ordinary kiting for a stalled combatant that movement would not help', () => {
+    // The exemption must not silently disable anti-stall. A Fast fighter far
+    // from its target also has no legal action, but circling or retreating at
+    // range makes no action legal either -- only closing does, and closing is
+    // never suppressed. So the suppression must still bite here.
+    const self = fighterState('self', 'fast', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 }, lastResolutionTick: 0 })
+    const target = fighterState('foe', 'fast', { factionId: 'other', position: { x: 8, z: 0 } })
+    const stalled = makeContext({ self, target, tick: 400, arena: freeArena })
+
+    const scored = scoreCombatCandidates(stalled, COMBAT_STYLES.styles.fast)
+    expect(scored.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent.startsWith('circle-'))).toBe(false)
+    expect(scored.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'retreat')).toBe(false)
+    expect(chooseCombatDecision(stalled, COMBAT_STYLES.styles.fast, { selection: 0.5, interval: 0.5 })).toEqual({
+      type: 'locomotion',
+      locomotionIntent: 'advance',
+    })
+  })
+
+  it('keeps ordinary suppression intact for a combatant that can still attack', () => {
+    // A stalled fighter that HAS a viable action is never allowed to kite
+    // instead: gate 1 of the exemption.
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 }, lastResolutionTick: 0 })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 1.5, z: 0 } })
+    const stalled = makeContext({ self, target, tick: 400, arena: freeArena })
+
+    const scored = scoreCombatCandidates(stalled, COMBAT_STYLES.styles.heavy)
+    expect(scored.some((c) => c.decision.type === 'action')).toBe(true)
+    expect(scored.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent.startsWith('circle-'))).toBe(false)
+    expect(scored.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'retreat')).toBe(false)
+  })
+})
+
 describe('chooseCombatDecision: proportional selection among positive weights', () => {
   it('selects the candidate whose cumulative weight band contains the selection roll', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
