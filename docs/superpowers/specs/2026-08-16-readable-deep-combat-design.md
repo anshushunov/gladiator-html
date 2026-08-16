@@ -1,6 +1,6 @@
 # Readable Deep Combat — MVP Design
 
-**Status:** revised after written review; awaiting final approval
+**Status:** approved for implementation; amended after implementation-plan review
 
 **Date:** 2026-08-16
 
@@ -227,15 +227,15 @@ type LocomotionIntent =
 | Fast | 2.4 u/s | 2.7 u/s | 2.1 u/s | 4.0 u/s | 2.4–3.0 before entry |
 | Technical | 1.7 u/s | 2.0 u/s | 1.3 u/s | 2.4 u/s | 2.1–2.8 |
 
-Turn responsiveness is the normalized-lerp factor applied once per tick before normalization:
+Turn responsiveness is a maximum fixed rotation per tick. Runtime stores authored sine/cosine literals and never calls trigonometric functions:
 
-| Style | Turn factor/tick |
-| --- | ---: |
-| Heavy | `0.012` |
-| Fast | `0.045` |
-| Technical | `0.025` |
+| Style | Maximum turn | `cosMaxTurn` | `sinMaxTurn` |
+| --- | ---: | ---: | ---: |
+| Heavy | `2.0°/tick` | `0.9993908270` | `0.0348994967` |
+| Fast | `3.4°/tick` | `0.9982398279` | `0.0593063736` |
+| Technical | `2.6°/tick` | `0.9989705698` | `0.0453629881` |
 
-For a valid target, `desiredFacing = normalize(target.position - self.position)` and `facing = normalize(facing × (1 - turnFactor) + desiredFacing × turnFactor)`. A combatant without a target retains its last facing. All authored factors are below `0.5`, so even exact-opposite inputs cannot produce a zero blend; validation/invariants still reject a non-finite or near-zero facing vector.
+For a valid target, let `desiredFacing = normalize(target.position - self.position)`, `cross = facing.x × desiredFacing.z - facing.z × desiredFacing.x`, and `dot = facing.x × desiredFacing.x + facing.z × desiredFacing.z`. If `dot >= cosMaxTurn`, facing snaps to `desiredFacing`; otherwise it rotates by the authored `(cosMaxTurn, sinMaxTurn)` matrix in the sign of `cross` and normalizes. When `cross === 0 && dot < 0`, it deterministically turns left, removing the exact-180° deadlock. A combatant without a target retains its last facing. Validation requires finite literals, `cosMaxTurn`/`sinMaxTurn` in `0..1`, and `cos² + sin²` within epsilon of `1`.
 
 Style movement behavior:
 
@@ -375,6 +375,7 @@ interface DefenseActionDefinition {
   impactTicks: number
   recoveryTicks: number
   minimumIncomingFacingDot?: number
+  evadeDisplacement?: { min: number; max: number }
 }
 ```
 
@@ -390,7 +391,7 @@ interface DefenseActionDefinition {
 
 Facing eligibility is `dot(actor.facing, normalize(target.position - actor.position)) >= minimumFacingDot`. Values are authored numeric literals; degree annotations are documentation only and are never converted with trigonometry at runtime. `root travel` follows facing and is the maximum forward displacement authored across windup. It stops early at minimum separation and never expands the legal contact range.
 
-All numeric definition fields must be finite. Tick counts are positive integers; distances and multipliers are non-negative. Validation also requires `contactRange.min >= arena.minimumSeparation`, `contactRange.min <= contactRange.max`, burst `startMaxRange >= contactRange.max`, `minimumFacingDot`/defense-facing dots in `-1..1`, and every parryable attack windup to be at least Technical's authored parry reaction lead. Unknown action IDs and inconsistent content are developer errors.
+All numeric definition fields must be finite. Tick counts are positive integers; distances and multipliers are non-negative. Validation also requires `contactRange.min >= arena.minimumSeparation`, `contactRange.min <= contactRange.max`, burst `startMaxRange >= contactRange.max`, `minimumFacingDot`/defense-facing dots in `-1..1`, `evadeDisplacement.min <= evadeDisplacement.max`, Fast evade to define that range while other defenses do not, and every parryable attack windup to be at least Technical's authored parry reaction lead. Unknown action IDs and inconsistent content are developer errors.
 
 ## Defense reactions
 
@@ -408,7 +409,7 @@ effectiveDefenseChance = clamp(
 )
 ```
 
-The comparison modifier is `+0.05` for advantage, `0` for neutral, and `-0.05` for disadvantage. `telegraphBonus` is `0.00` for windup `<=14`, `+0.05` for `15..24`, and `+0.10` for `>=25` ticks. A failed roll schedules no defense. A successful roll schedules the style defense with a dynamic windup beginning at the reaction opportunity so its contact tick aligns with the incoming attack contact. This ties a longer visible commitment to a modestly stronger reaction without making it automatically safe.
+The comparison modifier is `+0.05` for advantage, `0` for neutral, and `-0.05` for disadvantage. `telegraphBonus` is `0.00` for windup `<=14`, `+0.05` for `15..24`, and `+0.10` for `>=25` ticks. A failed roll schedules no defense, records `failed`, and emits `defense-declined` so presentation can show a small early recognition flinch without revealing numeric chance. Ineligible opportunities remain ledger-only because their busy/staggered/action state is already visible. A successful roll schedules the style defense with a dynamic windup beginning at the reaction opportunity so its contact tick aligns with the incoming attack contact. This ties a longer visible commitment to a modestly stronger reaction without making it automatically safe.
 
 Defense action timing uses the remaining incoming windup as its own dynamic windup, followed by one aligned contact tick:
 
@@ -432,7 +433,7 @@ Incoming-facing effectiveness uses `dot(defender.facing, normalize(attacker.posi
 ### Fast evade
 
 - Uses the direction roll to rank `circle-left`, `circle-right`, and `backstep`; blocked directions fall through in that deterministic order.
-- Attempts 0.9–1.2 units of movement during the incoming windup.
+- Attempts an authored defense dash of 0.9–1.2 units during the incoming windup, independent of the ordinary locomotion speed profile. The same `direction` roll chooses `0.9 + 0.3 × direction` distance and ranks directions, so defense still consumes exactly two values. The displacement is distributed across the remaining windup and remains subject to arena, movement-policy, and separation constraints.
 - It succeeds only when final geometry places the fighter outside the attack's range or facing sector. The event is `attack-evaded`.
 - If arena boundaries prevent all ranked displacements from leaving the contact geometry, the evade is visibly attempted, `defense-failed` emits with reason `geometry`, and normal attack resolution continues.
 
@@ -475,7 +476,7 @@ interface CombatStyleDefinition {
   preferredRange: { min: number; max: number }
   attackActionIds: readonly AttackActionId[]
   defenseActionId: DefenseActionId
-  baseWeights: Readonly<Record<string, number>>
+  baseWeights: Readonly<Partial<Record<LocomotionIntent | AttackActionId, number>>>
 }
 
 interface LocomotionProfile {
@@ -483,10 +484,15 @@ interface LocomotionProfile {
   backwardUnitsPerSecond: number
   lateralUnitsPerSecond: number
   burstUnitsPerSecond: number
-  turnFactorPerTick: number
+  turnCosPerTick: number
+  turnSinPerTick: number
 }
 
-type CombatStyleCatalog = Readonly<Record<Archetype, CombatStyleDefinition>>
+interface CombatStyleCatalog {
+  styles: Readonly<Record<Archetype, CombatStyleDefinition>>
+  attacks: Readonly<Record<AttackActionId, AttackActionDefinition>>
+  defenses: Readonly<Record<DefenseActionId, DefenseActionDefinition>>
+}
 
 function chooseCombatDecision(
   context: CombatDecisionContext,
@@ -496,6 +502,8 @@ function chooseCombatDecision(
 ```
 
 Each decision consumes exactly two values from the fighter's decision stream, even if only one candidate is legal. A candidate is either one pure locomotion intent or one action; actions and movement are not multiplied into a Cartesian product. Every legal listed locomotion exists alongside every legal action, so the presence of an action never silently removes the corresponding pure-movement choice. Candidates are filtered for state, range reachable through authored action root travel, arena path, forced behavior, and style.
+
+Ordinary locomotion candidates are exactly the locomotion keys present in the style's `baseWeights`. An absent key means the style does not select that intent ordinarily; a present zero weight means contextual adjustments may make it positive. Forced behavior bypasses this set. Catalog validation rejects unknown keys and attack IDs not listed by that style.
 
 Initial base weights are:
 
@@ -631,6 +639,7 @@ Event IDs are monotonic within one encounter and restart for a new `EncounterSta
 | `action-started` | actor ID, target ID, action instance/definition IDs, expected contact tick | optional committed-action line | anticipation and whoosh scheduling |
 | `action-interrupted` | actor ID, action IDs, reason (`stagger` or `threat-canceled`) | optional interruption line | replace/cancel action pose |
 | `defense-started` | defender ID, attacker ID, incoming action ID, defense ID, expected contact tick | none | guard/evade/parry preparation |
+| `defense-declined` | defender ID, attacker ID, incoming action ID, defense ID, expected contact tick | optional recognition line | small recognition flinch; no block/parry pose |
 | `defense-failed` | defender ID, attacker ID, incoming action ID, defense ID, reason (`geometry` or `facing`) | optional failed-defense line | failed defense accent before hit |
 | `attack-missed` | actor ID, target ID, action IDs, reason | miss line | miss/recovery cue |
 | `attack-evaded` | actor ID, target ID, action IDs, evade intent | evade line | fast exit cue |
@@ -686,7 +695,7 @@ Initial content values:
 | Away | Cassius | Technical | 160 | 19 | 0.90 | 0.38 | 0.12 | strong measured opponent |
 | Away | Magnus | Heavy | 145 | 18 | 0.78 | 0.32 | 0.06 | vulnerable heavy opponent |
 
-Implementation may tune these fighter numbers plus action `damageMultiplier` and `recoveryTicks` to satisfy balance acceptance. It must preserve names, styles, opponent order, relative content intent, and the qualitative action ordering: probes remain quicker/lower-payoff than committed actions, Fast remains quickest, Heavy's cleave remains the slowest commitment, and Technical retains the longest practical reach. Any tuning outside those fields requires a written spec amendment.
+Implementation may tune these fighter numbers plus action `damageMultiplier`/`recoveryTicks`, style turn sine/cosine pairs, and Fast's authored `evadeDisplacement` to satisfy balance acceptance. It must preserve names, styles, opponent order, relative content intent, the qualitative turn ordering `Heavy < Technical < Fast`, the 0.9–1.2 Fast evade range unless a reviewed trace proves it structurally unusable, and the qualitative action ordering: probes remain quicker/lower-payoff than committed actions, Fast remains quickest, Heavy's cleave remains the slowest commitment, and Technical retains the longest practical reach. Any tuning outside those fields requires a written spec amendment.
 
 Planning cards replace attack interval with Power and Defense while retaining HP, Accuracy, Critical, and the always-visible counter rule.
 
@@ -751,7 +760,7 @@ No file in this directory imports DOM, Three.js, Web Audio, presentation, or con
 
 Content contains no mutable state or presentation objects.
 
-`main.ts` imports the style catalog and fighter rosters, then passes both into `createSeries`. `SeriesConfig` adds `combatStyles: CombatStyleCatalog`; series state keeps this plain readonly data and passes it into every duel-adapter/encounter creation. This dependency injection lets simulation consume style data without importing `src/content/` and keeps `structuredClone` test state free of functions or engine objects.
+`main.ts` imports the style catalog and fighter rosters, then passes both into `createSeries`. `SeriesConfig` adds `combatStyles: CombatStyleCatalog`; series state keeps this plain readonly data and passes it into every duel-adapter/encounter creation. The catalog includes the style, attack, and defense tables needed for cross-validation and action lookup. This dependency injection lets simulation consume style data without importing `src/content/` and keeps `structuredClone` test state free of functions or engine objects. Its serialized size is a known constant overhead included in encounter benchmark state-byte reporting, not state growth caused by elapsed events.
 
 ### `src/presentation/`
 
@@ -875,8 +884,8 @@ The feed formats new actions and defenses but remains non-live for screen reader
 ### Simulation/unit
 
 - `spatialHash.test.ts`: stable cell keys, radius queries, canonical unique pairs, sparse candidate counters, and independence from input order.
-- `movement.test.ts`: vector math, bounds, both movement policies, fixed three-pass separation, bounded vector facing, travelled distance, velocity, and all intents.
-- `combatActions.test.ts`: exact phase ticks, action legality, attack/defense facing arcs, semantic contact points, damage rounding, block, evade/failure, parry/counter including allowed counter miss, opening critical, priority, simultaneous contacts, and every attack/defense phase × stagger cell.
+- `movement.test.ts`: vector math, bounds, both movement policies, fixed three-pass separation, constant-step bounded facing including exact-opposite recovery, travelled distance, velocity, and all intents.
+- `combatActions.test.ts`: exact phase ticks, action legality, attack/defense facing arcs, semantic contact points, damage rounding, block, authored evade displacement/failure, parry/counter including allowed counter miss, opening critical, priority, simultaneous contacts, and every attack/defense phase × stagger cell.
 - `combatDecision.test.ts`: nearest-hostile acquisition, retention/invalidation, local context ordering, exact candidate construction/formula/example, style behavior, fixed roll consumption, batched multi-threat defense, deterministic choice, capped local pressure, resolution-based suppression, forced disengage, and future-seam purity.
 - `encounter.test.ts`: hostility modes, sorted collection creation, actor-local action IDs, per-combatant streams, event batches, contact ordering, target-unavailable, `no-hostile-pairs`, complete traces, at least three canonical hashes, and immutability.
 - `encounterCapacity.test.ts`: all Mass-foundation acceptance fixtures, including 100-combatant FFA and structural spatial counters.
@@ -916,7 +925,7 @@ Before handoff, humans review:
 4. a short recording with HP cards and feed hidden;
 5. each audio cue in isolation and cues during a complete bout.
 
-At least two reviewers who did not implement the combat watch three representative `×1` clips with HP cards/feed hidden; at least one reviewer begins without being taught the style rules. For every committed exchange they briefly label anticipation, defense/result, and recovery, then compare those labels with the event trace. Acceptance requires at least `75%` fully correct exchange labels from each reviewer, correct identification of all three styles after one clip each, and a causally plausible explanation of the winner in all three clips. They also explicitly check foot sliding, weapon contact, spacing rhythm, camera framing, repeated motion, reduced-motion mode, and sound weight. The PR records anonymized counts and short failure notes, not only a subjective pass. Visual/audio acceptance cannot be delegated to a text-only model.
+At least two reviewers who did not implement the combat watch three representative `×1` clips with HP cards/feed hidden; at least one reviewer begins without being taught the style rules. For every exchange they record whether it was a `probe` or `committed` action, and for every committed exchange they briefly label anticipation, defense/result, and recovery before comparing those labels with the event trace. Acceptance requires at least `75%` fully correct committed-exchange labels from each reviewer, correct identification of all three styles after one clip each, and a causally plausible explanation of the winner in all three clips. Probe exchanges are reviewed separately for visible resolution/recovery and do not lower the committed-exchange anticipation metric that they were explicitly not designed to satisfy. Reviewers also explicitly check recognition flinches for `defense-declined`, foot sliding, weapon contact, spacing rhythm, camera framing, repeated motion, reduced-motion mode, and sound weight. The PR records anonymized counts and short failure notes, not only a subjective pass. Visual/audio acceptance cannot be delegated to a text-only model.
 
 ## Migration
 

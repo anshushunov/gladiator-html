@@ -73,10 +73,12 @@
 - Modify: `src/simulation/series.test.ts`
 - Modify: `src/content/mvpSeries.ts`
 - Modify: `src/content/mvpSeries.test.ts`
+- Modify: `src/presentation/SeriesView.ts`
+- Modify: `src/style.css`
 
 **Interfaces:**
 - Produces final `FighterDefinition` field names and strict validation.
-- Temporarily leaves the old instantaneous loop in `battle.ts` behind a clearly named private legacy cadence map; Task 10 deletes that loop rather than extending it.
+- Temporarily leaves the old instantaneous loop in `battle.ts` behind a clearly named private legacy cadence map; Task 11 deletes that loop rather than extending it.
 
 - [ ] **Step 1: Write failing fighter-schema tests**
 
@@ -134,7 +136,7 @@ const LEGACY_ATTACK_INTERVAL_TICKS: Record<Archetype, number> = {
 }
 ```
 
-Use it only in the old loop and mark the constant with a comment that Task 10 removes it. Do not expose it or add it to content/state.
+Use it only in the old loop and mark the constant with a comment that Task 11 removes it. Do not expose it or add it to content/state.
 
 - [ ] **Step 4: Update fixtures without asserting obsolete combat balance**
 
@@ -142,16 +144,24 @@ Change all fighter literals to `power`/`defenseChance`; remove assertions tied t
 
 - [ ] **Step 5: Put the approved initial fighter rows into content**
 
-Use exactly: Brutus `170/22/.86/.34/.10`, Aquila `120/16/.84/.31/.14`, Nerva `165/20/.92/.40/.16`, Drusus `185/21/.90/.36/.15`, Cassius `160/19/.90/.38/.12`, Magnus `145/18/.78/.32/.06`. Delete `TARGET_MIN_BOUT_TICKS` and `TARGET_MAX_BOUT_TICKS`; statistical acceptance belongs to Task 12.
+Use exactly: Brutus `170/22/.86/.34/.10`, Aquila `120/16/.84/.31/.14`, Nerva `165/20/.92/.40/.16`, Drusus `185/21/.90/.36/.15`, Cassius `160/19/.90/.38/.12`, Magnus `145/18/.78/.32/.06`. Delete `TARGET_MIN_BOUT_TICKS` and `TARGET_MAX_BOUT_TICKS`; statistical acceptance belongs to Task 13.
 
-- [ ] **Step 6: Verify and commit**
+- [ ] **Step 6: Migrate planning-card labels with the schema**
+
+In `SeriesView.ts`, replace every `damage`/`attackIntervalTicks` read with `power`/`defenseChance`. Planning and opponent cards show `Power` and `Defense` while retaining HP, Accuracy, Critical, and the counter rule. Remove obsolete DMG/interval markup and CSS now so no presentation consumer retains the deleted schema.
+
+- [ ] **Step 7: Verify and commit**
 
 Run: `npm test`
 
 Expected: PASS with the existing series still playable through the temporary adapter.
 
+Run: `npm run build`
+
+Expected: PASS, proving all non-test consumers compile against the new fighter schema.
+
 ```bash
-git add src/simulation/fighters.ts src/simulation/fighters.test.ts src/simulation/battle.ts src/simulation/battle.test.ts src/simulation/series.test.ts src/content/mvpSeries.ts src/content/mvpSeries.test.ts
+git add src/simulation/fighters.ts src/simulation/fighters.test.ts src/simulation/battle.ts src/simulation/battle.test.ts src/simulation/series.test.ts src/content/mvpSeries.ts src/content/mvpSeries.test.ts src/presentation/SeriesView.ts src/style.css
 git commit -m "refactor: migrate fighter combat attributes"
 ```
 
@@ -165,7 +175,7 @@ git commit -m "refactor: migrate fighter combat attributes"
 
 **Interfaces:**
 - Produces actor-local stream creation, fixed two-roll helpers, derived tie values, and diagnostic FNV-1a folding.
-- Preserves `deriveBoutSeed` for series integration; deletes `deriveSideSeed` after Task 10 removes its final caller.
+- Preserves `deriveBoutSeed` for series integration; deletes `deriveSideSeed` after Task 11 removes its final caller.
 
 - [ ] **Step 1: Write failing stream-independence tests**
 
@@ -182,7 +192,7 @@ expect(derivedUnitValue(7, 'tick:19:actor:3')).toBe(0.5615094522945583)
 expect(formatTraceHash(foldTraceHash(0x811c9dc5, 'combat'))).toBe('1ce36e21')
 ```
 
-`foldTraceHash` applies FNV-1a to each UTF-16 code unit with `Math.imul` and unsigned 32-bit normalization; `formatTraceHash` returns eight lowercase hexadecimal digits.
+`derivedUnitValue(seed, label)` is exactly `nextRandom(createRandom(deriveSeed(seed, label)))[0]`: one derivation and one draw. `foldTraceHash` applies FNV-1a to each UTF-16 code unit with `Math.imul` and unsigned 32-bit normalization; `formatTraceHash` returns eight lowercase hexadecimal digits.
 
 Run: `npx vitest run src/simulation/random.test.ts`
 
@@ -314,10 +324,12 @@ git commit -m "feat: add deterministic combat spatial hash"
 expect(normalizeVec2({ x: 3, z: 4 })).toEqual({ x: 0.6, z: 0.8 })
 expect(intentDisplacement('advance', heavyProfile, { x: 1, z: 0 }, 60)).toEqual({ x: 1.4 / 60, z: 0 })
 expect(intentDisplacement('retreat', fastProfile, { x: 1, z: 0 }, 60)).toEqual({ x: -2.7 / 60, z: 0 })
-expect(turnFacing({ x: 1, z: 0 }, { x: 0, z: 1 }, 0.025)).toMatchObject({ x: expect.any(Number), z: expect.any(Number) })
+const turned = turnFacing({ x: 1, z: 0 }, { x: 0, z: 1 }, technicalTurn)
+expect(turned.x).toBeCloseTo(0.9989705698, 9)
+expect(turned.z).toBeCloseTo(0.0453629881, 9)
 ```
 
-Add tests for all nine intents, circle perpendiculars, burst/backstep/disengage speed choice, radius/lateral clamps, opposite-facing finite normalization, ordered-pair non-crossing, input-order independence, minimum `0.9` separation, exactly three passes, actual post-constraint velocity, and travelled-distance accumulation.
+Add tests for all nine intents, circle perpendiculars, radius/lateral clamps, ordered-pair non-crossing, input-order independence, minimum `0.9` separation, exactly three passes, actual post-constraint velocity, and travelled-distance accumulation. For exact-opposite facing, assert deterministic left turn on the first tick and convergence inside the target arc after repeated ticks. For 90° and 170° errors, assert each unconverged step has the same authored before/after dot, proving constant angular speed without runtime trigonometry.
 
 Run: `npx vitest run src/simulation/movement.test.ts`
 
@@ -345,11 +357,22 @@ export interface MovementRequest {
   desiredDisplacement: Readonly<Vec2>
 }
 
+export interface TurnStep {
+  cos: number
+  sin: number
+}
+
+export function turnFacing(current: Readonly<Vec2>, desired: Readonly<Vec2>, step: Readonly<TurnStep>): Vec2
+
 export function resolveSimultaneousMovement(
   requests: readonly MovementRequest[],
   arena: Readonly<CombatArenaDefinition>,
 ): { positions: Readonly<Record<string, Vec2>>; separationPasses: 3; candidateChecksByPass: readonly number[] }
 ```
+
+Intent-to-profile mapping is explicit: `advance` and `pressure` use forward speed; `retreat`, `backstep`, and `disengage` use backward speed; `circle-left/right` use lateral speed; `burst-in` uses burst speed; `hold-range` is zero. Action root travel and Fast's defense dash are separate authored motion and do not use this mapping.
+
+`turnFacing` compares dot with the authored cosine, snaps when already inside one step, otherwise rotates with the authored sine/cosine matrix in the sign of cross product. Exact opposite (`cross === 0 && dot < 0`) turns left. Normalize the output to contain literal-rounding drift; never call runtime trig.
 
 Compute all desired displacement from one snapshot, clamp, then rebuild the spatial hash and solve canonical pairs once in each of exactly three passes. Split correction evenly unless one side is boundary-constrained; apply ordered-pair projection after every pass. Never scan every combatant pair directly.
 
@@ -395,7 +418,7 @@ expect(() => validateCombatStyleCatalog(
 )).toThrow('minimumFacingDot')
 ```
 
-Cover every exact action row, every defense row, style movement speeds/turn factors, base weights, duplicate/unknown IDs, finite numeric fields, positive integer phase ticks, range ordering, burst reach, dot bounds, arena minimum separation, and Technical reaction-lead compatibility with every `parryable` attack.
+Cover every exact action row, every defense row, style movement speeds/turn pairs, base weights, duplicate/unknown IDs, finite numeric fields, positive integer phase ticks, range ordering, burst reach, dot bounds, turn-pair unit length, arena minimum separation, and Technical reaction-lead compatibility with every `parryable` attack. Validate that only Fast evade defines `evadeDisplacement`, its min/max are ordered and non-negative, and every `baseWeights` key is a valid locomotion or style attack ID.
 
 Run: `npx vitest run src/content/combatStyles.test.ts`
 
@@ -435,6 +458,16 @@ export interface DefenseActionDefinition {
   impactTicks: number
   recoveryTicks: number
   minimumIncomingFacingDot?: number
+  evadeDisplacement?: Readonly<{ min: number; max: number }>
+}
+
+export interface LocomotionProfile {
+  forwardUnitsPerSecond: number
+  backwardUnitsPerSecond: number
+  lateralUnitsPerSecond: number
+  burstUnitsPerSecond: number
+  turnCosPerTick: number
+  turnSinPerTick: number
 }
 
 export interface CombatStyleDefinition {
@@ -443,7 +476,7 @@ export interface CombatStyleDefinition {
   preferredRange: Readonly<{ min: number; max: number }>
   attackActionIds: readonly AttackActionId[]
   defenseActionId: DefenseActionId
-  baseWeights: Readonly<Record<string, number>>
+  baseWeights: Readonly<Partial<Record<LocomotionIntent | AttackActionId, number>>>
 }
 
 export interface CombatStyleCatalog {
@@ -469,9 +502,13 @@ technical-driving-thrust:  1.6..3.1,  —,   .9511, 30, 4, 30, 1.5, -.03, .50, .
 technical-parry-counter:   0.9..2.3,  —,   .8660, 8, 4, 20, 1.1, +.12, .30, .40, 18, 50; attack forced counter weapon
 ```
 
-Defense rows are Heavy guard lead/impact/recovery/dot `8/4/12/.3420`, Fast evade `7/3/14/no dot`, Technical parry `10/4/16/-.1736`. Movement rows are Heavy `1.4/.9/.8/1.8/.012`, Fast `2.4/2.7/2.1/4/.045`, Technical `1.7/2/1.3/2.4/.025` for forward/back/lateral/burst/turn. Preferred ranges are Heavy `1.2..1.7`, Fast `2.4..3.0`, Technical `2.1..2.8`.
+Defense rows are Heavy guard lead/impact/recovery/dot `8/4/12/.3420`, Fast evade `7/3/14/no dot/evade 0.9..1.2`, Technical parry `10/4/16/-.1736`. Fast evade uses its own authored defense displacement distributed across the seven remaining windup ticks; it is deliberately independent of ordinary locomotion speed and remains constrained by arena/policy/separation.
+
+Movement rows, in field order forward/back/lateral/burst/turn-cos/turn-sin, are Heavy `1.4/.9/.8/1.8/0.9993908270/0.0348994967`, Fast `2.4/2.7/2.1/4/0.9982398279/0.0593063736`, Technical `1.7/2/1.3/2.4/0.9989705698/0.0453629881`. These represent `2.0°`, `3.4°`, and `2.6°` per tick for documentation only; runtime uses the literals. Preferred ranges are Heavy `1.2..1.7`, Fast `2.4..3.0`, Technical `2.1..2.8`.
 
 Base weights are Heavy: advance 12, hold 8, pressure 12, circles 2 each, retreat 0, jab 14, cleave 8; Fast: circles 12 each, hold 5, retreat 8, burst-in 14, slash 12, lunge 14; Technical: hold 12, backstep 12, circles 6 each, advance 6, thrust 14, driving thrust 8. Never convert degree annotations with runtime trigonometry.
+
+Ordinary locomotion candidates are exactly the locomotion keys present in that style's `baseWeights`. An absent key means the style does not choose it ordinarily; a present zero weight means adjustments may make it selectable. Forced disengage/counter bypass this set. Validation rejects unknown keys and attack IDs not listed by the style.
 
 - [ ] **Step 4: Test exact phase endpoints and base contact math**
 
@@ -523,6 +560,7 @@ expect(transition.state.nextEventId).toBe(1)
 expect(transition.state.combatants.a.nextDecisionTick).toBe(1)
 expect(transition.state.randomByCombatant.a).toBeDefined()
 expect('events' in transition.state).toBe(false)
+expect(structuredClone(transition.state)).toEqual(transition.state)
 ```
 
 Test FFA regardless of factions, same/different factions, symmetric relation tables with default allied/neutral behavior, conflicting rows, invalid IDs containing `:`, duplicate IDs, invalid sizes 1/101, no initial hostile pair, bad ordered-pair references, and `structuredClone` equality.
@@ -583,6 +621,7 @@ movement-intent-changed: combatantId, from, to
 action-started: actorId, targetId, actionInstanceId, actionId, expectedContactTick
 action-interrupted: actorId, actionInstanceId, actionId, reason(stagger|threat-canceled)
 defense-started: defenderId, attackerId, incomingActionId, defenseActionId, expectedContactTick
+defense-declined: defenderId, attackerId, incomingActionId, defenseActionId, expectedContactTick
 defense-failed: defenderId, attackerId, incomingActionId, defenseActionId, reason(geometry|facing)
 attack-missed: actorId, targetId, actionInstanceId, actionId, reason(target-unavailable|geometry|accuracy)
 attack-evaded: actorId, targetId, actionInstanceId, actionId, evadeIntent
@@ -708,7 +747,7 @@ export function processDefenseBatch(input: Readonly<{
 }>): DefenseBatchResult
 ```
 
-Sort by contact tick, committed/counter before probe, descending `attacker.power × damageMultiplier`, then action instance ID. Consume `success` and `direction` for every opportunity, record all outcomes, schedule the first eligible successful defense only, and bind it with `reactingToActionId`. Use defense chance plus comparison `+.05/0/-.05` plus telegraph `0/.05/.10`, clamped `0..0.95`.
+Sort by contact tick, committed/counter before probe, descending `attacker.power × damageMultiplier`, then action instance ID. Consume `success` and `direction` for every opportunity, record all outcomes, schedule the first eligible successful defense only, and bind it with `reactingToActionId`. Use defense chance plus comparison `+.05/0/-.05` plus telegraph `0/.05/.10`, clamped `0..0.95`. An eligible failed roll emits `defense-declined` at the reaction opportunity so presentation can show a small recognition flinch; ineligible opportunities remain ledger-only because their busy/staggered/action state is already visible.
 
 - [ ] **Step 7: Verify and commit**
 
@@ -740,12 +779,18 @@ git commit -m "feat: add style decisions and defense reactions"
 ```ts
 let transition = createEncounter(duelEncounterConfig({ seed: 11 }))
 const batches: EncounterEvent[] = [...transition.events]
+const distances: number[] = []
 for (let count = 0; count < 180; count += 1) {
   transition = advanceEncounterTick(transition.state)
   batches.push(...transition.events)
+  distances.push(distanceBetween(
+    transition.state.combatants['home.brutus'].position,
+    transition.state.combatants['away.drusus'].position,
+  ))
 }
 expect(transition.state.tick).toBe(180)
 expect(transition.state.combatants['home.brutus'].travelledDistance).toBeGreaterThan(0)
+expect(Math.max(...distances) - Math.min(...distances)).toBeGreaterThan(0.25)
 expect(batches.some(({ type }) => type === 'movement-intent-changed')).toBe(true)
 expect(batches.some(({ type }) => type === 'action-started')).toBe(true)
 ```
@@ -792,7 +837,7 @@ git commit -m "feat: integrate encounter movement and action phases"
 
 ---
 
-### Task 9: Resolve Contacts, Stagger, Push, Defeat, and Encounter Completion
+### Task 9: Resolve Contact Snapshots, Defense, Damage, and Push
 
 **Files:**
 - Modify: `src/simulation/combatActions.ts`
@@ -801,7 +846,7 @@ git commit -m "feat: integrate encounter movement and action phases"
 - Modify: `src/simulation/encounter.test.ts`
 
 **Interfaces:**
-- Completes tick-order phases 9–12 with snapshot contact intents, canonical priority, accumulated push, local clocks, defeat, and `no-hostile-pairs`.
+- Completes tick-order contact resolution and accumulated push with immutable snapshots and total ordering.
 - Events are the sole presentation/audio description of resolved outcomes.
 
 - [ ] **Step 1: Write failing canonical outcome-sequence tests**
@@ -814,7 +859,7 @@ expect(types(evadeBatch)).toEqual(['attack-evaded'])
 expect(types(blockBatch)).toEqual(['attack-blocked', 'damage-dealt', 'fighter-staggered'])
 expect(types(parryBatch)).toEqual(['attack-parried', 'fighter-staggered'])
 expect(types(criticalDefeatBatch)).toEqual([
-  'critical-hit', 'damage-dealt', 'fighter-staggered', 'fighter-defeated', 'encounter-finished',
+  'critical-hit', 'damage-dealt', 'fighter-staggered', 'fighter-defeated',
 ])
 ```
 
@@ -839,34 +884,63 @@ Snapshot all geometry/defenses before resolution. Sort descending priority, then
 
 - [ ] **Step 3: Implement damage, defense, push, and stagger rules**
 
-Clamp accuracy after action modifier. Critical only against recovery/stagger and only when unblocked. Apply guard damage `.35`, push `.30`, stagger `.40` with `max(1, round(...))`. Parry applies 24 attacker stagger and queues the counter. Accumulate push vectors by target and constrain the whole collection once after all intents using arena/policy/three passes.
+Clamp accuracy after action modifier. Critical only against recovery/stagger and only when unblocked. Apply guard damage `.35`, push `.30`, stagger `.40` with `max(1, round(...))`. Parry applies 24 attacker stagger and queues the counter. Fast evade applies its authored `0.9 + 0.3 × directionRoll` defense displacement across the remaining windup, independent of normal locomotion speed, while respecting arena/policy/separation. Accumulate push vectors by target and constrain the whole collection once after all intents using arena/policy/three passes.
 
-- [ ] **Step 4: Implement the full stagger phase matrix**
-
-Parameterize every attack/defense state (`neutral`, windup, contact, impact, recovery) × non-lethal stagger. Assert action interruption only where specified, contact snapshot survival on the current tick, forced-action clearing, and lethal defeat override. Store `staggerUntilTick = max(previous, contactTick + duration)` and free when `tick >= staggerUntilTick`.
-
-- [ ] **Step 5: Update local anti-stall clocks and completion**
-
-Update `lastContactTick` for damage/block/parry only. Update `lastResolutionTick` for both living participants on hit/block/parry/evade/geometry/accuracy. After persistence, finish when no living hostile pair remains; all living allied survivors win.
-
-- [ ] **Step 6: Add canonical trace hashing**
-
-Expose a test helper that folds every tick's sorted state, integer fields, HP, action/phase IDs, RNG states, event payloads, and positions/facing quantized to millionths. Fix at least three two-combatant seed hashes only after reviewing the first correct trace; include the expected literals in `encounter.test.ts`.
-
-- [ ] **Step 7: Verify and commit**
+- [ ] **Step 4: Verify and commit the contact slice**
 
 Run: `npx vitest run src/simulation/combatActions.test.ts src/simulation/encounter.test.ts`
 
-Expected: PASS with complete deterministic encounter traces.
+Expected: PASS for contact ordering, outcome events, damage, defense, push, and target-unavailable without yet freezing trace literals.
 
 ```bash
 git add src/simulation/combatActions.ts src/simulation/combatActions.test.ts src/simulation/encounter.ts src/simulation/encounter.test.ts
-git commit -m "feat: resolve readable combat exchanges"
+git commit -m "feat: resolve ordered combat contacts"
 ```
 
 ---
 
-### Task 10: Replace the Legacy Duel Loop and Preserve Series Semantics
+### Task 10: Complete Stagger, Local Clocks, Encounter Completion, and Trace Diagnostics
+
+**Files:**
+- Modify: `src/simulation/combatActions.ts`
+- Modify: `src/simulation/combatActions.test.ts`
+- Modify: `src/simulation/encounter.ts`
+- Modify: `src/simulation/encounter.test.ts`
+
+**Interfaces:**
+- Completes tick-order persistence/completion, the full phase × stagger matrix, bounded local anti-stall clocks, and canonical trace calculation.
+- Hashes remain diagnostic equality checks until post-tuning Task 13 freezes literals.
+
+- [ ] **Step 1: Implement the full stagger phase matrix**
+
+Parameterize every attack/defense state (`neutral`, windup, contact, impact, recovery) × non-lethal stagger. Assert action interruption only where specified, contact snapshot survival on the current tick, forced-action clearing, and lethal defeat override. Store `staggerUntilTick = max(previous, contactTick + duration)` and free when `tick >= staggerUntilTick`.
+
+- [ ] **Step 2: Update local anti-stall clocks and completion**
+
+Update `lastContactTick` for damage/block/parry only. Update `lastResolutionTick` for both living participants on hit/block/parry/evade/geometry/accuracy. After persistence, finish when no living hostile pair remains; all living allied survivors win. Add an exact critical-defeat sequence ending in `encounter-finished` and verify the event appears only after contact effects persist.
+
+- [ ] **Step 3: Add canonical trace hashing without freezing content-dependent literals**
+
+Expose a test helper that folds every tick's sorted state, integer fields, HP, action/phase IDs, RNG states, event payloads, and positions/facing quantized to millionths. For at least three two-combatant seeds, assert two identical runs produce identical hashes and a changed seed changes at least one hash. Do not freeze content-dependent literals before Task 13 tuning.
+
+- [ ] **Step 4: Run an informational early pacing probe**
+
+Run 20 consecutive seeds for Brutus versus Drusus and print median duration plus the fraction of attack resolutions ending as `attack-missed(reason: geometry)`. Assert only invariants and completion, not balance bands. Review the report now: a dominant geometry-miss share indicates facing/evade geometry must be corrected before capacity and balance work.
+
+- [ ] **Step 5: Verify and commit**
+
+Run: `npx vitest run src/simulation/combatActions.test.ts src/simulation/encounter.test.ts`
+
+Expected: PASS with complete deterministic encounter traces and reviewed pacing diagnostics.
+
+```bash
+git add src/simulation/combatActions.ts src/simulation/combatActions.test.ts src/simulation/encounter.ts src/simulation/encounter.test.ts
+git commit -m "feat: complete deterministic encounter resolution"
+```
+
+---
+
+### Task 11: Replace the Legacy Duel Loop and Preserve Series Semantics
 
 **Files:**
 - Rewrite: `src/simulation/battle.ts`
@@ -875,7 +949,12 @@ git commit -m "feat: resolve readable combat exchanges"
 - Modify: `src/simulation/random.test.ts`
 - Modify: `src/simulation/series.ts`
 - Modify: `src/simulation/series.test.ts`
+- Modify: `src/presentation/ArenaView.ts`
+- Modify: `src/presentation/SeriesView.ts`
+- Modify: `src/presentation/battleFeed.ts`
+- Modify: `src/presentation/battleFeed.test.ts`
 - Modify: `src/main.ts`
+- Modify: `tests/smoke.spec.ts`
 
 **Interfaces:**
 - `battle.ts` becomes a two-ID adapter around `EncounterState` and accumulates the complete small duel log.
@@ -922,13 +1001,16 @@ export function createBattle(config: BattleConfig): BattleState
 export function advanceBattleTick(previous: BattleState): BattleState
 export function advanceBattleTicks(initial: BattleState, ticks: number): BattleState
 export function fighterBySide(state: BattleState, side: FighterSide): FighterCombatState
+export function sideForCombatantId(state: BattleState, id: CombatantId): FighterSide
 ```
 
 Use duel arena radius `6.5`, lateral limit `2.5`, separation `0.9`, ordered pair `[homeId, awayId]`, starts `(-4.2, 0)/(4.2, 0)`, factions `home/away`, and `different-factions` hostility.
 
+`traceHash` remains an unsigned number in state. Every assertion or external selector uses the canonical eight-character hex representation `formatTraceHash(state.traceHash)`; never compare the numeric state field directly to a string literal.
+
 - [ ] **Step 3: Implement timeout after contact resolution**
 
-At tick 3600, first accept the kernel transition. If no-hostile-pairs already ended it, map that result. Otherwise compare remaining HP ratios, derive an exact-tie unit value from seed plus sorted candidate IDs, call `finishEncounter` with both active fighters in `survivorIds` and the selected one in `winnerIds`, append its event, and map to one side. Never mutate kernel phase/result directly.
+At tick 3600, first accept the kernel transition. If no-hostile-pairs already ended it, map that result and do not invoke `finishEncounter` again. Otherwise compare remaining HP ratios, derive an exact-tie unit value from seed plus sorted candidate IDs, call `finishEncounter` with both active fighters in `survivorIds` and the selected one in `winnerIds`, append its event, and map to one side. Never mutate kernel phase/result directly. The Step 1 fixture must make a lethal scheduled contact land exactly on tick 3600 and assert one `encounter-finished(reason: no-hostile-pairs)`, no timeout event, and no duplicate finish call.
 
 - [ ] **Step 4: Delete every legacy combat artifact**
 
@@ -947,9 +1029,13 @@ export interface SeriesConfig {
 
 Store the readonly catalog in `SeriesState`, pass it to every `createBattle`, and keep assignment/confirm/next/rematch behavior unchanged. Derive `BoutResult` through descriptor IDs, including side HP ratios. Update `main.ts` to construct the series with `COMBAT_STYLES`.
 
-- [ ] **Step 6: Verify series compatibility and commit**
+- [ ] **Step 6: Migrate every existing battle consumer in the same atomic slice**
 
-Run: `npx vitest run src/simulation/battle.test.ts src/simulation/series.test.ts src/simulation/random.test.ts`
+Use `fighterBySide`/`sideForCombatantId` in `SeriesView`, the current primitive `ArenaView`, and `main.ts`. `ArenaView` remains a temporary side-oriented renderer until Task 17, but reads `position.x`, descriptor IDs, and ID-based events; remove `approach-started`. Fully migrate `battleFeed.ts` and its tests to the new event vocabulary now, retaining the latest eight display rows. Update all `tests/smoke.spec.ts` bout helpers from 2700 to 3600 ticks. No compatibility alias for `battle.fighters`, `actorSide`, or old events is allowed.
+
+- [ ] **Step 7: Verify series and presentation compatibility, then commit**
+
+Run: `npx vitest run src/simulation/battle.test.ts src/simulation/series.test.ts src/simulation/random.test.ts src/presentation/battleFeed.test.ts`
 
 Expected: PASS with three encounter-backed bouts and unchanged public commands.
 
@@ -957,14 +1043,18 @@ Run: `npm run build`
 
 Expected: PASS.
 
+Run: `npm run test:e2e`
+
+Expected: existing planning, three-bout, pause/speed, summary, and rematch flows PASS with the 3600-tick adapter. There is no intentionally red migration window.
+
 ```bash
-git add src/simulation/battle.ts src/simulation/battle.test.ts src/simulation/random.ts src/simulation/random.test.ts src/simulation/series.ts src/simulation/series.test.ts src/main.ts
+git add src/simulation/battle.ts src/simulation/battle.test.ts src/simulation/random.ts src/simulation/random.test.ts src/simulation/series.ts src/simulation/series.test.ts src/presentation/ArenaView.ts src/presentation/SeriesView.ts src/presentation/battleFeed.ts src/presentation/battleFeed.test.ts src/main.ts tests/smoke.spec.ts
 git commit -m "feat: back series duels with encounter combat"
 ```
 
 ---
 
-### Task 11: Prove the 100-Combatant Mass Foundation Structurally
+### Task 12: Prove the 100-Combatant Mass Foundation Structurally
 
 **Files:**
 - Create: `src/simulation/encounterCapacity.test.ts`
@@ -998,7 +1088,7 @@ Cycle styles and approved fighter definitions deterministically; IDs are `ffa.00
 
 - [ ] **Step 2: Write the full capacity acceptance test**
 
-Advance 600 ticks and on every transition assert finite state, normalized facing, arena bounds, legal targets, unique action/event IDs, valid ledgers, and invariant success. Compare two full trace hashes; fix the reviewed final hash literal. Shuffle input definitions with a fixed permutation and expect identical sorted state/events/hash.
+Advance 600 ticks and on every transition assert finite state, normalized facing, arena bounds, legal targets, unique action/event IDs, valid ledgers, and invariant success. Compare two full trace hashes for equality but do not freeze the content-dependent literal until Task 13. Shuffle input definitions with a fixed permutation and expect identical sorted state/events/hash.
 
 - [ ] **Step 3: Test distant-actor stream isolation**
 
@@ -1006,7 +1096,7 @@ Run a small encounter with and without a distant non-interacting combatant. Excl
 
 - [ ] **Step 4: Test sparse structural counters**
 
-For the static 10×10 grid, assert fewer than 800 candidate checks per separation pass, never 4950, each real canonical neighbor at most once per pass, and exactly three passes. Do not assert elapsed milliseconds.
+For the sparse 10×10 grid at spacing `3.25`, assert fewer than 800 candidate checks per separation pass, never 4950, each real canonical neighbor at most once per pass, and exactly three passes. Add a second 10×10 layout at spacing `1.5`; assert it produces more candidates than the sparse layout but still fewer than 4950, includes every real neighboring pair exactly once per pass, and remains invariant-safe after all three passes. Do not assert elapsed milliseconds.
 
 - [ ] **Step 5: Add multi-threat, unavailable-target, and bounded-state fixtures**
 
@@ -1017,34 +1107,31 @@ The five-attacker fixture must consume ten defender values, schedule at most one
 ```json
 {
   "scripts": {
-    "benchmark:encounter": "tsx scripts/benchmark-encounter.ts"
-  },
-  "devDependencies": {
-    "tsx": "^4.20.0"
+    "benchmark:encounter": "vite-node scripts/benchmark-encounter.ts"
   }
 }
 ```
 
-Install through `npm install --save-dev tsx@^4.20.0` so `package-lock.json` matches. The script prints JSON with `ticks`, `combatants`, `millisecondsPerTick`, `emittedEvents`, `candidateChecks`, `peakSerializedStateBytes`, and `traceHash`. It exits nonzero only on invariant/structural failure, never on a timing threshold.
+Use the `vite-node` executable already supplied by the locked Vitest toolchain; add no second TypeScript runtime. The script prints JSON with `ticks`, `combatants`, `millisecondsPerTick`, `emittedEvents`, `candidateChecks`, `peakSerializedStateBytes`, and `traceHash`. `peakSerializedStateBytes` intentionally includes the plain injected combat catalog stored in state; record that known constant overhead rather than hiding it. The command exits nonzero only on invariant/structural failure, never on a timing threshold.
 
 - [ ] **Step 7: Verify and commit**
 
 Run: `npx vitest run src/simulation/encounterCapacity.test.ts src/simulation/spatialHash.test.ts`
 
-Expected: PASS including the fixed 100-actor hash.
+Expected: PASS including equal repeated 100-actor hashes and both sparse/dense structural fixtures.
 
 Run: `npm run benchmark:encounter`
 
 Expected: prints the metric JSON and exits 0.
 
 ```bash
-git add src/simulation/encounterCapacity.test.ts src/testSupport/combatFixtures.ts src/simulation/encounter.ts src/simulation/encounter.test.ts src/simulation/spatialHash.ts src/simulation/spatialHash.test.ts scripts/benchmark-encounter.ts package.json package-lock.json
+git add src/simulation/encounterCapacity.test.ts src/testSupport/combatFixtures.ts src/simulation/encounter.ts src/simulation/encounter.test.ts src/simulation/spatialHash.ts src/simulation/spatialHash.test.ts scripts/benchmark-encounter.ts package.json
 git commit -m "test: prove hundred-fighter encounter foundation"
 ```
 
 ---
 
-### Task 12: Add Fixed Balance Cohorts and Tune Only Allowed Numbers
+### Task 13: Add Fixed Balance Cohorts, Tune, and Freeze Canonical Hashes
 
 **Files:**
 - Create: `src/simulation/balance.test.ts`
@@ -1052,11 +1139,14 @@ git commit -m "test: prove hundred-fighter encounter foundation"
 - Modify: `src/content/mvpSeries.test.ts`
 - Modify: `src/content/combatStyles.ts`
 - Modify: `src/content/combatStyles.test.ts`
+- Modify: `src/simulation/encounter.test.ts`
+- Modify: `src/simulation/encounterCapacity.test.ts`
+- Modify: `src/simulation/battle.test.ts`
 - Modify: `src/simulation/series.test.ts`
 
 **Interfaces:**
 - Produces deterministic metric calculations and fixed acceptance bands.
-- Permitted tuning: fighter numeric rows plus action `damageMultiplier` and `recoveryTicks`; names/styles/order/relative intent and cohort seeds remain fixed.
+- Permitted tuning: fighter numeric rows, action `damageMultiplier`/`recoveryTicks`, style turn sine/cosine pairs, and Fast `evadeDisplacement`. Names/styles/order/relative intent, cohort seeds, `Heavy < Technical < Fast` turn ordering, Fast's `0.9..1.2` authored evade envelope, and qualitative action ordering remain fixed unless a reviewed trace demonstrates the evade envelope itself is structurally unusable and the spec is amended again.
 
 - [ ] **Step 1: Implement deterministic metric helpers inside the test**
 
@@ -1087,15 +1177,19 @@ Use identical stats and only vary styles. Assert advantaged style wins `55..75%`
 
 - [ ] **Step 4: Restore golden series acceptance**
 
-For seed `20260815`, assert the all-counter lineup `Brutus/Aquila/Nerva` is not `3–0`, at least one other lineup wins `2–1` or `3–0`, the six permutations yield at least three score/result profiles, and the full `Aquila/Nerva/Brutus` lineup has a reviewed canonical trace hash.
+For seed `20260815`, assert the all-counter lineup `Brutus/Aquila/Nerva` is not `3–0`, at least one other lineup wins `2–1` or `3–0`, and the six permutations yield at least three score/result profiles.
 
 - [ ] **Step 5: Tune with measured reports**
 
-During tuning, print a compact table only on assertion failure. Change one coherent numeric group at a time, rerun the narrow cohort, and preserve probe/commit speed/payoff order, Fast quickest cadence, Heavy cleave slowest commitment, and Technical longest practical reach.
+During tuning, print a compact table only on assertion failure. Change one coherent numeric group at a time, rerun the narrow cohort, and preserve probe/commit speed/payoff order, Fast quickest cadence, Heavy cleave slowest commitment, Technical longest practical reach, and Heavy/Technical/Fast turn ordering. Use turn pairs or Fast defense displacement when geometry-miss rates create a style-specific spatial failure; do not try to hide a geometry defect by inflating HP/damage.
 
-- [ ] **Step 6: Verify and commit**
+- [ ] **Step 6: Freeze and review all post-tuning canonical hashes**
 
-Run: `npx vitest run src/simulation/balance.test.ts src/content/mvpSeries.test.ts src/simulation/series.test.ts`
+Only after every cohort passes, inspect representative traces and record final literals in four existing places: at least three duel seeds in `encounter.test.ts`, the 100-FFA hash in `encounterCapacity.test.ts`, one adapter duel in `battle.test.ts`, and the full `Aquila/Nerva/Brutus` lineup in `series.test.ts`. Assertions use `formatTraceHash` and eight-character lowercase hex. Re-run the trace viewer/report before accepting each new literal; never copy values blindly from a failing assertion. Task 19 later reuses the final adapter-duel literal for the Chromium cross-runner check, so no later content tuning is allowed without repeating this step.
+
+- [ ] **Step 7: Verify and commit**
+
+Run: `npx vitest run src/simulation/balance.test.ts src/content/mvpSeries.test.ts src/simulation/encounter.test.ts src/simulation/encounterCapacity.test.ts src/simulation/battle.test.ts src/simulation/series.test.ts`
 
 Expected: PASS across fixed cohorts and golden lineups.
 
@@ -1104,42 +1198,36 @@ Run: `npm test`
 Expected: PASS.
 
 ```bash
-git add src/simulation/balance.test.ts src/content/mvpSeries.ts src/content/mvpSeries.test.ts src/content/combatStyles.ts src/content/combatStyles.test.ts src/simulation/series.test.ts
+git add src/simulation/balance.test.ts src/content/mvpSeries.ts src/content/mvpSeries.test.ts src/content/combatStyles.ts src/content/combatStyles.test.ts src/simulation/encounter.test.ts src/simulation/encounterCapacity.test.ts src/simulation/battle.test.ts src/simulation/series.test.ts
 git commit -m "balance: tune readable combat cohorts"
 ```
 
 ---
 
-### Task 13: Migrate Feed, Cards, Runtime Batches, and Render Snapshots
+### Task 14: Migrate Runtime Event Batches and Render Snapshots
 
 **Files:**
-- Modify: `src/presentation/battleFeed.ts`
-- Modify: `src/presentation/battleFeed.test.ts`
-- Modify: `src/presentation/SeriesView.ts`
 - Modify: `src/main.ts`
-- Modify: `src/style.css`
 - Modify: `tests/smoke.spec.ts`
 
 **Interfaces:**
-- Feed resolves combatant IDs through the active duel descriptor/state and retains eight entries.
 - Runtime owns `{ previousBattle, currentBattle, alpha }` render snapshots plus new event batches; simulation remains integer-only.
 
-- [ ] **Step 1: Write exhaustive failing feed tests**
+- [ ] **Step 1: Write a failing render-snapshot lifecycle test**
 
 ```ts
-const names = { 'home.brutus': 'Brutus', 'away.drusus': 'Drusus' }
-expect(formatEncounterEvent(blockedEvent, names)).toContain('Brutus')
-expect(formatEncounterEvent(blockedEvent, names)).toContain('Drusus')
-expect(formatBattleFeed(events, names)).toHaveLength(8)
+await startSeededFirstBout(page)
+await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(10))
+expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState())).toMatchObject({
+  previousTick: 9,
+  currentTick: 10,
+  paused: true,
+})
 ```
 
-Map every event kind. Combine block plus adjacent damage into one readable feed entry; distinguish accuracy/geometry/target-unavailable miss, evade, parry/counter, failed defense, critical, defeat, and finish. Movement events produce no feed row.
+Also assert next-bout/rematch initializes both ticks to zero and no event batch leaks from the prior bout.
 
-- [ ] **Step 2: Replace side reads in series cards**
-
-Use `fighterBySide(activeBattle, side)` or descriptor selectors. Planning cards show HP, Power, Accuracy, Defense, Critical and keep the visible counter rule. Delete Attack Interval. Preserve all existing phase/focus/live-region semantics.
-
-- [ ] **Step 3: Track tick snapshots and event batches in the runtime**
+- [ ] **Step 2: Track tick snapshots and event batches in the runtime**
 
 ```ts
 interface BattleRenderFrame {
@@ -1152,38 +1240,43 @@ interface BattleRenderFrame {
 
 Before each fixed tick assign current to previous, advance one tick, and retain only that transition's new event slice for presentation consumers. Set `alpha = accumulator / tickDuration`; initialize both snapshots from tick 0 at bout start and reset both on next bout/rematch. The battle adapter may still own the complete feed log.
 
-- [ ] **Step 4: Update the test API with a canonical hash selector**
+`previous` and `current` are immutable state references. Never `structuredClone` them: unchanged nested catalog/event structures must retain structural sharing, and presentation never mutates either snapshot.
 
-Keep all existing methods and add only:
+- [ ] **Step 3: Add narrow deterministic test selectors**
+
+Keep all existing methods and add:
 
 ```ts
 getActiveBattleTraceHash(): string | null
+getActiveCombatantPositions(): Readonly<Record<CombatantId, Vec2>>
+getRenderDebugState(): Readonly<{
+  previousTick: number | null
+  currentTick: number | null
+  alpha: number
+  paused: boolean
+}>
 ```
 
-Return the adapter's diagnostic hash. Do not expose spatial hashes or presentation objects.
+Return `formatTraceHash(adapter.traceHash)`, not the numeric field. Position/debug selectors return small copied plain records so Playwright movement/interpolation tests do not clone the entire `SeriesState` and combat catalog. Do not expose spatial hashes, rigs, or audio objects.
 
-- [ ] **Step 5: Update seeded flow helpers for 3600 ticks**
-
-Replace all Playwright helpers that advance 2700 ticks with `MAX_BOUT_TICKS` semantics through explicit `advanceTicks(3600)`. Keep planning/keyboard/seed/pause/speed/interstitial/summary/rematch assertions.
-
-- [ ] **Step 6: Verify and commit**
-
-Run: `npx vitest run src/presentation/battleFeed.test.ts`
-
-Expected: PASS.
+- [ ] **Step 4: Verify and commit**
 
 Run: `npm run test:e2e`
 
 Expected: existing product flow PASS before the visual rewrite.
 
+Run: `npm run build`
+
+Expected: PASS.
+
 ```bash
-git add src/presentation/battleFeed.ts src/presentation/battleFeed.test.ts src/presentation/SeriesView.ts src/main.ts src/style.css tests/smoke.spec.ts
-git commit -m "feat: integrate encounter events with the series UI"
+git add src/main.ts tests/smoke.spec.ts
+git commit -m "feat: expose immutable combat render frames"
 ```
 
 ---
 
-### Task 14: Build the Shared Procedural Fighter Rig and Pose Data
+### Task 15: Build the Shared Procedural Fighter Rig and Pose Data
 
 **Files:**
 - Create: `src/presentation/ProceduralFighter.ts`
@@ -1249,11 +1342,11 @@ export interface HumanoidPoseData {
 }
 ```
 
-Export exhaustive guard, locomotion, action phase, block/evade/parry/stagger, and controlled defeat data keyed by style/action. Every attack supplies opening/anticipation/contact/impact/recovery/return keys; the distinctive anticipation is present at windup start.
+Export exhaustive guard, locomotion, action phase, recognition-flinch (`defense-declined`), block/evade/parry/stagger, and controlled defeat data keyed by style/action. Every attack supplies opening/anticipation/contact/impact/recovery/return keys; the distinctive anticipation is present at windup start.
 
 - [ ] **Step 4: Test content completeness and silhouette metrics**
 
-Assert every style supplies all anchors, guard/locomotion/reaction/defeat keys and every catalog action supplies all required phase keys. Assert Heavy/Fast/Technical have distinct body/equipment extent tuples so single-color silhouettes cannot be identical.
+Assert every style supplies all anchors, guard/locomotion/recognition/reaction/defeat keys and every catalog action supplies all required phase keys. Assert Heavy/Fast/Technical have distinct body/equipment extent tuples so single-color silhouettes cannot be identical.
 
 - [ ] **Step 5: Verify and commit**
 
@@ -1268,7 +1361,7 @@ git commit -m "feat: add procedural gladiator rigs and poses"
 
 ---
 
-### Task 15: Implement Layered Pose Sampling, Gait, Impact Hold, and IK
+### Task 16: Implement Layered Pose Sampling, Gait, Impact Hold, and IK
 
 **Files:**
 - Create: `src/presentation/PoseController.ts`
@@ -1325,7 +1418,7 @@ export class PoseController {
 }
 ```
 
-Apply layers exactly: style guard; locomotion/facing; action curve; defense/evade/parry/stagger/defeat; grounding and capped weapon-arm IK. Named easing functions operate on pose data only.
+Apply layers exactly: style guard; locomotion/facing; action curve; recognition flinch/defense/evade/parry/stagger/defeat; grounding and capped weapon-arm IK. `defense-declined` produces only a small early torso/head recognition motion and never raises the full defense pose. Named easing functions operate on pose data only.
 
 - [ ] **Step 3: Drive gait from travelled simulation distance**
 
@@ -1348,7 +1441,7 @@ git commit -m "feat: animate deterministic combat poses"
 
 ---
 
-### Task 16: Replace Arena Rendering and Add Stable Group Framing
+### Task 17: Replace Arena Rendering and Add Stable Group Framing
 
 **Files:**
 - Create: `src/presentation/ArenaCamera.ts`
@@ -1395,9 +1488,9 @@ export class ArenaCamera {
 ```ts
 test('renders movement-rich encounter combat', async ({ page }) => {
   await startSeededFirstBout(page)
-  const before = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.combatants)
+  const before = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveCombatantPositions())
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(600))
-  const after = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.combatants)
+  const after = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveCombatantPositions())
   expect(after).not.toEqual(before)
   await expect(page.locator('canvas')).toHaveAttribute('data-rendered-combatants', '2')
 })
@@ -1416,6 +1509,8 @@ clearBout(): void
 ```
 
 Create/dispose rigs to match active encounter IDs; interpolate root position and normalized facing from previous/current by alpha; drive `PoseController`; process each new event once by ID. Map body/shield/weapon contact points to distinct effect geometry/position, add short non-obscuring flashes, and show weapon trails only in late windup/contact. Disable trails/flashes and reduce overshoot under `prefers-reduced-motion`.
+
+Under `import.meta.env.DEV` only, expose an arena debug snapshot containing rendered root positions, finite joint transforms, active effect IDs, camera state, and event cursor, plus a `renderActiveBattleAtAlpha(alpha)` test method that re-renders the current immutable previous/current pair at a supplied `0..1` alpha. It changes presentation only and must not advance or mutate simulation; production builds omit both methods.
 
 - [ ] **Step 5: Implement complete lifecycle reset and WebGL fallback**
 
@@ -1442,7 +1537,7 @@ git commit -m "feat: render readable procedural combat"
 
 ---
 
-### Task 17: Add Optional Event-Driven Combat Audio
+### Task 18: Add Optional Event-Driven Combat Audio
 
 **Files:**
 - Create: `src/presentation/CombatAudio.ts`
@@ -1471,7 +1566,7 @@ expect(backend.played.map(({ cue }) => cue)).not.toContain('weapon-whoosh-light'
 expect(backend.played.map(({ cue }) => cue)).toContain('body-hit')
 ```
 
-Cover all nine cue IDs, semantic body/shield/weapon mapping, light/heavy whoosh/footstep selection, event/threshold dedupe, eight-voice cap at ×1/×2, ×4 whitelist, pause fade/no replay, bout/rematch reset, mute, rejected enable, and missing backend.
+Cover all nine cue IDs, semantic body/shield/weapon mapping, light/heavy whoosh/footstep selection, event/threshold dedupe, eight-voice cap at ×1/×2, ×4 whitelist, pause fade/no replay, bout/rematch reset, mute, rejected enable, and missing backend. Add a handler-order fixture proving `backend.enable()` is invoked synchronously before the lineup-confirm command returns, even though its promise settles later.
 
 - [ ] **Step 2: Implement backend and controller contracts**
 
@@ -1502,7 +1597,7 @@ The browser backend synthesizes short oscillator/noise/filter/gain graphs or buf
 
 - [ ] **Step 3: Add the user-gesture and sound-control lifecycle**
 
-Extend `SeriesIntent` with `{ type: 'toggle-sound' }`. Lineup confirmation first attempts `enableAfterGesture`, then confirms the lineup even if audio rejects. Sound defaults on after the first successful eligible gesture; the visible control reads `Sound on/off`. Pause fades ordinary voices and stops scheduling; resume starts only from new events.
+Extend `SeriesIntent` with `{ type: 'toggle-sound' }`. In the lineup-confirm click handler, call `void combatAudio.enableAfterGesture()` synchronously as the first statement and without `await`; `AudioContext.resume()` must therefore begin inside the browser gesture. Handle settlement with `.then/.catch`, and run the synchronous series-confirm command immediately regardless of audio success. Sound defaults on after the first successful eligible gesture; the visible control reads `Sound on/off`. Pause fades ordinary voices and stops scheduling; resume starts only from new events.
 
 - [ ] **Step 4: Add dev/test-only audio debug support**
 
@@ -1529,7 +1624,7 @@ git commit -m "feat: add optional semantic combat audio"
 
 ---
 
-### Task 18: Complete Determinism, Visual Acceptance, Human Review, and Handoff
+### Task 19: Complete Determinism, Visual Acceptance, Human Review, and Handoff
 
 **Files:**
 - Create: `tests/combat-visuals.spec.ts`
@@ -1542,39 +1637,46 @@ git commit -m "feat: add optional semantic combat audio"
 - Produces browser/runtime equivalence evidence, deterministic key-pose fixtures, intentional baselines, and a filled human-review record.
 - Test-only pose fixtures may select a frozen trace/tick but cannot alter production simulation decisions or results.
 
-- [ ] **Step 1: Add render-rate and cross-runtime hash coverage**
+- [ ] **Step 1: Separate cross-runtime determinism from interpolation coverage**
 
 ```ts
-for (const refreshHz of [60, 120, 144]) {
-  test(`keeps combat deterministic at ${refreshHz} Hz rendering`, async ({ page }) => {
-    await page.addInitScript((hz) => { window.__TEST_REFRESH_HZ__ = hz }, refreshHz)
-    await startSeededFirstBout(page)
-    await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(1200))
-    expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveBattleTraceHash()))
-      .toBe(CANONICAL_CHROMIUM_DUEL_HASH)
-  })
-}
+test('matches the post-tuning Node trace hash in Chromium', async ({ page }) => {
+  await startSeededFirstBout(page)
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(1200))
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveBattleTraceHash()))
+    .toBe(CANONICAL_CHROMIUM_DUEL_HASH)
+})
+
+test('interpolates presentation without advancing simulation', async ({ page }) => {
+  await startSeededFirstBout(page)
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(240))
+  const tick = await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState().currentTick)
+  const atQuarter = await page.evaluate(() => window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha(0.25))
+  const atThreeQuarters = await page.evaluate(() => window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha(0.75))
+  expect(atThreeQuarters).not.toEqual(atQuarter)
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState().currentTick)).toBe(tick)
+})
 ```
 
-The same hash literal must be asserted in Vitest. Sample rendered root positions between ticks and assert non-zero interpolation without simulation-state changes.
+The hash is the final post-tuning eight-character literal from Task 13 and is asserted through `formatTraceHash` in Vitest. Do not add a fake refresh-rate global: synchronous `advanceTicks` is intentionally independent of `requestAnimationFrame`, while the second test directly verifies the only render-rate-sensitive property, alpha interpolation, without changing simulation state.
 
 - [ ] **Step 2: Add deterministic key-pose and reset fixtures**
 
-Freeze reviewed traces/ticks for Heavy guard/cleave, Fast burst/disengage, Technical measure/parry/counter, hit, block, stagger, and defeat. Assert second/third bout and rematch reset rig IDs, pose, trails, flashes, camera state, audio cursor, and event cursor. Assert reduced motion removes trail/flash while preserving anticipation/contact/result.
+Freeze reviewed traces/ticks for Heavy guard/cleave, Fast burst/disengage, Technical measure/parry/counter, recognition flinch after `defense-declined`, hit, block, stagger, and defeat. Through the dev-only arena snapshot, numerically assert expected finite joint transforms and effect/cursor state; these are the blocking pose checks. Assert second/third bout and rematch reset rig IDs, pose, trails, flashes, camera state, audio cursor, and event cursor. Assert reduced motion removes trail/flash while preserving anticipation/contact/result.
 
 - [ ] **Step 3: Capture intentional visual baselines**
 
-At 1280×820, capture each key pose and one complete safe two-fighter frame. Update only named tests:
+For every screenshot test, call `page.setViewportSize({ width: 1280, height: 820 })`, open `/?snapshot&seed=20260815`, advance explicitly to the frozen tick, assert `getRenderDebugState().paused === true`, render the selected fixed alpha, and only then capture each key pose and one complete safe two-fighter frame. Update only named tests:
 
 ```bash
 npx playwright test tests/combat-visuals.spec.ts --update-snapshots
 ```
 
-Review every diff for readable silhouette, spacing, visible anticipation/contact/recovery, grounded feet, non-obscuring effects, stable camera, and correct stat labels. Do not accept unrelated planning/interstitial/summary changes.
+Review every diff for readable silhouette, spacing, visible anticipation/contact/recovery, grounded feet, non-obscuring effects, stable camera, and correct stat labels. Numerical joint/effect assertions from Step 2 are authoritative; WebGL screenshots are review artifacts evaluated with the repository's pinned Chromium and existing `maxDiffPixelRatio`, not a substitute for transform checks. Do not accept unrelated planning/interstitial/summary changes.
 
 - [ ] **Step 4: Add the human-review evidence document before review**
 
-Create a table with reviewer aliases, prior rules knowledge, clip/style, exchange count, correctly labelled anticipation/defense-or-result/recovery count, style identification, winner explanation, foot sliding, contact, rhythm, camera, repetition, reduced motion, sound weight, and failure notes. Include the exact pass calculation:
+Create a table with reviewer aliases, prior rules knowledge, clip/style, exchange tag (`probe` or `committed`), exchange count, correctly labelled anticipation/defense-or-result/recovery count, recognition of `defense-declined`, style identification, winner explanation, foot sliding, contact, rhythm, camera, repetition, reduced motion, sound weight, and failure notes. Include the exact pass calculation:
 
 ```text
 exchange accuracy = fully correct exchange labels / reviewed committed exchanges
@@ -1586,11 +1688,11 @@ Do not pre-fill results or claim this gate from automated/model review.
 
 - [ ] **Step 5: Run the required human gate**
 
-Have at least two non-implementers review nine ordered-style ×1 bouts, one full ×2 series, storyboard, feed-hidden recording, isolated cues, and a complete audible bout. At least one reviewer starts without style rules. Record anonymized counts and short failure notes. If any threshold fails, return to the narrow responsible task, fix, rerun automated checks, regenerate only affected artifacts, and repeat review.
+Have at least two non-implementers review nine ordered-style ×1 bouts, one full ×2 series, storyboard, feed-hidden recording, isolated cues, and a complete audible bout. At least one reviewer starts without style rules. Score the 75% anticipation metric on committed exchanges; record probes separately for visible resolution/recovery because the design does not promise human-readable probe anticipation. Record anonymized counts and short failure notes. If any threshold fails, return to the narrow responsible task, fix, rerun automated checks, regenerate only affected artifacts, and repeat review.
 
 - [ ] **Step 6: Update README with the final architecture and controls**
 
-Document movement-rich style identities, fixed-tick determinism, seed reproduction, sound/pause/×1/×2/×4 behavior, encounter-vs-duel adapter boundary, current 1v1 UI versus tested 100-FFA foundation, test commands, informational benchmark, audio debug dev query, and human-review requirement. State that future skill/perks modify decision scoring/tagged parameters in simulation, not rendering.
+Document movement-rich style identities, fixed-tick determinism, seed reproduction, sound/pause/×1/×2/×4 behavior, encounter-vs-duel adapter boundary, current 1v1 UI, test commands, informational benchmark, audio debug dev query, and human-review requirement. State explicitly that the 100-FFA fixture is a deterministic/structural regression surface for the kernel, not a prototype of readable mass-battle behavior: engagement slots, dogpile prevention, and group tactics remain future work. State that future skill/perks modify decision scoring/tagged parameters in simulation, not rendering.
 
 - [ ] **Step 7: Run fresh final verification**
 
@@ -1604,7 +1706,7 @@ Expected: production TypeScript/Vite build PASS.
 
 Run: `npm run test:e2e`
 
-Expected: all existing product-flow, lifecycle, deterministic render-rate/hash, reduced-motion, audio-debug-dev, context-loss, key-pose, and screenshot tests PASS.
+Expected: all existing product-flow, lifecycle, cross-runtime hash, alpha-interpolation, reduced-motion, audio-debug-dev, context-loss, key-pose, and screenshot tests PASS.
 
 Run: `npm run check`
 
@@ -1612,7 +1714,7 @@ Expected: repeats the complete official sequence successfully from a clean proce
 
 Run: `git status --short`
 
-Expected: only intentional Task 18 docs/tests/baselines remain; existing review files remain unstaged.
+Expected: only intentional Task 19 docs/tests/baselines remain; existing review files remain unstaged.
 
 - [ ] **Step 8: Commit acceptance artifacts**
 
@@ -1630,11 +1732,11 @@ If Playwright emits platform-suffixed baseline names, replace the five names abo
 
 ## Final Review Checklist
 
-- [ ] Search for forbidden leftovers: `rg -n "attackIntervalTicks|approach-started|deriveSideSeed|LEGACY_ATTACK|Math\\.(random|sin|cos|tan|atan|asin|acos|pow|hypot)" src` returns no production simulation hits.
+- [ ] Search for forbidden leftovers: `rg -n "attackIntervalTicks|approach-started|deriveSideSeed|LEGACY_ATTACK|Math\\.(random|sin|cos|tan|atan|asin|acos|pow|hypot)" src/simulation` returns no production simulation hits.
 - [ ] Search kernel identity: `rg -n "FighterSide|'home'|'away'" src/simulation/{spatialHash,movement,combatActions,combatDecision,encounter}.ts` returns no hits.
 - [ ] `EncounterState` has no event log, spatial hash, `Map`, functions, render, or audio objects.
 - [ ] All event IDs and action instance IDs are unique and deterministic; ledgers stay bounded by live threats.
-- [ ] Shuffled 100-actor input, distant actor, five-threat defense, sparse pair counters, and 600-tick FFA all pass.
+- [ ] Shuffled 100-actor input, distant actor, five-threat defense, sparse/dense pair counters, and 600-tick FFA all pass.
 - [ ] Fixed roster/equal-stat balance cohorts pass unchanged seed ranges and bands.
 - [ ] Series planning, three bouts, interstitials, summary, rematch, seed, pause, and speed behavior remain intact.
 - [ ] All styles visibly move between exchanges and have distinct approach/exit rhythm, defenses, silhouettes, and equipment.
@@ -1646,6 +1748,6 @@ If Playwright emits platform-suffixed baseline names, replace the five names abo
 
 Before Task 1, use `superpowers:using-git-worktrees` to create an isolated implementation worktree. Execute one task and one commit at a time with `superpowers:subagent-driven-development` (recommended for this long plan) or `superpowers:executing-plans`; run the stated review gate before moving on.
 
-Tasks 1–13 establish the deterministic playable combat and must be reviewed before presentation work begins. Tasks 14–17 may then proceed in order because pose, arena, and audio consume the frozen simulation/event contract. Task 18 cannot be declared complete until the external human-review gate is actually performed.
+Tasks 1–13 establish and tune the deterministic playable combat; freeze and review the simulation/event contract after Task 13. Task 14 is the first presentation/runtime slice on that frozen contract, and Tasks 15–18 then build rigs, poses, arena, and audio in order. Task 19 cannot be declared complete until the external human-review gate is actually performed.
 
-After the fresh Task 18 verification, use `superpowers:verification-before-completion`, then `superpowers:requesting-code-review`, and finally `superpowers:finishing-a-development-branch` for integration.
+After the fresh Task 19 verification, use `superpowers:verification-before-completion`, then `superpowers:requesting-code-review`, and finally `superpowers:finishing-a-development-branch` for integration.
