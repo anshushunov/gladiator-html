@@ -1870,6 +1870,36 @@ describe('advanceEncounterTick: motion diagnostics -- velocity/travelledDistance
     expect(next.combatants.v.velocity.z).toBeCloseTo(0, 9)
     expect(next.combatants.v.velocity).toEqual({ x: dx * 60, z: dz * 60 })
   })
+
+  it('a combatant that moves in phase 8 and is defeated in phase 9 still has that final movement captured, not frozen at stale values (Task 9 review round 3 regression)', () => {
+    // `applyTickMotionDiagnostics` used to filter on *end-of-tick* status,
+    // which is already 'defeated' for a fighter phase 9 just killed --
+    // permanently skipping it forever after, since `resolveMovementConstraints`
+    // no longer writes these fields itself. The fix filters on start-of-tick
+    // status instead: this fighter was active for phase 8's movement and that
+    // motion must be captured once, even though it dies later this same tick.
+    const state = contactFixture({
+      actorArchetype: 'fast',
+      targetArchetype: 'fast',
+      actionId: 'fast-slash', // round(20*0.75*1.00)=15, enough to defeat a 1-hp target
+      actorPosition: { x: 0, z: 0 },
+      targetPosition: { x: 1.0, z: 0 },
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9, // no crit: an ordinary hit is enough to prove the regression
+      targetOverrides: { hp: 1, facing: { x: 0, z: 1 }, locomotionIntent: 'advance' },
+    })
+    const startTravelledDistance = state.combatants.target.travelledDistance
+
+    const { state: next, events } = advanceEncounterTick(state)
+
+    expect(events.some((event) => event.type === 'fighter-defeated')).toBe(true)
+    expect(next.combatants.target.status).toBe('defeated')
+    // fast's forwardUnitsPerSecond is 2.4: this tick's own phase-8 'advance' displacement, not zero/stale.
+    expect(next.combatants.target.velocity.z).toBeCloseTo(2.4, 9)
+    expect(next.combatants.target.velocity.x).toBeCloseTo(0, 9)
+    expect(next.combatants.target.travelledDistance).toBeGreaterThan(startTravelledDistance)
+  })
 })
 
 describe('advanceEncounterTick: Fast evade windup dash (carried forward from Task 8)', () => {

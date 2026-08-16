@@ -1438,6 +1438,15 @@ function resolveMovementConstraints(
  * same tick all get one correct combined value. `travelledDistance` adds
  * that same total magnitude once, so successive ticks sum real displacement
  * without double-counting a single tick's motion across two calls.
+ *
+ * Computes for every combatant *active at the start of the tick*
+ * (`start[id].status`), not every combatant active at the end: a combatant
+ * defeated during phase 9 still moved during phase 8 this same tick and that
+ * final motion must be captured once, even though `combatants[id].status` is
+ * already `'defeated'` by the time this runs. Since `resolveMovementConstraints`
+ * no longer writes these fields itself, this is their only writer -- filtering
+ * on end-of-tick status would freeze a freshly-defeated fighter's diagnostics
+ * at the previous tick's stale values forever.
  */
 function applyTickMotionDiagnostics(
   start: Readonly<Record<CombatantId, FighterCombatState>>,
@@ -1447,9 +1456,9 @@ function applyTickMotionDiagnostics(
   const next: Record<CombatantId, FighterCombatState> = { ...combatants }
 
   for (const id of combatantIds) {
-    const combatant = combatants[id]
-    if (combatant.status !== 'active') continue
     const startCombatant = start[id]
+    if (startCombatant.status !== 'active') continue // start-of-tick status, not end-of-tick -- see doc comment above
+    const combatant = combatants[id]
     const dx = combatant.position.x - startCombatant.position.x
     const dz = combatant.position.z - startCombatant.position.z
     next[id] = {
