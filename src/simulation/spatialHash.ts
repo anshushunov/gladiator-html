@@ -99,21 +99,20 @@ export function queryRadius(index: SpatialHash, center: Readonly<Vec2>, radius: 
 }
 
 // Number of grid cells to scan outward from an entry's own cell (in each
-// axis) when collecting canonical neighbor pairs. The actual distance
-// threshold that defines a "neighboring" pair is 2 * cellSize rather than a
-// single cell size: this gives downstream consumers (target acquisition,
-// collision broad phase, the separation solver) a look-ahead margin so a
-// pair that is about to become relevant between rebuilds is still
-// discovered a tick or two early, instead of only once entities are already
-// touching.
-//
-// A 2-cell ring is the minimal ring that is *guaranteed* to contain every
-// entry within that 2 * cellSize threshold: grid quantization bounds the
-// cell-index gap between two positions by ceil(distance / cellSize), so any
-// pair within 2 * cellSize can differ by at most 2 cells on each axis.
-// Scanning fewer cells could silently miss a real neighbor; scanning more
-// would only add wasted lookups.
-const NEIGHBOR_CELL_RING = 2
+// axis) when collecting canonical neighbor pairs: a one-cell ring (3x3
+// block, `dx, dz ∈ [-1, 1]`). This is the design's normative rule — candidate
+// pairs come from "the same or directly adjacent occupied cells" — and it is
+// binding, not just a convenience: on Task 12's sparse 10x10 grid (spacing
+// 3.25) a one-cell ring costs 342 candidate checks per separation pass,
+// comfortably under the design's acceptance ceiling of 800, while a wider
+// ring blows past it (a two-cell ring measured at 918 there). Correctness
+// still holds for `cellSize`-range contact detection: since `cellSize` is
+// chosen just above the longest contact range, any two entries within
+// `cellSize` of each other are guaranteed to be in the same or an adjacent
+// cell (grid quantization bounds the cell-index gap by
+// `ceil(distance / cellSize)`), so a one-cell ring never misses a true
+// contact-range neighbor.
+const ADJACENT_CELL_RING = 1
 
 /**
  * Collects the canonical (lower-id, higher-id) neighbor pairs across the
@@ -121,26 +120,28 @@ const NEIGHBOR_CELL_RING = 2
  * pairs were distance-tested along the way.
  *
  * Counting rule: entries are visited in sorted-id order. For each entry,
- * every entry found in its own cell or any cell within `NEIGHBOR_CELL_RING`
- * cells (a 5x5 block) is a *candidate* — but it is only examined
+ * every entry found in its own cell or a directly adjacent cell (the
+ * `ADJACENT_CELL_RING` 3x3 block) is a *candidate* — but it is only examined
  * (`candidateChecks` incremented, one squared-distance test performed) when
  * the candidate's id is strictly greater than the current entry's id. That
  * ordering rule is what keeps every unordered pair counted exactly once: the
  * pair is only ever visited from the lower-id side, never from both sides,
  * and never against itself. A pair becomes part of `pairKeys` (in
- * `"lowerId|higherId"` form) only when its actual squared distance is
- * strictly less than `(2 * cellSize)^2` — so `candidateChecks` is always
- * greater than or equal to `pairKeys.length`, since every returned pair was
- * necessarily examined, but not every examined pair was close enough to
- * return.
+ * `"lowerId|higherId"` form) only when its actual squared distance is at
+ * most `cellSize^2` — so `candidateChecks` is always greater than or equal
+ * to `pairKeys.length`, since every returned pair was necessarily examined,
+ * but not every examined pair (e.g. two entries in adjacent cells but near
+ * opposite far edges) was close enough to return. Entries more than one
+ * cell apart are never examined at all — same-or-adjacent-occupied-cells is
+ * the broad phase's whole point, and is a bound the rest of the design
+ * relies on to stay within its per-pass candidate budget.
  */
 export function collectCanonicalNeighborPairs(index: SpatialHash): {
   pairKeys: readonly string[]
   candidateChecks: number
 } {
   const { cellSize, cells } = index
-  const neighborRange = 2 * cellSize
-  const neighborRangeSq = neighborRange * neighborRange
+  const cellSizeSq = cellSize * cellSize
 
   const allEntries: SpatialEntry[] = []
   for (const key of Object.keys(cells)) allEntries.push(...cells[key])
@@ -153,8 +154,8 @@ export function collectCanonicalNeighborPairs(index: SpatialHash): {
     const cellX = Math.floor(entry.position.x / cellSize)
     const cellZ = Math.floor(entry.position.z / cellSize)
 
-    for (let dx = -NEIGHBOR_CELL_RING; dx <= NEIGHBOR_CELL_RING; dx += 1) {
-      for (let dz = -NEIGHBOR_CELL_RING; dz <= NEIGHBOR_CELL_RING; dz += 1) {
+    for (let dx = -ADJACENT_CELL_RING; dx <= ADJACENT_CELL_RING; dx += 1) {
+      for (let dz = -ADJACENT_CELL_RING; dz <= ADJACENT_CELL_RING; dz += 1) {
         const bucket = cells[`${cellX + dx},${cellZ + dz}`]
         if (!bucket) continue
 
@@ -164,7 +165,7 @@ export function collectCanonicalNeighborPairs(index: SpatialHash): {
           candidateChecks += 1
           const ddx = candidate.position.x - entry.position.x
           const ddz = candidate.position.z - entry.position.z
-          if (ddx * ddx + ddz * ddz < neighborRangeSq) {
+          if (ddx * ddx + ddz * ddz <= cellSizeSq) {
             pairKeys.push(`${entry.id}|${candidate.id}`)
           }
         }

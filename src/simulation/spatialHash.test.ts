@@ -3,7 +3,7 @@ import { buildSpatialHash, collectCanonicalNeighborPairs, queryRadius, spatialCe
 
 describe('spatial hash', () => {
   const entries = [
-    { id: 'c', position: { x: 6.4, z: 0 } },
+    { id: 'c', position: { x: 5.0, z: 0 } },
     { id: 'a', position: { x: 0, z: 0 } },
     { id: 'b', position: { x: 2.9, z: 0 } },
   ]
@@ -90,6 +90,20 @@ describe('spatial hash', () => {
     expect(pairKeys).toEqual([...pairKeys].sort())
     const found = queryRadius(index, { x: 0, z: 0 }, 100)
     expect(found).toEqual([...found].sort())
+  })
+
+  it('does not examine or return a pair whose cells are more than one apart, even if closer entries would be within range at a coarser ring', () => {
+    // Regression for the defect the plan owner caught: entries two cells
+    // apart (here cellX 0 and cellX 2, cellSize 3.2) must contribute neither
+    // a candidateCheck nor a pairKey, no matter their raw distance. The
+    // broad phase only ever looks at the same or directly adjacent
+    // (one-cell-ring) occupied cells.
+    const farApart = [
+      { id: 'x', position: { x: 0, z: 0 } },
+      { id: 'y', position: { x: 6.4, z: 0 } },
+    ]
+    const index = buildSpatialHash(farApart, 3.2)
+    expect(collectCanonicalNeighborPairs(index)).toEqual({ pairKeys: [], candidateChecks: 0 })
   })
 
   it('never returns a Set from its public API', () => {
