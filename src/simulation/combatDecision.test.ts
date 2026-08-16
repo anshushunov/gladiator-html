@@ -719,6 +719,113 @@ describe('anti-stall suppression yields to movement that restores action legalit
   })
 })
 
+// ---------------------------------------------------------------------------
+// design.md:504 lists "arena path" among the candidate filters. It was never
+// implemented for locomotion, so an intent whose displacement cannot execute
+// stayed in the pool, won on weight, and resolved to a no-op. Task 13 measured
+// the cost: two fighters at the separation floor kept picking advance/pressure
+// at weight 24 apiece over the heavy-cleave at weight 7 that would actually
+// have resolved the exchange -- one attack started across a 1077-tick stall.
+// ---------------------------------------------------------------------------
+
+describe('locomotion candidates are filtered by arena path', () => {
+  const duel = { radius: 6.5, lateralLimit: 2.5, minimumSeparation: 0.9, movementPolicy: 'ordered-pair' as const, orderedPair: ['self', 'foe'] as const }
+
+  it('drops forward intents when the target is already at the separation floor', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 } })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0.9, z: 0 } })
+    const context = makeContext({ self, target, arena: duel })
+
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    const intents = scored.filter((c) => c.decision.type === 'locomotion').map((c) => (c.decision as { locomotionIntent: string }).locomotionIntent)
+    expect(intents).not.toContain('advance')
+    expect(intents).not.toContain('pressure')
+    // ...and the attack that can actually resolve the exchange survives.
+    expect(scored.some((c) => c.decision.type === 'action')).toBe(true)
+  })
+
+  // A style whose preferred band sits BELOW the separation floor, so `advance`
+  // earns its "+12 reduces distance error" bonus at the floor and cannot be
+  // confused with the ordinary weight filter: anything missing here was
+  // removed by the arena-path filter, not scored away.
+  const closerStyle: CombatStyleDefinition = {
+    archetype: 'heavy',
+    locomotion: COMBAT_STYLES.styles.heavy.locomotion,
+    preferredRange: { min: 0.3, max: 0.6 },
+    attackActionIds: [],
+    defenseActionId: 'heavy-guard',
+    baseWeights: { advance: 12, pressure: 12 },
+  }
+
+  it('keeps a forward intent that can still produce displacement, and drops the one that cannot', () => {
+    // Facing straight at a target already at the floor: nothing to gain, the
+    // separation constraint eats the whole step.
+    const blocked = makeContext({
+      self: fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 } }),
+      target: fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0.9, z: 0 } }),
+      arena: duel,
+    })
+    expect(scoreCombatCandidates(blocked, closerStyle)).toEqual([])
+
+    // Same distance, but facing 90 degrees off: the step is tangential, so it
+    // produces real displacement and must stay legal.
+    const oblique = makeContext({
+      self: fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 0, z: 1 } }),
+      target: fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0.9, z: 0 } }),
+      arena: duel,
+    })
+    expect(scoreCombatCandidates(oblique, closerStyle).some(
+      (c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'advance',
+    )).toBe(true)
+  })
+
+  it('drops an intent the arena boundary blocks outright', () => {
+    // Facing the lateral limit from hard against it: advancing cannot move.
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 2.5 }, facing: { x: 0, z: 1 } })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0, z: 4 } })
+    const context = makeContext({ self, target, arena: duel })
+
+    const intents = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+      .filter((c) => c.decision.type === 'locomotion')
+      .map((c) => (c.decision as { locomotionIntent: string }).locomotionIntent)
+    expect(intents).not.toContain('advance')
+    expect(intents).not.toContain('pressure')
+  })
+
+  it('still returns a legal decision when every locomotion path and every action is blocked', () => {
+    // The guard case: a style that authors only forward intents, pressed
+    // against a target already at the separation floor. Every candidate is
+    // path-blocked and there are no actions, so `scoreCombatCandidates` is
+    // empty AND the fallback's directional priority is exhausted. It must not
+    // answer with a blocked intent; `hold-range` -- zero displacement, always
+    // executable -- is the only truthful answer left.
+    const forwardOnlyStyle: CombatStyleDefinition = { ...closerStyle }
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 } })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0.9, z: 0 } })
+    const context = makeContext({ self, target, arena: duel })
+
+    expect(scoreCombatCandidates(context, forwardOnlyStyle)).toEqual([])
+    expect(chooseCombatDecision(context, forwardOnlyStyle, { selection: 0.5, interval: 0.5 })).toEqual({
+      type: 'locomotion',
+      locomotionIntent: 'hold-range',
+    })
+  })
+
+  it('prefers a real escape over holding when one exists', () => {
+    // Same jam, but the style also authors `retreat`, which is not blocked --
+    // the fallback must take it rather than settling for `hold-range`.
+    const withRetreat: CombatStyleDefinition = { ...closerStyle, preferredRange: { min: 3, max: 4 }, baseWeights: { advance: 12, retreat: 0 } }
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 } })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0.9, z: 0 } })
+    const context = makeContext({ self, target, arena: duel })
+
+    expect(chooseCombatDecision(context, withRetreat, { selection: 0.5, interval: 0.5 })).toEqual({
+      type: 'locomotion',
+      locomotionIntent: 'retreat',
+    })
+  })
+})
+
 describe('chooseCombatDecision: proportional selection among positive weights', () => {
   it('selects the candidate whose cumulative weight band contains the selection roll', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })

@@ -213,8 +213,10 @@ it('produces at least three distinct scores across all six lineups', () => {
     return `${score.home}-${score.away}`
   }))
   expect(scores.size).toBeGreaterThanOrEqual(3)
-  // Post-defect-fix, pre-tuning literals (see the GATE note above). `'3-0'` is
-  // gone: no lineup sweeps any more, which is the design's golden-scenario
-  // requirement. Task 13's content tuning will move these again.
-  expect(scores).toEqual(new Set(['2-1', '1-2', '0-3']))
+  // Post-defect-fix, pre-tuning literals (see the GATE note above). The `'3-0'`
+  // here is `brutus/nerva/aquila`, NOT the all-counter lineup, which is
+  // exactly the shape the design's golden scenario asks for: the all-counter
+  // ordering must not sweep, and "at least one different lineup wins 2-1 or
+  // 3-0". Task 13's content tuning will move these again.
+  expect(scores).toEqual(new Set(['2-1', '3-0', '1-2']))
 })

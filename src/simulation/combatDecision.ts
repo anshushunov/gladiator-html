@@ -328,6 +328,7 @@ function ordinaryLocomotionCandidates(
   for (const key of Object.keys(style.baseWeights)) {
     if (!isLocomotionIntent(key)) continue
     if (key === 'burst-in' && (currentDistance < BURST_IN_MIN_RANGE || currentDistance > BURST_IN_MAX_RANGE)) continue
+    if (!hasArenaPath(context, style, key)) continue
     if (stale && STALE_SUPPRESSED_INTENTS.has(key)) {
       if (!mayUnsuppress) continue
       if (!movementRestoresAction(context, style, key, modifiers)) continue
@@ -375,6 +376,12 @@ function ordinaryLocomotionCandidates(
 /** Ticks per second. Declared locally, matching `encounter.ts`'s own private copy, so this module stays independent of the duel adapter that also publishes it. */
 const LOOKAHEAD_TICKS_PER_SECOND = 60
 
+/** One tick: the unit in which a displacement either executes or does not (see `hasArenaPath`). */
+const PATH_PROBE_TICKS = 1
+
+/** Below this a projected displacement is treated as none at all. Matches `movement.ts`'s own `EPSILON`. */
+const PATH_EPSILON = 1e-9
+
 /** The action candidates this combatant could actually choose right now: legal, and scored strictly positive. */
 function viableActionCandidates(
   context: CombatDecisionContext,
@@ -407,13 +414,79 @@ function viableActionCandidates(
  * on the whole collection's simultaneous movement, and over-modelling it would
  * make this predicate depend on state the decision seam does not own.
  */
-function projectedPosition(context: CombatDecisionContext, style: CombatStyleDefinition, intent: LocomotionIntent): Vec2 {
+/**
+ * Where `intent` would actually put this combatant after `ticks`, once the
+ * constraints real movement obeys have been applied.
+ *
+ * The arena part goes through `movement.ts`'s own `clampToArena`, the exact
+ * projection locomotion uses -- `f8f73a5` exists because a hand-rolled version
+ * of that step gave the wrong answer.
+ *
+ * The separation part deliberately models the TARGET AS FIXED, which is not
+ * what the real three-pass solver does (it splits a pair's overlap correction
+ * between both sides). That difference is the point rather than a shortcut: a
+ * combatant deciding what to do cannot assume its opponent will yield ground,
+ * and assuming it does is precisely what makes a blocked `advance` look
+ * viable. Modelling the opponent as immovable answers the question this
+ * predicate is actually asking -- "can I move, on my own?" -- and errs toward
+ * calling a movement blocked, which is the safe direction for a filter.
+ * Separation against combatants other than the target is not modelled at all;
+ * it depends on the whole collection's simultaneous movement, which the
+ * decision seam does not own.
+ */
+function projectedPosition(
+  context: CombatDecisionContext,
+  style: CombatStyleDefinition,
+  intent: LocomotionIntent,
+  ticks: number,
+): Vec2 {
   const step = intentDisplacement(intent, style.locomotion, context.self.facing, LOOKAHEAD_TICKS_PER_SECOND)
-  const horizon = DECISION_INTERVAL_RANGES[style.archetype].max
+  const arena = context.arena
+  const moved = clampToArena({ x: context.self.position.x + step.x * ticks, z: context.self.position.z + step.z * ticks }, arena)
+
+  const dx = moved.x - context.target.position.x
+  const dz = moved.z - context.target.position.z
+  const distance = Math.sqrt(dx * dx + dz * dz)
+  if (distance >= arena.minimumSeparation) return moved
+
+  // Push back out to the separation floor along the line from the target,
+  // falling back to the actor's facing for exactly coincident roots (the same
+  // degenerate case `movement.ts` handles with a fixed direction).
+  const unit = distance > PATH_EPSILON
+    ? { x: dx / distance, z: dz / distance }
+    : { x: context.self.facing.x, z: context.self.facing.z }
   return clampToArena(
-    { x: context.self.position.x + step.x * horizon, z: context.self.position.z + step.z * horizon },
-    context.arena,
+    { x: context.target.position.x + unit.x * arena.minimumSeparation, z: context.target.position.z + unit.z * arena.minimumSeparation },
+    arena,
   )
+}
+
+/**
+ * design.md:504 lists the candidate filters: "Candidates are filtered for
+ * state, range reachable through authored action root travel, ARENA PATH,
+ * forced behavior, and style." The arena-path clause was never implemented for
+ * locomotion, which filtered only on `baseWeights` membership, staleness and
+ * `burst-in`'s range band.
+ *
+ * A locomotion intent whose displacement cannot physically execute is not a
+ * legal candidate, and letting it stay in the pool is not harmless: it wins on
+ * weight and then resolves to a no-op. Task 13 measured the cost -- two
+ * fighters at the separation floor kept selecting `advance`/`pressure` at
+ * weight 24 apiece, neither of which could move them, over the `heavy-cleave`
+ * at weight 7 that would have resolved the exchange, producing exactly one
+ * attack across a 1077-tick stall.
+ *
+ * The probe is one tick, the unit in which a displacement either executes or
+ * does not. A longer horizon would conflate "blocked" with "blocked
+ * eventually". `hold-range` authors zero displacement, so it is always legal
+ * and is the guaranteed terminal answer when everything else is blocked.
+ */
+function hasArenaPath(context: CombatDecisionContext, style: CombatStyleDefinition, intent: LocomotionIntent): boolean {
+  if (intent === 'hold-range') return true
+  const moved = projectedPosition(context, style, intent, PATH_PROBE_TICKS)
+  const dx = moved.x - context.self.position.x
+  const dz = moved.z - context.self.position.z
+  return Math.sqrt(dx * dx + dz * dz) > PATH_EPSILON
 }
 
 function movementRestoresAction(
@@ -422,7 +495,7 @@ function movementRestoresAction(
   intent: LocomotionIntent,
   modifiers: readonly DecisionModifier[],
 ): boolean {
-  const moved = projectedPosition(context, style, intent)
+  const moved = projectedPosition(context, style, intent, DECISION_INTERVAL_RANGES[style.archetype].max)
   const hypothetical: CombatDecisionContext = { ...context, self: { ...context.self, position: moved } }
   return viableActionCandidates(hypothetical, style, modifiers).length > 0
 }
@@ -726,6 +799,7 @@ function deterministicFallbackDecision(
     const stale = isLocalResolutionStale(context.tick, context.self.lastResolutionTick)
     for (const intent of priority) {
       if (stale && STALE_SUPPRESSED_INTENTS.has(intent)) continue
+      if (!hasArenaPath(context, style, intent)) continue
       return { type: 'locomotion', locomotionIntent: intent }
     }
   }
@@ -741,7 +815,7 @@ function deterministicFallbackDecision(
     let best: { intent: LocomotionIntent; margin: number } | undefined
     for (const candidate of ordinary) {
       if (candidate.type !== 'locomotion') continue
-      const moved = projectedPosition(context, style, candidate.locomotionIntent)
+      const moved = projectedPosition(context, style, candidate.locomotionIntent, DECISION_INTERVAL_RANGES[style.archetype].max)
       const movedMargin = arenaBoundaryMargin(context.arena, moved)
       if (movedMargin > (best?.margin ?? margin)) best = { intent: candidate.locomotionIntent, margin: movedMargin }
     }
