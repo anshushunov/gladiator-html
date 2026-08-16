@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { createRandom, deriveBoutSeed, deriveSideSeed, drawAttackRolls, nextRandom } from './random'
+import {
+  createRandom,
+  deriveBoutSeed,
+  deriveSideSeed,
+  drawAttackRolls,
+  nextRandom,
+  createCombatantRandomState,
+  drawPair,
+  derivedUnitValue,
+  foldTraceHash,
+  formatTraceHash,
+} from './random'
 
 describe('seeded random', () => {
   it('repeats the same sequence for the same seed', () => {
@@ -48,5 +59,28 @@ describe('seeded random', () => {
     expect(drawn.rolls.block).toBe(block)
     expect(drawn.rolls.critical).toBe(critical)
     expect(drawn.next).toEqual(afterCritical)
+  })
+
+  it('creates independent combatant-local random streams', () => {
+    const streams = createCombatantRandomState(20260815, 'home.brutus')
+    expect(streams).toEqual(createCombatantRandomState(20260815, 'home.brutus'))
+    expect(streams.decision).not.toEqual(streams.defense)
+    expect(streams.defense).not.toEqual(streams.contact)
+  })
+
+  it('draws a pair of consecutive values from a stream', () => {
+    const streams = createCombatantRandomState(20260815, 'home.brutus')
+    const [decisionRolls, nextDecision] = drawPair(streams.decision)
+    expect(decisionRolls).toHaveProperty('first')
+    expect(decisionRolls).toHaveProperty('second')
+    expect(nextDecision).toEqual(nextRandom(nextRandom(streams.decision)[1])[1])
+  })
+
+  it('derives a unit value without mutating a stream', () => {
+    expect(derivedUnitValue(7, 'tick:19:actor:3')).toBe(0.5615094522945583)
+  })
+
+  it('folds and formats trace hashes correctly', () => {
+    expect(formatTraceHash(foldTraceHash(0x811c9dc5, 'combat'))).toBe('1ce36e21')
   })
 })
