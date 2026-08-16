@@ -39,3 +39,25 @@ describe('simulation boundary', () => {
     expect(violations).toEqual([])
   })
 })
+
+// The collection-first encounter kernel never sees `home`/`away` duel
+// identity: that's a series/presentation concept the two-ID adapter
+// (`battle.ts`) maps onto sorted `CombatantId`s (see `encounter.ts`'s own
+// header comment). This scan is deliberately narrower than the boundary scan
+// above -- `battle.ts`, `series.ts`, and presentation legitimately use
+// `FighterSide`/`'home'`/`'away'` as the duel-adapter/UI concept it is.
+const KERNEL_IDENTITY_FILES: readonly string[] = ['./spatialHash.ts', './movement.ts', './combatActions.ts', './combatDecision.ts', './encounter.ts']
+const KERNEL_IDENTITY_FORBIDDEN_PATTERNS: readonly RegExp[] = [/\bFighterSide\b/, /'home'/, /"home"/, /'away'/, /"away"/]
+
+describe('kernel identity boundary', () => {
+  it('spatialHash, movement, combatActions, combatDecision, and encounter never reference FighterSide or home/away identity', () => {
+    const sources = import.meta.glob('./**/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+    const violations = KERNEL_IDENTITY_FILES.flatMap((path) => {
+      const source = sources[path]
+      if (source === undefined) throw new Error(`Kernel identity boundary check is missing expected file: ${path}`)
+      const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
+      return KERNEL_IDENTITY_FORBIDDEN_PATTERNS.filter((pattern) => pattern.test(code)).map((pattern) => `${path}: ${pattern}`)
+    })
+    expect(violations).toEqual([])
+  })
+})
