@@ -1,4 +1,4 @@
-import { compareArchetypes, comparisonDamageMultiplier, type FighterDefinition, type FighterSide, type MatchupComparison } from './fighters'
+import { compareArchetypes, comparisonDamageMultiplier, type Archetype, type FighterDefinition, type FighterSide, type MatchupComparison } from './fighters'
 import { createRandom, deriveSeed, deriveSideSeed, drawAttackRolls, nextRandom, type RandomState } from './random'
 
 export const TICKS_PER_SECOND = 60
@@ -7,6 +7,16 @@ export const MAX_BOUT_TICKS = 2700
 const MOVE_PER_TICK = 2.2 / TICKS_PER_SECOND
 const ATTACK_RANGE = 1.45
 const CRITICAL_MULTIPLIER = 1.5
+
+// Temporary bridge: the old instantaneous loop needs a per-fighter attack
+// cadence, but the final FighterDefinition schema no longer carries one.
+// This archetype-keyed lookup keeps that loop compiling and playable until
+// Task 11 deletes the loop entirely and replaces it with the encounter kernel.
+const LEGACY_ATTACK_INTERVAL_TICKS: Record<Archetype, number> = {
+  heavy: 54,
+  fast: 38,
+  technical: 44,
+}
 
 export type BattleFinishReason = 'defeat' | 'time-limit'
 export type BattlePhase = 'running' | 'finished'
@@ -116,16 +126,16 @@ export function advanceBattleTick(previous: BattleState): BattleState {
   }
 
   if (away.x - home.x <= ATTACK_RANGE) {
-    if (home.nextAttackTick === null) home.nextAttackTick = tick + home.definition.attackIntervalTicks
-    if (away.nextAttackTick === null) away.nextAttackTick = tick + away.definition.attackIntervalTicks
+    if (home.nextAttackTick === null) home.nextAttackTick = tick + LEGACY_ATTACK_INTERVAL_TICKS[home.definition.archetype]
+    if (away.nextAttackTick === null) away.nextAttackTick = tick + LEGACY_ATTACK_INTERVAL_TICKS[away.definition.archetype]
 
     const ready: FighterSide[] = []
     for (const side of ['home', 'away'] as const) {
       const fighter = fighters[side]
       if (fighter.status === 'active' && fighter.nextAttackTick !== null && fighter.nextAttackTick <= tick) ready.push(side)
     }
-    ready.sort((a, b) => fighters[a].definition.attackIntervalTicks - fighters[b].definition.attackIntervalTicks)
-    if (ready.length === 2 && fighters[ready[0]].definition.attackIntervalTicks === fighters[ready[1]].definition.attackIntervalTicks) {
+    ready.sort((a, b) => LEGACY_ATTACK_INTERVAL_TICKS[fighters[a].definition.archetype] - LEGACY_ATTACK_INTERVAL_TICKS[fighters[b].definition.archetype])
+    if (ready.length === 2 && LEGACY_ATTACK_INTERVAL_TICKS[fighters[ready[0]].definition.archetype] === LEGACY_ATTACK_INTERVAL_TICKS[fighters[ready[1]].definition.archetype]) {
       const [roll, next] = nextRandom(initiativeTieRandom)
       initiativeTieRandom = next
       if (roll >= 0.5) ready.reverse()
@@ -143,13 +153,13 @@ export function advanceBattleTick(previous: BattleState): BattleState {
       if (rolls.accuracy >= actor.definition.accuracy) {
         emit({ type: 'attack-missed', actorSide, targetSide })
       } else {
-        const blocked = rolls.block < target.definition.blockChance
+        const blocked = rolls.block < target.definition.defenseChance
         if (blocked) emit({ type: 'attack-blocked', actorSide, targetSide })
         const critical = !blocked && rolls.critical < actor.definition.criticalChance
         if (critical) emit({ type: 'critical-hit', actorSide, targetSide, multiplier: CRITICAL_MULTIPLIER })
 
         const comparison = actorSide === 'home' ? previous.comparison : invertComparison(previous.comparison)
-        const damage = calculateDamage({ baseDamage: actor.definition.damage, comparison, blocked, critical })
+        const damage = calculateDamage({ baseDamage: actor.definition.power, comparison, blocked, critical })
         target.hp = Math.max(0, target.hp - damage)
         emit({ type: 'damage-dealt', actorSide, targetSide, amount: damage, remainingHp: target.hp })
 
@@ -163,7 +173,7 @@ export function advanceBattleTick(previous: BattleState): BattleState {
           break
         }
       }
-      actor.nextAttackTick = tick + actor.definition.attackIntervalTicks
+      actor.nextAttackTick = tick + LEGACY_ATTACK_INTERVAL_TICKS[actor.definition.archetype]
     }
   }
 

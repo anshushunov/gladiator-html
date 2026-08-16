@@ -3,8 +3,8 @@ import { advanceBattleTick, advanceBattleTicks, calculateDamage, createBattle, M
 import type { FighterDefinition } from './fighters'
 import { nextRandom } from './random'
 
-const heavy: FighterDefinition = { id: 'heavy', name: 'Heavy', school: 'Test', archetype: 'heavy', maxHp: 100, damage: 10, attackIntervalTicks: 30, accuracy: 1, blockChance: 0, criticalChance: 0 }
-const fast: FighterDefinition = { id: 'fast', name: 'Fast', school: 'Test', archetype: 'fast', maxHp: 100, damage: 10, attackIntervalTicks: 30, accuracy: 1, blockChance: 0, criticalChance: 0 }
+const heavy: FighterDefinition = { id: 'heavy', name: 'Heavy', school: 'Test', archetype: 'heavy', maxHp: 100, power: 10, accuracy: 1, defenseChance: 0, criticalChance: 0 }
+const fast: FighterDefinition = { id: 'fast', name: 'Fast', school: 'Test', archetype: 'fast', maxHp: 100, power: 10, accuracy: 1, defenseChance: 0, criticalChance: 0 }
 const finished = (config: BattleConfig) => advanceBattleTicks(createBattle(config), MAX_BOUT_TICKS)
 
 describe('battle simulation', () => {
@@ -17,9 +17,9 @@ describe('battle simulation', () => {
   })
 
   it('applies ordered comparison damage and a one-point minimum', () => {
-    expect(calculateDamage({ baseDamage: 10, comparison: 'disadvantage', blocked: false, critical: false })).toBe(8)
+    expect(calculateDamage({ baseDamage: 10, comparison: 'disadvantage', blocked: false, critical: false })).toBe(9)
     expect(calculateDamage({ baseDamage: 10, comparison: 'neutral', blocked: false, critical: false })).toBe(10)
-    expect(calculateDamage({ baseDamage: 10, comparison: 'advantage', blocked: false, critical: false })).toBe(13)
+    expect(calculateDamage({ baseDamage: 10, comparison: 'advantage', blocked: false, critical: false })).toBe(11)
     expect(calculateDamage({ baseDamage: 2, comparison: 'disadvantage', blocked: true, critical: false })).toBe(1)
   })
 
@@ -49,8 +49,9 @@ describe('battle simulation', () => {
   })
 
   it('does not let a defeated fighter answer on the same tick', () => {
-    const lethal = { ...heavy, damage: 500, attackIntervalTicks: 1 }
-    const state = advanceBattleTicks(createBattle({ home: lethal, away: { ...fast, damage: 500, attackIntervalTicks: 1 }, seed: 3 }), MAX_BOUT_TICKS)
+    const lethalHome = { ...heavy, power: 500 }
+    const lethalAway = { ...heavy, id: 'heavy-away', power: 500 }
+    const state = advanceBattleTicks(createBattle({ home: lethalHome, away: lethalAway, seed: 3 }), MAX_BOUT_TICKS)
     const defeatIndex = state.events.findIndex(({ type }) => type === 'fighter-defeated')
     const sameTick = state.events[defeatIndex].tick
     expect(state.events.slice(defeatIndex + 1).filter((event) => event.tick === sameTick && event.type === 'attack-started')).toEqual([])
@@ -62,7 +63,7 @@ describe('battle simulation', () => {
   })
 
   it('advances the actor stream by exactly three values on attack', () => {
-    let state = createBattle({ home: heavy, away: { ...fast, attackIntervalTicks: 60 }, seed: 13 })
+    let state = createBattle({ home: heavy, away: fast, seed: 13 })
     let before = state
     while (!state.events.some(({ type }) => type === 'attack-started')) {
       before = state
@@ -76,14 +77,14 @@ describe('battle simulation', () => {
   })
 
   it('schedules the faster fighter to make the first attack after contact', () => {
-    let state = createBattle({ home: { ...heavy, attackIntervalTicks: 20 }, away: { ...fast, attackIntervalTicks: 60 }, seed: 17 })
+    let state = createBattle({ home: fast, away: heavy, seed: 17 })
     while (!state.events.some(({ type }) => type === 'attack-started')) state = advanceBattleTick(state)
     expect(state.events.find(({ type }) => type === 'attack-started')).toMatchObject({ actorSide: 'home' })
     expect(state.events.filter(({ type }) => type === 'attack-started')).toHaveLength(1)
   })
 
   it('does not shift the away stream when only home attacks', () => {
-    let state = createBattle({ home: { ...heavy, attackIntervalTicks: 20 }, away: { ...fast, attackIntervalTicks: 60 }, seed: 23 })
+    let state = createBattle({ home: fast, away: heavy, seed: 23 })
     while (!state.events.some(({ type }) => type === 'attack-started')) {
       const previousAway = state.random.away
       state = advanceBattleTick(state)
@@ -92,7 +93,7 @@ describe('battle simulation', () => {
   })
 
   it('consumes the separate tie stream for equal-interval initiative', () => {
-    let state = createBattle({ home: { ...heavy, accuracy: 0 }, away: { ...fast, accuracy: 0 }, seed: 29 })
+    let state = createBattle({ home: { ...heavy, accuracy: 0 }, away: { ...heavy, id: 'heavy-away', accuracy: 0 }, seed: 29 })
     let before = state
     while (!state.events.some(({ type }) => type === 'attack-started')) {
       before = state
@@ -102,11 +103,11 @@ describe('battle simulation', () => {
   })
 
   it.each([
-    [{ ...heavy, accuracy: 0 }, { ...fast, blockChance: 0 }, ['attack-started', 'attack-missed']],
-    [{ ...heavy, accuracy: 1 }, { ...fast, blockChance: 1 }, ['attack-started', 'attack-blocked', 'damage-dealt']],
-    [{ ...heavy, accuracy: 1, criticalChance: 1, damage: 500 }, { ...fast, blockChance: 0 }, ['attack-started', 'critical-hit', 'damage-dealt', 'fighter-defeated', 'bout-finished']],
+    [{ ...fast, accuracy: 0 }, { ...heavy, defenseChance: 0 }, ['attack-started', 'attack-missed']],
+    [{ ...fast, accuracy: 1 }, { ...heavy, defenseChance: 1 }, ['attack-started', 'attack-blocked', 'damage-dealt']],
+    [{ ...fast, accuracy: 1, criticalChance: 1, power: 500 }, { ...heavy, defenseChance: 0 }, ['attack-started', 'critical-hit', 'damage-dealt', 'fighter-defeated', 'bout-finished']],
   ] as const)('emits the canonical first attack sequence', (home, away, expectedTypes) => {
-    let state = createBattle({ home, away: { ...away, attackIntervalTicks: 60 }, seed: 19 })
+    let state = createBattle({ home, away, seed: 19 })
     while (!state.events.some(({ type }) => type === 'attack-started')) state = advanceBattleTick(state)
     const firstAttackTick = state.events.find(({ type }) => type === 'attack-started')?.tick
     expect(state.events.filter(({ tick }) => tick === firstAttackTick).map(({ type }) => type)).toEqual(expectedTypes)
@@ -123,7 +124,7 @@ describe('battle simulation', () => {
   })
 
   it('orders equal-interval initiative by the derived tie roll', () => {
-    let state = createBattle({ home: { ...heavy, accuracy: 0 }, away: { ...fast, accuracy: 0 }, seed: 47 })
+    let state = createBattle({ home: { ...heavy, accuracy: 0 }, away: { ...heavy, id: 'heavy-away', accuracy: 0 }, seed: 47 })
     let before = state
     let tieTick: number | undefined
     while (tieTick === undefined) {
@@ -139,8 +140,8 @@ describe('battle simulation', () => {
   })
 
   it('finishes by time limit with the higher remaining-health ratio winning', () => {
-    const home = { ...heavy, id: 'home', maxHp: 100, damage: 1, attackIntervalTicks: 100, accuracy: 1, blockChance: 0, criticalChance: 0 }
-    const away = { ...heavy, id: 'away', maxHp: 150, damage: 1, attackIntervalTicks: 100, accuracy: 1, blockChance: 0, criticalChance: 0 }
+    const home = { ...heavy, id: 'home', maxHp: 100, power: 1, accuracy: 1, defenseChance: 0, criticalChance: 0 }
+    const away = { ...heavy, id: 'away', maxHp: 150, power: 1, accuracy: 1, defenseChance: 0, criticalChance: 0 }
     const state = finished({ home, away, seed: 41 })
     expect(state.phase).toBe('finished')
     expect(state.finishReason).toBe('time-limit')

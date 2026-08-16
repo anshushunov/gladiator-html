@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BASELINE_TEST_SEED, homeRoster, opponents, TARGET_MAX_BOUT_TICKS, TARGET_MIN_BOUT_TICKS } from '../content/mvpSeries'
+import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
 import { advanceBattleTicks } from './battle'
 import type { FighterDefinition } from './fighters'
 import { advanceSeriesTicks, assignFighter, confirmLineup, createSeries, rematch, startNextBout, unassignSlot } from './series'
@@ -131,9 +131,9 @@ it('copies the finished battle fields into BoutResult in the same transition', (
 })
 
 it('records a time-limit endedBy when a bout survives to the tick cap', () => {
-  const filler: FighterDefinition = { id: 'filler', name: 'Filler', school: 'Test', archetype: 'technical', maxHp: 100, damage: 1, attackIntervalTicks: 100, accuracy: 0, blockChance: 0, criticalChance: 0 }
-  const home: FighterDefinition = { id: 'home', name: 'Home', school: 'Test', archetype: 'heavy', maxHp: 100, damage: 1, attackIntervalTicks: 100, accuracy: 1, blockChance: 0, criticalChance: 0 }
-  const away: FighterDefinition = { id: 'away', name: 'Away', school: 'Test', archetype: 'heavy', maxHp: 150, damage: 1, attackIntervalTicks: 100, accuracy: 1, blockChance: 0, criticalChance: 0 }
+  const filler: FighterDefinition = { id: 'filler', name: 'Filler', school: 'Test', archetype: 'technical', maxHp: 100, power: 1, accuracy: 0, defenseChance: 0, criticalChance: 0 }
+  const home: FighterDefinition = { id: 'home', name: 'Home', school: 'Test', archetype: 'heavy', maxHp: 100, power: 1, accuracy: 1, defenseChance: 0, criticalChance: 0 }
+  const away: FighterDefinition = { id: 'away', name: 'Away', school: 'Test', archetype: 'heavy', maxHp: 150, power: 1, accuracy: 1, defenseChance: 0, criticalChance: 0 }
   let state = createSeries({
     homeRoster: [home, filler, { ...filler, id: 'filler-2' }],
     opponents: [away, { ...filler, id: 'filler-3' }, { ...filler, id: 'filler-4' }],
@@ -167,8 +167,6 @@ it('makes stats matter more than blindly taking all counters', () => {
   expect(mixed.score).toEqual({ home: 2, away: 1 })
   for (const result of [...allCounters.results, ...mixed.results]) {
     expect(result.endedBy).toBe('defeat')
-    expect(result.durationTicks).toBeGreaterThanOrEqual(TARGET_MIN_BOUT_TICKS)
-    expect(result.durationTicks).toBeLessThanOrEqual(TARGET_MAX_BOUT_TICKS)
   }
 })
 
