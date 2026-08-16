@@ -123,6 +123,19 @@ describe('spatial hash', () => {
   // grid). No exact candidate-check literal is hard-coded: it is sensitive to
   // grid placement (see the task report), so only the structural acceptance
   // bounds are asserted here.
+  //
+  // NOTE ON THE TWO "IDENTICAL" DENSE GRIDS NOT MATCHING NUMERICALLY:
+  // `tenByTenGrid` below is origin-anchored (first point at `(0, 0)`), while
+  // `encounterCapacity.test.ts`'s `gridEntries` (via `makeGridCombatants`) is
+  // centered on the origin -- required there, since an origin-anchored
+  // spacing-3.25 grid would span `z` up to `29.25`, violating
+  // `freeArena.lateralLimit` of `20`. Cell-boundary quantization is sensitive
+  // to that translation offset once spacing is smaller than `cellSize`
+  // (3.2), so the two spacing-1.5 dense grids report different exact counts
+  // (1408 origin-anchored here vs. 1200 centered there) despite being the
+  // "same" 10x10/1.5 layout. This is a broad-phase placement artifact, not
+  // drift between the two test files -- both satisfy every acceptance bound
+  // below regardless (see the task report for the full investigation).
   // ---------------------------------------------------------------------------
 
   function tenByTenGrid(spacing: number): { id: string; position: { x: number; z: number } }[] {

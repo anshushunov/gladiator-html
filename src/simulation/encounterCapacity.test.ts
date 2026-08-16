@@ -44,6 +44,12 @@ function patchCombatant(state: EncounterState, id: CombatantId, overrides: Parti
 
 const CAPACITY_TICKS = 600
 
+// Event types that represent a contact actually being resolved (as opposed
+// to, say, a locomotion change or a defense scheduling itself): whichever way
+// a swing lands, one of these fires. Used below to prove the 600-tick run is
+// genuinely contact-heavy, not merely well-formed and idle.
+const CONTACT_RESOLUTION_EVENT_TYPES: ReadonlySet<EncounterEvent['type']> = new Set(['damage-dealt', 'attack-blocked', 'attack-parried', 'attack-evaded', 'attack-missed'])
+
 function assertLegalTargets(state: EncounterState): void {
   for (const id of state.combatantIds) {
     const targetId = state.combatants[id].targetId
@@ -60,6 +66,8 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
 
     const seenEventIds = new Set<number>()
     const seenActionInstanceIds = new Set<string>()
+    let contactResolutionCount = 0
+    let fighterDefeatedCount = 0
 
     function absorb(batch: readonly EncounterEvent[]): void {
       for (const event of batch) {
@@ -69,6 +77,8 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
           expect(seenActionInstanceIds.has(event.actionInstanceId)).toBe(false)
           seenActionInstanceIds.add(event.actionInstanceId)
         }
+        if (CONTACT_RESOLUTION_EVENT_TYPES.has(event.type)) contactResolutionCount += 1
+        if (event.type === 'fighter-defeated') fighterDefeatedCount += 1
       }
     }
 
@@ -96,6 +106,30 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
 
     expect(transitions).toBeGreaterThan(0) // proves the run actually exercised >1 tick, not merely tick 0's creation invariants
     expect(seenEventIds.size).toBeGreaterThan(0)
+
+    // The checks above (uniqueness, invariants, legal targets) all hold
+    // vacuously on a well-formed but completely inert run -- e.g. a
+    // regression that froze every combatant's decision clock immediately
+    // after creation would still pass every assertion above, producing
+    // nothing but the creation tick's own `encounter-started` event forever.
+    // The assertions below rule that out by requiring the run to be
+    // genuinely contact-heavy. Observed against this fixture's fixed seed
+    // (20260815) at the time of writing: 301 unique action-started instances,
+    // 272 contact-resolution outcomes (148 damage-dealt, 2 attack-blocked, 9
+    // attack-evaded, 113 attack-missed, 0 attack-parried), and 2
+    // fighter-defeated. Thresholds below are set at roughly 1/5-1/6 of those
+    // observed counts -- large enough that an inert or near-inert run (which
+    // produces exactly 0 of each) cannot pass, small enough that Task 13's
+    // balance tuning (which changes accuracy/damage/weights, not the
+    // fixture's seed or grid) has generous room to shift these counts
+    // without turning this test red. `fighterDefeatedCount` is asserted only
+    // at its observed floor of 1: with just 2 defeats over 600 ticks among
+    // 100 combatants, that count is the thinnest of the three and the one
+    // most likely to move under rebalancing, so no margin is added beyond
+    // "at least one" -- a genuinely inert run still can't produce even that.
+    expect(seenActionInstanceIds.size).toBeGreaterThanOrEqual(50)
+    expect(contactResolutionCount).toBeGreaterThanOrEqual(50)
+    expect(fighterDefeatedCount).toBeGreaterThanOrEqual(1)
   })
 
   it('two identical 100-combatant runs produce an identical trace hash (no frozen literal -- Task 13 records canonical hashes after tuning)', () => {
@@ -198,6 +232,14 @@ describe('Task 12 Step 3: distant-actor stream isolation', () => {
 // identical across all three fixed passes. No wall-clock assertion anywhere.
 // ===========================================================================
 
+// NOTE: this grid is centered on the origin (via `makeGridCombatants`,
+// required for arena-bounds safety at spacing 3.25 -- see that function's
+// own doc comment). `spatialHash.test.ts`'s `tenByTenGrid` covers the same
+// nominal 10x10/1.5 dense layout but origin-anchored, which is why its
+// measured candidate-check count (1408) differs from this file's (1200) for
+// what looks like the "same" grid: a broad-phase placement artifact, not
+// drift between the two files. See that file's own comment and the task
+// report for the full investigation.
 function gridEntries(spacing: number): readonly { id: string; position: { x: number; z: number } }[] {
   return makeGridCombatants({ columns: 10, rows: 10, spacing }).map((definition) => ({ id: definition.id, position: definition.startPosition }))
 }
