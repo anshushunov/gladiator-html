@@ -356,6 +356,85 @@ describe('resolveSimultaneousMovement', () => {
     expect(actualVelocity.x).toBeLessThan(naiveVelocity.x)
   })
 
+  // -------------------------------------------------------------------------
+  // Arena bounds are a hard invariant (encounter.ts's `assertEncounterInvariants`
+  // throws on violation); ordered-pair ordering and minimum separation are
+  // both best-effort within whatever room the bounds leave. Found via the
+  // Task 10 pacing probe: `applyOrderedPairPolicy` only ever adjusts `x`, so
+  // its midpoint projection can push a large-|z| combatant outside the
+  // *circular* radius bound even though both inputs individually satisfied
+  // it, if nothing re-clamps afterward.
+  // -------------------------------------------------------------------------
+
+  it('keeps both combatants inside arena.radius even when the ordered-pair midpoint projection would otherwise push the larger-|z| one outside it', () => {
+    const arena: CombatArenaDefinition = {
+      radius: 6.5,
+      lateralLimit: 2.5,
+      minimumSeparation: 0.9,
+      movementPolicy: 'ordered-pair',
+      orderedPair: ['a', 'b'],
+    }
+    // 'a' (first) sits at small |z|, distance 6.42 (inside radius). 'b'
+    // (second) sits at larger |z|, distance ~6.492 (inside radius, but close
+    // to the boundary). a.x > b.x, so the ordering projection assigns both
+    // the shared midpoint x = 6.41 -- which combined with b's own z would put
+    // b at distance ~6.502, past the 6.5 radius, if nothing re-clamped after
+    // the projection.
+    const requests: MovementRequest[] = [
+      { id: 'a', position: { x: 6.42, z: 0 }, desiredDisplacement: { x: 0, z: 0 } },
+      { id: 'b', position: { x: 6.4, z: -1.09 }, desiredDisplacement: { x: 0, z: 0 } },
+    ]
+
+    const { positions } = resolveSimultaneousMovement(requests, arena)
+
+    // Bounds hold, unconditionally -- the hard invariant. Before the fix,
+    // 'b' (the larger-|z| side) landed at distance ~6.502, past the 6.5
+    // radius, because `applyOrderedPairPolicy`'s x-only midpoint projection
+    // ran last with nothing re-clamping afterward.
+    expect(distance(positions.a, { x: 0, z: 0 })).toBeLessThanOrEqual(arena.radius + 1e-9)
+    expect(distance(positions.b, { x: 0, z: 0 })).toBeLessThanOrEqual(arena.radius + 1e-9)
+    // What happened to ordering: it is best-effort (priority 2), below
+    // bounds. The final per-point radius clamp does not preserve a shared x,
+    // so a perfect "never cross" guarantee is not preserved to full
+    // precision here -- the two land within a hair of each other (on the
+    // order of 1e-4, not the ~0.09 gap a full, unresolved crossing would
+    // produce), close to but not exactly at their original shared midpoint,
+    // demonstrating graceful degradation rather than an unbounded crossing.
+    expect(Math.abs(positions.a.x - positions.b.x)).toBeLessThan(0.01)
+  })
+
+  it('degrades ordered-pair ordering and minimum separation gracefully, but never arena bounds, in a deliberately over-constrained arena', () => {
+    // radius 0.3 (diameter 0.6) cannot fit two bodies 0.9 apart at all, by
+    // simple geometry -- the maximum possible distance between any two
+    // points inside this disk is 0.6, strictly less than minimumSeparation
+    // 0.9. Bounds, ordering, and separation cannot all be satisfied
+    // simultaneously; bounds must still win.
+    const arena: CombatArenaDefinition = {
+      radius: 0.3,
+      lateralLimit: 0.3,
+      minimumSeparation: 0.9,
+      movementPolicy: 'ordered-pair',
+      orderedPair: ['a', 'b'],
+    }
+    const requests: MovementRequest[] = [
+      { id: 'a', position: { x: 0.1, z: 0.05 }, desiredDisplacement: { x: 0, z: 0 } },
+      { id: 'b', position: { x: -0.1, z: -0.05 }, desiredDisplacement: { x: 0, z: 0 } },
+    ]
+
+    const { positions } = resolveSimultaneousMovement(requests, arena)
+
+    // Priority 1, never sacrificed: both positions stay inside the arena.
+    expect(distance(positions.a, { x: 0, z: 0 })).toBeLessThanOrEqual(arena.radius + 1e-9)
+    expect(distance(positions.b, { x: 0, z: 0 })).toBeLessThanOrEqual(arena.radius + 1e-9)
+    expect(Math.abs(positions.a.z)).toBeLessThanOrEqual(arena.lateralLimit + 1e-9)
+    expect(Math.abs(positions.b.z)).toBeLessThanOrEqual(arena.lateralLimit + 1e-9)
+    // Priority 3, allowed to degrade: minimum separation (0.9) cannot
+    // possibly fit inside a radius-0.3 disk (diameter 0.6), so it is not met
+    // here -- by geometric necessity, not merely by this implementation's
+    // choice.
+    expect(distance(positions.a, positions.b)).toBeLessThan(arena.minimumSeparation)
+  })
+
   it('accumulates travelled distance across sequential ticks of unconstrained forward motion', () => {
     let position: Vec2 = { x: 0, z: 0 }
     let travelled = 0

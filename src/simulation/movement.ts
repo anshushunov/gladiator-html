@@ -239,6 +239,14 @@ function clampAll(positions: Record<string, Vec2>, arena: Readonly<CombatArenaDe
  * at negative x and `away` at positive x. A future arena shape that needs a
  * different non-crossing axis is expected to pass its own projection axis
  * rather than assuming x.
+ *
+ * This function touches only `x`, never `z`, so it can push a point outside
+ * the *circular* radius bound even though both inputs individually satisfied
+ * it: two positions can each have `distance <= radius` while sharing an x
+ * that, combined with one side's own (unequal) z, exceeds it. This function
+ * never re-clamps for that itself — every call site is required to re-clamp
+ * immediately afterward (see `enforceArenaThenPolicy`), which is what
+ * actually resolves the interaction, not this function.
  */
 function applyOrderedPairPolicy(positions: Record<string, Vec2>, arena: Readonly<CombatArenaDefinition>): void {
   if (arena.movementPolicy !== 'ordered-pair' || !arena.orderedPair) return
@@ -253,6 +261,43 @@ function applyOrderedPairPolicy(positions: Record<string, Vec2>, arena: Readonly
     positions[firstId] = { ...first, x: midX }
     positions[secondId] = { ...second, x: midX }
   }
+}
+
+/**
+ * Enforces this module's constraint priority, in strictly decreasing order:
+ *
+ * 1. **Arena bounds are a hard invariant.** `assertEncounterInvariants`
+ *    (`encounter.ts`) throws if any position this module returns ever falls
+ *    outside `clampToArena`'s region (within epsilon) — so bounds are never
+ *    sacrificed for either constraint below.
+ * 2. `movementPolicy: 'ordered-pair'`'s non-crossing projection is
+ *    best-effort, applied only within whatever room the bounds above leave.
+ * 3. Minimum separation (`resolvePairSeparation`, run by the caller before
+ *    this) is best-effort, lowest priority of the three.
+ *
+ * These three can be mutually unsatisfiable in a tight arena (radius and
+ * lateralLimit close to two bodies' minimumSeparation) — they need an
+ * explicit priority, not a lucky call order, because `applyOrderedPairPolicy`
+ * only ever adjusts `x` while the radius bound is circular (`x` and `z`
+ * jointly): two positions can each individually satisfy `distance <= radius`
+ * while sharing the midpoint `x` the ordering projection assigns them,
+ * combined with one side's own (larger) `z`, exceeds it. `clampToArena`
+ * itself cannot see this — it only ever inspects one point at a time — so
+ * the fix is this fixed three-step `clamp -> order -> clamp` sequence: the
+ * *final* clamp always has the last word on bounds, even when that means
+ * re-clamping reintroduces a crossing `applyOrderedPairPolicy` just resolved,
+ * or shortens a separation correction the pass before this already applied.
+ * That is the documented degradation order above, not an accident.
+ *
+ * Always exactly these three steps, never a data-dependent retry loop and
+ * never an extra full separation pass (no new spatial-hash rebuild, no
+ * change to `SEPARATION_PASSES` or `candidateChecksByPass` — Task 12 asserts
+ * both the fixed pass count and each pass's own candidate-check count).
+ */
+function enforceArenaThenPolicy(positions: Record<string, Vec2>, arena: Readonly<CombatArenaDefinition>): void {
+  clampAll(positions, arena)
+  applyOrderedPairPolicy(positions, arena)
+  clampAll(positions, arena)
 }
 
 /**
@@ -308,7 +353,12 @@ function resolvePairSeparation(
  * collection's pairs are never scanned directly, which is what keeps this
  * affordable up to 100 combatants. `movementPolicy: 'ordered-pair'` also
  * reapplies its non-crossing projection after every pass, not only at the
- * end, since a separation correction can reintroduce a crossing.
+ * end, since a separation correction can reintroduce a crossing —
+ * `enforceArenaThenPolicy` (its own doc comment has the full explanation)
+ * bundles that reapplication with a bounds-first/ordering-second/
+ * separation-third priority, since these three constraints can be mutually
+ * unsatisfiable in a tight arena and arena bounds are the one of the three
+ * `assertEncounterInvariants` never allows to be violated.
  */
 export function resolveSimultaneousMovement(
   requests: readonly MovementRequest[],
@@ -319,8 +369,7 @@ export function resolveSimultaneousMovement(
     positions[request.id] = addVec2(request.position, request.desiredDisplacement)
   }
 
-  clampAll(positions, arena)
-  applyOrderedPairPolicy(positions, arena)
+  enforceArenaThenPolicy(positions, arena)
 
   const candidateChecksByPass: number[] = []
 
@@ -337,8 +386,7 @@ export function resolveSimultaneousMovement(
       resolvePairSeparation(positions, lowerId, higherId, arena)
     }
 
-    clampAll(positions, arena)
-    applyOrderedPairPolicy(positions, arena)
+    enforceArenaThenPolicy(positions, arena)
   }
 
   return { positions, separationPasses: SEPARATION_PASSES, candidateChecksByPass }
