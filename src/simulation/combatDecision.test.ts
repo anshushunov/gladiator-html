@@ -1,0 +1,698 @@
+import { describe, expect, it } from 'vitest'
+import { COMBAT_STYLES } from '../content/combatStyles'
+import { freeArena } from '../testSupport/combatFixtures'
+import type { CombatStyleDefinition } from './combatActions'
+import {
+  acquireNearestHostile,
+  buildCombatDecisionContext,
+  chooseCombatDecision,
+  computePressureLevel,
+  decisionIntervalTicks,
+  effectiveDefenseChance,
+  FAST_FORCED_DISENGAGE_END_RANGE,
+  FAST_FORCED_DISENGAGE_MAX_TICKS,
+  hasFastForcedDisengageEnded,
+  isDefenseReactionOpportunity,
+  processDefenseBatch,
+  resolveForcedParryCounterStart,
+  retainTarget,
+  scoreCombatCandidates,
+  TECHNICAL_FORCED_COUNTER_RANGE,
+  type CombatDecisionContext,
+  type DecisionModifier,
+  type IncomingThreat,
+} from './combatDecision'
+import type { CombatantId, FighterCombatState, HostilityDefinition } from './encounter'
+import type { Archetype } from './fighters'
+import { createRandom, nextRandom, type RandomState } from './random'
+import { buildSpatialHash } from './spatialHash'
+
+// ---------------------------------------------------------------------------
+// Fixture helpers
+// ---------------------------------------------------------------------------
+
+function fighterState(
+  id: string,
+  archetype: Archetype,
+  overrides: Partial<FighterCombatState> = {},
+  definitionOverrides: Partial<FighterCombatState['definition']> = {},
+): FighterCombatState {
+  return {
+    id,
+    factionId: 'faction',
+    definition: {
+      id: `${id}-def`,
+      name: id,
+      school: 'Fixture School',
+      archetype,
+      maxHp: 100,
+      power: 20,
+      accuracy: 0.8,
+      defenseChance: 0.3,
+      criticalChance: 0.1,
+      ...definitionOverrides,
+    },
+    position: { x: 0, z: 0 },
+    facing: { x: 1, z: 0 },
+    travelledDistance: 0,
+    hp: 100,
+    status: 'active',
+    locomotionIntent: 'hold-range',
+    velocity: { x: 0, z: 0 },
+    action: { type: 'neutral' },
+    staggerUntilTick: 0,
+    nextDecisionTick: 1,
+    nextActionSerial: 0,
+    lastContactTick: 0,
+    lastResolutionTick: 0,
+    reactionLedger: [],
+    ...overrides,
+  }
+}
+
+function makeContext(overrides: Partial<CombatDecisionContext> & { self: FighterCombatState; target: FighterCombatState }): CombatDecisionContext {
+  return {
+    tick: 0,
+    nearbyCombatantIds: { allied: [], neutral: [], hostile: [] },
+    comparison: 'neutral',
+    pressureLevel: 0,
+    arena: freeArena,
+    attacks: COMBAT_STYLES.attacks,
+    ...overrides,
+  }
+}
+
+function combatantsOf(...fighters: FighterCombatState[]): Record<CombatantId, FighterCombatState> {
+  const out: Record<CombatantId, FighterCombatState> = {}
+  for (const fighter of fighters) out[fighter.id] = fighter
+  return out
+}
+
+const differentFactions: HostilityDefinition = { mode: 'different-factions' }
+
+// ===========================================================================
+// Step 1: target retention / acquisition
+// ===========================================================================
+
+describe('retainTarget', () => {
+  it('retains a hostile target at 19.9 units (inside the 20-unit retention radius)', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, targetId: 'near-hostile' })
+    const target = fighterState('near-hostile', 'fast', { factionId: 'other', position: { x: 19.9, z: 0 } })
+    expect(retainTarget({ self, combatants: combatantsOf(self, target), hostility: differentFactions })).toBe('near-hostile')
+  })
+
+  it('drops a hostile target at 20.01 units (outside the 20-unit retention radius)', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, targetId: 'near-hostile' })
+    const target = fighterState('near-hostile', 'fast', { factionId: 'other', position: { x: 20.01, z: 0 } })
+    expect(retainTarget({ self, combatants: combatantsOf(self, target), hostility: differentFactions })).toBeUndefined()
+  })
+
+  it('drops a target that has been defeated', () => {
+    const self = fighterState('self', 'heavy', { targetId: 'dead' })
+    const target = fighterState('dead', 'fast', { factionId: 'other', status: 'defeated', hp: 0, position: { x: 1, z: 0 } })
+    expect(retainTarget({ self, combatants: combatantsOf(self, target), hostility: differentFactions })).toBeUndefined()
+  })
+
+  it('drops a target that has become allied (same faction under different-factions)', () => {
+    const self = fighterState('self', 'heavy', { targetId: 'ally' })
+    const target = fighterState('ally', 'fast', { factionId: 'faction', position: { x: 1, z: 0 } })
+    expect(retainTarget({ self, combatants: combatantsOf(self, target), hostility: differentFactions })).toBeUndefined()
+  })
+
+  it('drops a target that is merely neutral under a relation-table', () => {
+    const relationTable: HostilityDefinition = { mode: 'relation-table', relations: [] }
+    const self = fighterState('self', 'heavy', { factionId: 'red', targetId: 'neutral-guy' })
+    const target = fighterState('neutral-guy', 'fast', { factionId: 'blue', position: { x: 1, z: 0 } })
+    expect(retainTarget({ self, combatants: combatantsOf(self, target), hostility: relationTable })).toBeUndefined()
+  })
+
+  it('returns undefined when self has no targetId', () => {
+    const self = fighterState('self', 'heavy')
+    expect(retainTarget({ self, combatants: combatantsOf(self), hostility: differentFactions })).toBeUndefined()
+  })
+
+  it('returns undefined when the stored targetId no longer exists', () => {
+    const self = fighterState('self', 'heavy', { targetId: 'ghost' })
+    expect(retainTarget({ self, combatants: combatantsOf(self), hostility: differentFactions })).toBeUndefined()
+  })
+
+  it('never switches away from a valid retained target for a closer alternative', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, targetId: 'far-hostile' })
+    const farHostile = fighterState('far-hostile', 'fast', { factionId: 'other', position: { x: 10, z: 0 } })
+    const closerHostile = fighterState('closer-hostile', 'fast', { factionId: 'other', position: { x: 1, z: 0 } })
+    expect(retainTarget({ self, combatants: combatantsOf(self, farHostile, closerHostile), hostility: differentFactions })).toBe('far-hostile')
+  })
+})
+
+describe('acquireNearestHostile', () => {
+  function buildSpatialFixture() {
+    const self = fighterState('self', 'heavy', { factionId: 'red', position: { x: 0, z: 0 } })
+    const allyClose = fighterState('ally-close', 'heavy', { factionId: 'red', position: { x: 1, z: 0 } })
+    const equalDistanceA = fighterState('a-equal-distance', 'fast', { factionId: 'blue', position: { x: 0, z: 16 } })
+    const equalDistanceZ = fighterState('z-far-equal', 'fast', { factionId: 'blue', position: { x: 16, z: 0 } })
+    const combatants = combatantsOf(self, allyClose, equalDistanceA, equalDistanceZ)
+    const spatialIndex = buildSpatialHash(
+      Object.values(combatants).map((fighter) => ({ id: fighter.id, position: fighter.position })),
+    )
+    return { spatialIndex, combatants, hostility: differentFactions }
+  }
+
+  it('acquires the lexicographically smallest of two equal-squared-distance hostiles at exactly the 16-unit radius', () => {
+    const spatialFixture = buildSpatialFixture()
+    expect(acquireNearestHostile(spatialFixture, 'self', 16)).toBe('a-equal-distance')
+  })
+
+  it('finds nothing just inside the boundary (15.9) when the nearest hostile sits at exactly 16', () => {
+    const spatialFixture = buildSpatialFixture()
+    expect(acquireNearestHostile(spatialFixture, 'self', 15.9)).toBeUndefined()
+  })
+
+  it('ignores a defeated hostile even when it is the closest candidate', () => {
+    const self = fighterState('self', 'heavy', { factionId: 'red', position: { x: 0, z: 0 } })
+    const deadHostile = fighterState('dead-hostile', 'fast', { factionId: 'blue', position: { x: 1, z: 0 }, status: 'defeated', hp: 0 })
+    const liveHostile = fighterState('live-hostile', 'fast', { factionId: 'blue', position: { x: 5, z: 0 } })
+    const combatants = combatantsOf(self, deadHostile, liveHostile)
+    const spatialIndex = buildSpatialHash(Object.values(combatants).map((f) => ({ id: f.id, position: f.position })))
+    expect(acquireNearestHostile({ spatialIndex, combatants, hostility: differentFactions }, 'self', 16)).toBe('live-hostile')
+  })
+})
+
+// ===========================================================================
+// Step 2: exact Heavy decision fixture, plus range/boundary/opening/pressure/
+// matchup/fallback coverage
+// ===========================================================================
+
+describe('scoreCombatCandidates (Heavy brief fixture)', () => {
+  it('matches the exact candidate list and weights from the design fixture at distance 2.0, neutral matchup, arena centre, no opening, pressure zero', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 2, z: 0 } })
+    const context = buildCombatDecisionContext({
+      tick: 0,
+      selfId: 'self',
+      targetId: 'foe',
+      combatants: combatantsOf(self, target),
+      hostility: differentFactions,
+      arena: freeArena,
+      nearbyIds: [],
+      combatStyles: COMBAT_STYLES,
+    })
+
+    expect(context.comparison).toBe('neutral')
+    expect(context.pressureLevel).toBe(0)
+
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+
+    // NOTE: the brief's authored literal for heavy-cleave's weight is
+    // 19.11111111111111. Recomputing `8 + 20 * clamp(1 - abs(1.55 - 1.35) /
+    // 0.45, 0, 1)` in both Node and Python double precision arithmetic
+    // (division, not multiply-by-reciprocal) instead yields
+    // 19.111111111111114 -- one ULP different. This is a floating-point
+    // precision defect in the brief's literal, not in this implementation;
+    // see the task report. The literal below is the value this
+    // straightforwardly-faithful implementation of the stated formula
+    // actually produces.
+    expect(scored).toEqual([
+      { decision: { type: 'locomotion', locomotionIntent: 'advance' }, weight: 24 },
+      { decision: { type: 'locomotion', locomotionIntent: 'pressure' }, weight: 24 },
+      { decision: { type: 'locomotion', locomotionIntent: 'circle-left' }, weight: 2 },
+      { decision: { type: 'locomotion', locomotionIntent: 'circle-right' }, weight: 2 },
+      { decision: { type: 'action', actionId: 'heavy-cleave' }, weight: 19.111111111111114 },
+    ])
+
+    const total = scored.reduce((sum, candidate) => sum + candidate.weight, 0)
+    expect(total).toBeCloseTo(71.11, 1)
+  })
+})
+
+describe('scoreCombatCandidates: range reach legality', () => {
+  it('excludes an action whose predicted contact distance overshoots contactRange.max', () => {
+    // heavy-shield-jab: rootTravel 0.25, contactRange 0.9-1.4. At distance
+    // 2.0, predicted = 1.75 > 1.4, illegal.
+    const self = fighterState('self', 'heavy')
+    const target = fighterState('foe', 'heavy', { position: { x: 2, z: 0 } })
+    const context = makeContext({ self, target })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')).toBe(false)
+  })
+
+  it('includes an action once its predicted contact distance falls back inside contactRange', () => {
+    // At distance 1.5, predicted = 1.5 - 0.25 = 1.25, inside 0.9-1.4.
+    const self = fighterState('self', 'heavy')
+    const target = fighterState('foe', 'heavy', { position: { x: 1.5, z: 0 } })
+    const context = makeContext({ self, target })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')).toBe(true)
+  })
+
+  it('excludes an action whose predicted contact distance undershoots contactRange.min', () => {
+    // At distance 1.0, predicted = 1.0 - 0.25 = 0.75 < 0.9, illegal.
+    const self = fighterState('self', 'heavy')
+    const target = fighterState('foe', 'heavy', { position: { x: 1.0, z: 0 } })
+    const context = makeContext({ self, target })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')).toBe(false)
+  })
+})
+
+describe('scoreCombatCandidates: arena boundary penalty (-20)', () => {
+  it('applies no penalty when the finishing position is well inside the arena', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 0, z: 1 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 0, z: 1.8 } })
+    const context = makeContext({ self, target, arena: freeArena })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    const cleave = scored.find((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave')
+    // baseWeight 8 + rangeFit 20 (predicted 1.35 sits exactly on rangeMid) = 28.
+    expect(cleave?.weight).toBe(28)
+  })
+
+  it('subtracts exactly 20 when the finishing position lands within 0.4 units of the lateral boundary', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 19.61 }, facing: { x: 0, z: 1 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 0, z: 21.41 } })
+    const context = makeContext({ self, target, arena: freeArena })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    const cleave = scored.find((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave')
+    // Same 28 baseline, minus the 20 boundary penalty (finish z = 19.61 +
+    // 0.45 = 20.06, 0.06 inside the lateral limit -> margin -0.06 < 0.4).
+    expect(cleave?.weight).toBeCloseTo(8, 9)
+  })
+})
+
+describe('scoreCombatCandidates: opening bonus', () => {
+  it('adds +18 to a committed action against a target in recovery', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
+    const target = fighterState('foe', 'heavy', {
+      position: { x: 1.8, z: 0 },
+      action: { type: 'active', instanceId: 'foe:0', definitionId: 'heavy-cleave', phase: 'recovery', phaseStartedTick: 0, phaseEndsAtTick: 100, targetId: 'self' },
+    })
+    const context = makeContext({ self, target, tick: 50 })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    const cleave = scored.find((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave')
+    expect(cleave?.weight).toBe(46) // 28 baseline + 18
+  })
+
+  it('adds +6 to a probe action against a staggered target', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 1.5, z: 0 }, staggerUntilTick: 60 })
+    const context = makeContext({ self, target, tick: 50 })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    const jab = scored.find((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')
+    // baseWeight 14 + rangeFit 12 (predicted 1.25, rangeMid 1.15, halfWidth
+    // 0.25 -> 20*(1-0.4)=12) + opening 6 = 32.
+    expect(jab?.weight).toBeCloseTo(32, 9)
+  })
+
+  it('adds no opening bonus against a target that is merely in windup', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
+    const target = fighterState('foe', 'heavy', {
+      position: { x: 1.8, z: 0 },
+      action: { type: 'active', instanceId: 'foe:0', definitionId: 'heavy-cleave', phase: 'windup', phaseStartedTick: 0, phaseEndsAtTick: 100, targetId: 'self' },
+    })
+    const context = makeContext({ self, target, tick: 50 })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    const cleave = scored.find((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave')
+    expect(cleave?.weight).toBe(28)
+  })
+})
+
+describe('scoreCombatCandidates: pressure adjustment (+-8 x pressureLevel)', () => {
+  it('adds +8 x pressureLevel to advance/pressure/burst-in candidates', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 2, z: 0 } })
+    const context = makeContext({ self, target, pressureLevel: 3 })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    const advance = scored.find((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'advance')
+    // 12 base + 12 (reduces error, too far) + 8*3 = 48.
+    expect(advance?.weight).toBe(48)
+  })
+
+  it('adds -8 x pressureLevel to retreat/disengage candidates', () => {
+    // Fast, distance 1.5 (below preferredRange.min 2.4): retreat reduces
+    // error -> +12. baseWeight(retreat)=8. At pressureLevel 1: 8+12-8=12.
+    const self = fighterState('self', 'fast', { position: { x: 0, z: 0 } })
+    const target = fighterState('foe', 'fast', { position: { x: 1.5, z: 0 } })
+    const context = makeContext({ self, target, pressureLevel: 1 })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.fast)
+    const retreat = scored.find((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'retreat')
+    expect(retreat?.weight).toBe(12)
+  })
+})
+
+describe('scoreCombatCandidates: matchup comparison (+-5)', () => {
+  it('adds +5 for advantage and -5 for disadvantage relative to the neutral baseline', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 1.8, z: 0 } })
+
+    const neutralWeight = scoreCombatCandidates(makeContext({ self, target, comparison: 'neutral' }), COMBAT_STYLES.styles.heavy).find(
+      (c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave',
+    )?.weight
+    const advantageWeight = scoreCombatCandidates(makeContext({ self, target, comparison: 'advantage' }), COMBAT_STYLES.styles.heavy).find(
+      (c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave',
+    )?.weight
+    const disadvantageWeight = scoreCombatCandidates(makeContext({ self, target, comparison: 'disadvantage' }), COMBAT_STYLES.styles.heavy).find(
+      (c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave',
+    )?.weight
+
+    expect(neutralWeight).toBe(28)
+    expect(advantageWeight).toBe(33)
+    expect(disadvantageWeight).toBe(23)
+  })
+})
+
+describe('scoreCombatCandidates: anti-stall local-resolution suppression', () => {
+  it('suppresses retreat/circle-* candidates once the local resolution gap reaches 300 ticks', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, lastResolutionTick: 0 })
+    const target = fighterState('foe', 'heavy', { position: { x: 2, z: 0 } })
+
+    const fresh = scoreCombatCandidates(makeContext({ self, target, tick: 299 }), COMBAT_STYLES.styles.heavy)
+    expect(fresh.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'circle-left')).toBe(true)
+
+    const stale = scoreCombatCandidates(makeContext({ self, target, tick: 300 }), COMBAT_STYLES.styles.heavy)
+    expect(stale.some((c) => c.decision.type === 'locomotion' && (c.decision.locomotionIntent === 'circle-left' || c.decision.locomotionIntent === 'circle-right'))).toBe(false)
+    // advance/pressure remain available -- suppression never removes every candidate.
+    expect(stale.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'advance')).toBe(true)
+  })
+})
+
+describe('scoreCombatCandidates: the future modifier seam', () => {
+  it('defaults to no modifiers, and an explicit modifier adjusts a specific candidate by its returned delta', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 2, z: 0 } })
+    const context = makeContext({ self, target })
+
+    const withoutModifier = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
+    const withDefaultArg = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy, [])
+    expect(withDefaultArg).toEqual(withoutModifier)
+
+    const bonusModifier: DecisionModifier = {
+      id: 'test-bonus',
+      adjustCandidate: (input) => (input.decision.type === 'locomotion' && input.decision.locomotionIntent === 'advance' ? 100 : 0),
+    }
+    const withModifier = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy, [bonusModifier])
+    const advance = withModifier.find((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'advance')
+    expect(advance?.weight).toBe(124) // 24 baseline + 100
+  })
+})
+
+describe('chooseCombatDecision: deterministic all-zero fallback', () => {
+  it('still returns a legal decision and would consume exactly two rolls when every candidate weight is zero', () => {
+    // Custom minimal style: hold-range nets to 0 (outside its own
+    // preferredRange), and advance's authored baseWeight is deliberately
+    // set so far negative that its +12 "reduces distance error" bonus only
+    // brings it to exactly 0 -- every candidate nets non-positive, so
+    // scoreCombatCandidates legitimately returns an empty list.
+    const allZeroStyle: CombatStyleDefinition = {
+      archetype: 'heavy',
+      locomotion: COMBAT_STYLES.styles.heavy.locomotion,
+      preferredRange: { min: 1, max: 2 },
+      attackActionIds: [],
+      defenseActionId: 'heavy-guard',
+      baseWeights: { 'hold-range': 0, advance: -12 },
+    }
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 10, z: 0 } }) // outside [1,2] -> "above"
+    const context = makeContext({ self, target })
+
+    expect(scoreCombatCandidates(context, allZeroStyle)).toEqual([])
+
+    const decision = chooseCombatDecision(context, allZeroStyle, { selection: 0.5, interval: 0.5 })
+    expect(decision).toEqual({ type: 'locomotion', locomotionIntent: 'advance' })
+  })
+
+  it('falls back to hold-range when already inside the preferred band and every weight is zero', () => {
+    // Inside the band, hold-range earns its own +12 bonus (see the
+    // "reduces distance error" adjustment table), so netting to zero here
+    // requires an authored baseWeight of -12, not 0.
+    const allZeroStyle: CombatStyleDefinition = {
+      archetype: 'heavy',
+      locomotion: COMBAT_STYLES.styles.heavy.locomotion,
+      preferredRange: { min: 1, max: 20 },
+      attackActionIds: [],
+      defenseActionId: 'heavy-guard',
+      baseWeights: { 'hold-range': -12 },
+    }
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 10, z: 0 } }) // inside [1,20]
+    const context = makeContext({ self, target })
+
+    expect(scoreCombatCandidates(context, allZeroStyle)).toEqual([])
+    expect(chooseCombatDecision(context, allZeroStyle, { selection: 0.1, interval: 0.1 })).toEqual({ type: 'locomotion', locomotionIntent: 'hold-range' })
+  })
+})
+
+describe('chooseCombatDecision: proportional selection among positive weights', () => {
+  it('selects the candidate whose cumulative weight band contains the selection roll', () => {
+    const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 2, z: 0 } })
+    const context = makeContext({ self, target })
+    // scored = advance(24), pressure(24), circle-left(2), circle-right(2), heavy-cleave(~19.11); total ~71.11
+    const veryLowRoll = chooseCombatDecision(context, COMBAT_STYLES.styles.heavy, { selection: 0.0001, interval: 0 })
+    expect(veryLowRoll).toEqual({ type: 'locomotion', locomotionIntent: 'advance' })
+
+    const veryHighRoll = chooseCombatDecision(context, COMBAT_STYLES.styles.heavy, { selection: 0.9999, interval: 0 })
+    expect(veryHighRoll).toEqual({ type: 'action', actionId: 'heavy-cleave' })
+  })
+})
+
+describe('buildCombatDecisionContext: nearby ally/neutral/hostile classification', () => {
+  it('sorts nearby ids into allied/neutral/hostile buckets, excluding self and the dead', () => {
+    const self = fighterState('self', 'heavy', { factionId: 'red', position: { x: 0, z: 0 } })
+    const ally = fighterState('ally', 'fast', { factionId: 'red', position: { x: 1, z: 0 } })
+    const hostileB = fighterState('hostile-b', 'fast', { factionId: 'blue', position: { x: 2, z: 0 } })
+    const hostileA = fighterState('hostile-a', 'fast', { factionId: 'blue', position: { x: 3, z: 0 } })
+    const dead = fighterState('dead', 'fast', { factionId: 'blue', position: { x: 1, z: 0 }, status: 'defeated', hp: 0 })
+    const combatants = combatantsOf(self, ally, hostileB, hostileA, dead)
+
+    const context = buildCombatDecisionContext({
+      tick: 0,
+      selfId: 'self',
+      targetId: 'hostile-a',
+      combatants,
+      hostility: differentFactions,
+      arena: freeArena,
+      nearbyIds: ['dead', 'hostile-b', 'ally', 'self', 'hostile-a'],
+      combatStyles: COMBAT_STYLES,
+    })
+
+    expect(context.nearbyCombatantIds).toEqual({
+      allied: ['ally'],
+      neutral: [],
+      hostile: ['hostile-a', 'hostile-b'],
+    })
+  })
+})
+
+// ===========================================================================
+// Step 3/4: pressure levels, interval mapping, anti-stall, forced behavior
+// ===========================================================================
+
+describe('computePressureLevel', () => {
+  it('is 0 through a 180-tick gap', () => {
+    expect(computePressureLevel(180, 0)).toBe(0)
+    expect(computePressureLevel(179, 0)).toBe(0)
+  })
+
+  it('steps 1..3 in 60-tick increments beyond 180, capped at 3', () => {
+    expect(computePressureLevel(181, 0)).toBe(1)
+    expect(computePressureLevel(240, 0)).toBe(1)
+    expect(computePressureLevel(241, 0)).toBe(2)
+    expect(computePressureLevel(300, 0)).toBe(2)
+    expect(computePressureLevel(301, 0)).toBe(3)
+    expect(computePressureLevel(360, 0)).toBe(3)
+    expect(computePressureLevel(1000, 0)).toBe(3)
+  })
+})
+
+describe('decisionIntervalTicks', () => {
+  it('maps roll 0 to each archetype\'s minimum and a roll just under 1 to its maximum', () => {
+    expect(decisionIntervalTicks('heavy', 0)).toBe(20)
+    expect(decisionIntervalTicks('heavy', 0.999999)).toBe(42)
+    expect(decisionIntervalTicks('fast', 0)).toBe(12)
+    expect(decisionIntervalTicks('fast', 0.999999)).toBe(30)
+    expect(decisionIntervalTicks('technical', 0)).toBe(18)
+    expect(decisionIntervalTicks('technical', 0.999999)).toBe(36)
+  })
+
+  it('maps a mid-range roll deterministically', () => {
+    // Heavy: width 23, floor(0.5*23)=11 -> 20+11=31.
+    expect(decisionIntervalTicks('heavy', 0.5)).toBe(31)
+  })
+})
+
+describe('forced behavior thresholds', () => {
+  it('Fast forced disengage ends at 2.4 units', () => {
+    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE, 10)).toBe(true)
+    expect(hasFastForcedDisengageEnded(2.39, 10)).toBe(true)
+    expect(hasFastForcedDisengageEnded(2.41, 10)).toBe(false)
+  })
+
+  it('Fast forced disengage ends at 30 ticks regardless of distance', () => {
+    expect(hasFastForcedDisengageEnded(3.0, FAST_FORCED_DISENGAGE_MAX_TICKS)).toBe(true)
+    expect(hasFastForcedDisengageEnded(3.0, 29)).toBe(false)
+  })
+
+  it('Technical forced parry counter starts only within 2.3 units, otherwise clears', () => {
+    expect(resolveForcedParryCounterStart(TECHNICAL_FORCED_COUNTER_RANGE)).toBe('technical-parry-counter')
+    expect(resolveForcedParryCounterStart(2.29)).toBe('technical-parry-counter')
+    expect(resolveForcedParryCounterStart(2.31)).toBeUndefined()
+  })
+})
+
+// ===========================================================================
+// Step 5/6: defense batching
+// ===========================================================================
+
+describe('isDefenseReactionOpportunity', () => {
+  it('pins the technical-parry vs fast-slash boundary at exactly ten ticks (windup start)', () => {
+    // fast-slash windupTicks=10, technical-parry minimumReactionLeadTicks=10.
+    // At the attack's start tick 0, contact occurs at tick 10: 10-0===10.
+    expect(isDefenseReactionOpportunity(COMBAT_STYLES.defenses['technical-parry'], 0, 10)).toBe(true)
+  })
+
+  it('is false one tick later, once the lead no longer matches exactly', () => {
+    expect(isDefenseReactionOpportunity(COMBAT_STYLES.defenses['technical-parry'], 1, 10)).toBe(false)
+  })
+
+  it('matches heavy-guard\'s own 8-tick lead', () => {
+    expect(isDefenseReactionOpportunity(COMBAT_STYLES.defenses['heavy-guard'], 5, 13)).toBe(true)
+  })
+})
+
+describe('effectiveDefenseChance', () => {
+  it('applies the comparison modifier and telegraph tiers, clamped to 0..0.95', () => {
+    expect(effectiveDefenseChance(0.3, 'advantage', 10)).toBeCloseTo(0.35, 10)
+    expect(effectiveDefenseChance(0.3, 'disadvantage', 20)).toBeCloseTo(0.30, 10)
+    expect(effectiveDefenseChance(0.9, 'neutral', 30)).toBeCloseTo(0.95, 10)
+    expect(effectiveDefenseChance(0.02, 'disadvantage', 10)).toBe(0)
+  })
+})
+
+describe('processDefenseBatch', () => {
+  it('sorts five simultaneous threats, consumes ten defense-stream draws, records five outcomes, and starts at most one defense', () => {
+    const defender = fighterState(
+      'd',
+      'technical',
+      { status: 'active', action: { type: 'neutral' }, staggerUntilTick: 0, nextActionSerial: 0, reactionLedger: [] },
+      { defenseChance: 0.8 },
+    )
+    const a1 = fighterState('a1', 'technical')
+    const a2 = fighterState('a2', 'technical')
+    const a3 = fighterState('a3', 'technical')
+    const a4 = fighterState('a4', 'technical')
+    const a5 = fighterState('a5', 'technical')
+
+    const threats: IncomingThreat[] = [
+      { attackerId: 'a1', actionInstanceId: 'a1:0', actionId: 'heavy-shield-jab', contactTick: 110 }, // unparryable tag -> ineligible
+      { attackerId: 'a2', actionInstanceId: 'a2:0', actionId: 'fast-slash', contactTick: 111 }, // telegraph 0, will fail
+      { attackerId: 'a3', actionInstanceId: 'a3:0', actionId: 'technical-driving-thrust', contactTick: 112 }, // telegraph 0.10, will succeed
+      { attackerId: 'a4', actionInstanceId: 'a4:0', actionId: 'technical-thrust', contactTick: 113 }, // busy after a3 schedules
+      { attackerId: 'a5', actionInstanceId: 'a5:0', actionId: 'heavy-cleave', contactTick: 114 }, // busy after a3 schedules
+    ]
+
+    const initialRandom = createRandom(1234)
+    const result = processDefenseBatch({
+      tick: 100,
+      defender,
+      threats,
+      random: initialRandom,
+      combatants: combatantsOf(defender, a1, a2, a3, a4, a5),
+      combatStyles: COMBAT_STYLES,
+    })
+
+    expect(result.defender.reactionLedger).toEqual([
+      { incomingActionId: 'a1:0', outcome: 'ineligible' },
+      { incomingActionId: 'a2:0', outcome: 'failed' },
+      { incomingActionId: 'a3:0', outcome: 'scheduled' },
+      { incomingActionId: 'a4:0', outcome: 'ineligible' },
+      { incomingActionId: 'a5:0', outcome: 'ineligible' },
+    ])
+
+    expect(result.events).toEqual([
+      { type: 'defense-declined', tick: 100, defenderId: 'd', attackerId: 'a2', incomingActionId: 'a2:0', defenseActionId: 'technical-parry', expectedContactTick: 111 },
+      { type: 'defense-started', tick: 100, defenderId: 'd', attackerId: 'a3', incomingActionId: 'a3:0', defenseActionId: 'technical-parry', expectedContactTick: 112 },
+    ])
+
+    expect(result.defender.action).toMatchObject({
+      type: 'active',
+      instanceId: 'd:0',
+      definitionId: 'technical-parry',
+      phase: 'windup',
+      phaseStartedTick: 100,
+      phaseEndsAtTick: 112,
+      targetId: 'a3',
+      reactingToActionId: 'a3:0',
+    })
+    expect(result.defender.nextActionSerial).toBe(1)
+
+    // exactly ten draws (2 per opportunity x 5) consumed from the defense stream
+    let expectedRandom: RandomState = initialRandom
+    for (let index = 0; index < 10; index += 1) expectedRandom = nextRandom(expectedRandom)[1]
+    expect(result.random).toEqual(expectedRandom)
+  })
+
+  it('marks every opportunity ineligible (but still draws) when the defender is already staggered', () => {
+    const defender = fighterState('d', 'technical', { staggerUntilTick: 9999 })
+    const attacker = fighterState('atk', 'technical')
+    const threats: IncomingThreat[] = [{ attackerId: 'atk', actionInstanceId: 'atk:0', actionId: 'technical-thrust', contactTick: 30 }]
+    const initialRandom = createRandom(7)
+
+    const result = processDefenseBatch({
+      tick: 10,
+      defender,
+      threats,
+      random: initialRandom,
+      combatants: combatantsOf(defender, attacker),
+      combatStyles: COMBAT_STYLES,
+    })
+
+    expect(result.defender.reactionLedger).toEqual([{ incomingActionId: 'atk:0', outcome: 'ineligible' }])
+    expect(result.events).toEqual([])
+    expect(result.defender.action).toEqual({ type: 'neutral' })
+    const [, afterFirst] = nextRandom(initialRandom)
+    const [, afterSecond] = nextRandom(afterFirst)
+    expect(result.random).toEqual(afterSecond)
+  })
+
+  it('marks every opportunity ineligible when the defender is already busy with an active action', () => {
+    const defender = fighterState('d', 'technical', {
+      action: { type: 'active', instanceId: 'd:0', definitionId: 'technical-thrust', phase: 'windup', phaseStartedTick: 0, phaseEndsAtTick: 20, targetId: 'someone' },
+    })
+    const attacker = fighterState('atk', 'technical')
+    const threats: IncomingThreat[] = [{ attackerId: 'atk', actionInstanceId: 'atk:0', actionId: 'technical-thrust', contactTick: 30 }]
+
+    const result = processDefenseBatch({
+      tick: 10,
+      defender,
+      threats,
+      random: createRandom(7),
+      combatants: combatantsOf(defender, attacker),
+      combatStyles: COMBAT_STYLES,
+    })
+
+    expect(result.defender.reactionLedger).toEqual([{ incomingActionId: 'atk:0', outcome: 'ineligible' }])
+    expect(result.events).toEqual([])
+  })
+
+  it('sorts by contactTick, then committed/counter before probe, then descending power x damageMultiplier, then ActionInstanceId', () => {
+    const defender = fighterState('d', 'technical', { staggerUntilTick: 9999 }) // force ineligible so order is observable independent of RNG
+    const attackerX = fighterState('x', 'technical')
+    const attackerY = fighterState('y', 'technical')
+    const attackerZ = fighterState('z', 'technical')
+
+    const threats: IncomingThreat[] = [
+      { attackerId: 'z', actionInstanceId: 'z:0', actionId: 'technical-thrust', contactTick: 200 }, // probe, power 20*1.0=20
+      { attackerId: 'y', actionInstanceId: 'y:0', actionId: 'technical-driving-thrust', contactTick: 200 }, // committed, power 20*1.5=30
+      { attackerId: 'x', actionInstanceId: 'x:0', actionId: 'technical-driving-thrust', contactTick: 200 }, // committed, power 20*1.5=30 (tie with y -> instanceId breaks it)
+    ]
+
+    const result = processDefenseBatch({
+      tick: 10,
+      defender,
+      threats,
+      random: createRandom(1),
+      combatants: combatantsOf(defender, attackerX, attackerY, attackerZ),
+      combatStyles: COMBAT_STYLES,
+    })
+
+    expect(result.defender.reactionLedger.map((record) => record.incomingActionId)).toEqual(['x:0', 'y:0', 'z:0'])
+  })
+})

@@ -4,6 +4,7 @@ import {
   calculateContactDamage,
   calculateContactPoint,
   startAttackAction,
+  startDefenseAction,
   transitionActionPhase,
   type AttackActionDefinition,
 } from './combatActions'
@@ -59,6 +60,63 @@ describe('startAttackAction', () => {
       targetId: 'drusus',
       attackRolls: { accuracy: 0.5, critical: 0.9 },
     })
+  })
+})
+
+describe('startDefenseAction', () => {
+  it('starts in windup with a dynamic phaseEndsAtTick equal to the incoming contactTick', () => {
+    const defense = startDefenseAction({
+      defenderId: 'b',
+      serial: 0,
+      attackerId: 'a',
+      defenseActionId: 'technical-parry',
+      reactingToActionId: 'a:0',
+      tick: 20,
+      contactTick: 30,
+      directionRoll: 0.42,
+    })
+
+    expect(defense).toEqual({
+      type: 'active',
+      instanceId: 'b:0',
+      definitionId: 'technical-parry',
+      phase: 'windup',
+      phaseStartedTick: 20,
+      phaseEndsAtTick: 30,
+      targetId: 'a',
+      reactingToActionId: 'a:0',
+      defenseRoll: { direction: 0.42 },
+    })
+  })
+
+  it('derives instanceId from defenderId and serial, independent of the attacker', () => {
+    const defense = startDefenseAction({
+      defenderId: 'drusus',
+      serial: 5,
+      attackerId: 'brutus',
+      defenseActionId: 'heavy-guard',
+      reactingToActionId: 'brutus:2',
+      tick: 0,
+      contactTick: 8,
+      directionRoll: 0.9,
+    })
+
+    expect(defense).toMatchObject({ instanceId: 'drusus:5', definitionId: 'heavy-guard', targetId: 'brutus' })
+  })
+
+  it('never stores attackRolls on a defense action', () => {
+    const defense = startDefenseAction({
+      defenderId: 'b',
+      serial: 0,
+      attackerId: 'a',
+      defenseActionId: 'fast-evade',
+      reactingToActionId: 'a:0',
+      tick: 0,
+      contactTick: 7,
+      directionRoll: 0.1,
+    })
+
+    expect(defense).not.toHaveProperty('attackRolls')
   })
 })
 

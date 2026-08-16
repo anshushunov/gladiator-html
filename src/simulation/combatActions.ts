@@ -89,6 +89,12 @@ export type CombatActionState =
       targetId: string
       reactingToActionId?: string
       attackRolls?: { accuracy: number; critical: number }
+      // Only ever set by `startDefenseAction`, mirroring `attackRolls` for
+      // attacks: the reaction's consumed `direction` stream value, preserved
+      // so a later contact-resolution task can derive Fast evade's ranked
+      // direction/displacement without re-drawing (and thereby desyncing)
+      // the defense stream.
+      defenseRoll?: { direction: number }
     }
 
 export interface ReactionRecord {
@@ -136,6 +142,41 @@ export function startAttackAction(params: StartAttackActionParams): CombatAction
     phaseEndsAtTick: params.tick + params.definition.windupTicks,
     targetId: params.targetId,
     attackRolls: params.attackRolls,
+  }
+}
+
+export interface StartDefenseActionParams {
+  defenderId: string
+  serial: number
+  attackerId: string
+  defenseActionId: DefenseActionId
+  reactingToActionId: string
+  tick: number
+  contactTick: number
+  directionRoll: number
+}
+
+/**
+ * Starts a defense in its `windup` phase with a *dynamic* windup: unlike
+ * `startAttackAction` (whose `windupTicks` is a fixed catalog value), a
+ * scheduled reaction's windup ends exactly on `contactTick` so its contact
+ * aligns with the incoming attack it answers (`processDefenseBatch` in
+ * `combatDecision.ts` only ever calls this once the reaction lead has
+ * already confirmed `contactTick` is reachable). `targetId` holds the
+ * attacker being reacted to; `reactingToActionId` binds the defense to that
+ * specific incoming action so a later cancellation can find it.
+ */
+export function startDefenseAction(params: StartDefenseActionParams): CombatActionState {
+  return {
+    type: 'active',
+    instanceId: `${params.defenderId}:${params.serial}`,
+    definitionId: params.defenseActionId,
+    phase: 'windup',
+    phaseStartedTick: params.tick,
+    phaseEndsAtTick: params.contactTick,
+    targetId: params.attackerId,
+    reactingToActionId: params.reactingToActionId,
+    defenseRoll: { direction: params.directionRoll },
   }
 }
 
