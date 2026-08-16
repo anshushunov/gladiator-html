@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { COMBAT_STYLES } from '../content/combatStyles'
 import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
-import { combatant, duelArena, freeArena } from '../testSupport/combatFixtures'
+import { combatant, duelArena, freeArena, traceHash } from '../testSupport/combatFixtures'
 import type { AttackActionId, CombatActionState } from './combatActions'
 import {
   advanceEncounterTick,
@@ -14,14 +14,13 @@ import {
   type ContactIntent,
   type EncounterConfig,
   type EncounterEvent,
-  type EncounterTransition,
   type FighterCombatState,
   type EncounterResult,
   type EncounterState,
 } from './encounter'
 import type { Archetype } from './fighters'
 import type { Vec2 } from './movement'
-import { derivedUnitValue, foldTraceHash, formatTraceHash } from './random'
+import { derivedUnitValue } from './random'
 
 function baseConfig(overrides: Partial<EncounterConfig> = {}): EncounterConfig {
   return {
@@ -2918,8 +2917,10 @@ describe("advanceEncounterTick: Fast's forced disengage measures its 30-tick tim
 // ===========================================================================
 // Task 10 Step 3: canonical trace hashing -- a TEST-ONLY diagnostic helper,
 // not production state (`EncounterState` never stores an event log or a
-// running hash). Folds every tick's sorted combatant state, integer fields,
-// HP, action/phase IDs, RNG states, and event payloads through
+// running hash). `traceHash` (moved to `testSupport/combatFixtures.ts` in
+// Task 12 so `encounterCapacity.test.ts` reuses the exact same folding
+// approach) folds every tick's sorted combatant state, integer fields, HP,
+// action/phase IDs, RNG states, and event payloads through
 // `foldTraceHash`/`formatTraceHash` (random.ts, built in Task 2 for exactly
 // this purpose); positions/facing are quantized to integer millionths so the
 // diagnostic (never combat itself, which stays full precision throughout
@@ -2927,64 +2928,6 @@ describe("advanceEncounterTick: Fast's forced disengage measures its 30-tick tim
 // asserted here -- Task 13 tunes balance first, then records canonical
 // hashes after reviewing traces.
 // ===========================================================================
-
-function quantizeMillionths(value: number): number {
-  return Math.round(value * 1_000_000)
-}
-
-function foldCombatantTrace(hash: number, combatant: Readonly<FighterCombatState>, random: EncounterState['randomByCombatant'][string]): number {
-  let next = hash
-  next = foldTraceHash(next, combatant.id)
-  next = foldTraceHash(next, combatant.factionId)
-  next = foldTraceHash(next, combatant.targetId ?? '')
-  next = foldTraceHash(next, combatant.status)
-  next = foldTraceHash(next, combatant.locomotionIntent)
-  next = foldTraceHash(next, String(combatant.hp))
-  next = foldTraceHash(next, String(quantizeMillionths(combatant.position.x)))
-  next = foldTraceHash(next, String(quantizeMillionths(combatant.position.z)))
-  next = foldTraceHash(next, String(quantizeMillionths(combatant.facing.x)))
-  next = foldTraceHash(next, String(quantizeMillionths(combatant.facing.z)))
-  next = foldTraceHash(next, String(quantizeMillionths(combatant.velocity.x)))
-  next = foldTraceHash(next, String(quantizeMillionths(combatant.velocity.z)))
-  next = foldTraceHash(next, String(quantizeMillionths(combatant.travelledDistance)))
-  next = foldTraceHash(next, String(combatant.staggerUntilTick))
-  next = foldTraceHash(next, String(combatant.nextDecisionTick))
-  next = foldTraceHash(next, String(combatant.nextActionSerial))
-  next = foldTraceHash(next, String(combatant.lastContactTick))
-  next = foldTraceHash(next, String(combatant.lastResolutionTick))
-  next = foldTraceHash(next, combatant.forcedActionId ?? '')
-  next = foldTraceHash(next, combatant.forcedDisengageStartTick === undefined ? '' : String(combatant.forcedDisengageStartTick))
-  next = foldTraceHash(next, JSON.stringify(combatant.action))
-  next = foldTraceHash(next, JSON.stringify(combatant.reactionLedger))
-  next = foldTraceHash(next, String(random.decision.value))
-  next = foldTraceHash(next, String(random.defense.value))
-  next = foldTraceHash(next, String(random.contact.value))
-  return next
-}
-
-/** Folds one tick's canonical trace: `state.tick`, every sorted combatant's full state + RNG streams, then every event this tick emitted, in emission order. */
-function foldTickTrace(hash: number, state: EncounterState, tickEvents: readonly EncounterEvent[]): number {
-  let next = foldTraceHash(hash, String(state.tick))
-  for (const id of state.combatantIds) {
-    next = foldCombatantTrace(next, state.combatants[id], state.randomByCombatant[id])
-  }
-  for (const event of tickEvents) {
-    next = foldTraceHash(next, JSON.stringify(event))
-  }
-  return next
-}
-
-/** Runs up to `ticks` advances from `initial` (stopping early once finished), folding a running canonical trace hash tick by tick -- including the creation tick's own `encounter-started` event -- and returns the final formatted hash. */
-function traceHash(initial: EncounterTransition, ticks: number): string {
-  let hash = foldTickTrace(0, initial.state, initial.events)
-  let state = initial.state
-  for (let index = 0; index < ticks && state.phase === 'running'; index += 1) {
-    const next = advanceEncounterTick(state)
-    state = next.state
-    hash = foldTickTrace(hash, state, next.events)
-  }
-  return formatTraceHash(hash)
-}
 
 describe('canonical trace hash (Task 10 Step 3, test-only diagnostic helper)', () => {
   const seeds = [3, 11, 42]

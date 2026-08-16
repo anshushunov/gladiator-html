@@ -112,4 +112,47 @@ describe('spatial hash', () => {
     expect(queryRadius(index, { x: 0, z: 0 }, 3.2)).not.toBeInstanceOf(Set)
     expect(collectCanonicalNeighborPairs(index).pairKeys).not.toBeInstanceOf(Set)
   })
+
+  // ---------------------------------------------------------------------------
+  // Task 12: the broad phase's whole reason to exist is keeping candidate
+  // checks well under the full unordered-pair count at mass scale (100
+  // combatants -> 4950 pairs). These two module-level fixtures pin that down
+  // directly against `collectCanonicalNeighborPairs`, independent of
+  // `encounter.ts`/`movement.ts` wiring (see `encounterCapacity.test.ts` for
+  // the full-stack version against the actual `createHundredCombatantFfa`
+  // grid). No exact candidate-check literal is hard-coded: it is sensitive to
+  // grid placement (see the task report), so only the structural acceptance
+  // bounds are asserted here.
+  // ---------------------------------------------------------------------------
+
+  function tenByTenGrid(spacing: number): { id: string; position: { x: number; z: number } }[] {
+    const out: { id: string; position: { x: number; z: number } }[] = []
+    for (let row = 0; row < 10; row += 1) {
+      for (let column = 0; column < 10; column += 1) {
+        out.push({ id: `g${row * 10 + column}`, position: { x: column * spacing, z: row * spacing } })
+      }
+    }
+    return out
+  }
+
+  const MAX_UNORDERED_PAIRS_AT_100 = (100 * 99) / 2 // 4950
+
+  it('sparse 10x10 grid (spacing 3.25): fewer than 800 candidate checks, never the full 4950, and each real neighbor pair returned at most once', () => {
+    const index = buildSpatialHash(tenByTenGrid(3.25))
+    const { pairKeys, candidateChecks } = collectCanonicalNeighborPairs(index)
+
+    expect(candidateChecks).toBeLessThan(800)
+    expect(candidateChecks).toBeLessThan(MAX_UNORDERED_PAIRS_AT_100)
+    expect(new Set(pairKeys).size).toBe(pairKeys.length)
+  })
+
+  it('dense 10x10 grid (spacing 1.5): more candidate checks than the sparse grid, still fewer than 4950, and each real neighbor pair returned at most once', () => {
+    const sparseCandidateChecks = collectCanonicalNeighborPairs(buildSpatialHash(tenByTenGrid(3.25))).candidateChecks
+    const index = buildSpatialHash(tenByTenGrid(1.5))
+    const { pairKeys, candidateChecks } = collectCanonicalNeighborPairs(index)
+
+    expect(candidateChecks).toBeGreaterThan(sparseCandidateChecks)
+    expect(candidateChecks).toBeLessThan(MAX_UNORDERED_PAIRS_AT_100)
+    expect(new Set(pairKeys).size).toBe(pairKeys.length)
+  })
 })
