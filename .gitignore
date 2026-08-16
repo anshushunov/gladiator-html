@@ -7,3 +7,6 @@ debug.log
 
 # Worktree directory
 .worktrees/
+
+# Subagent-driven-development scratch workspace
+.superpowers/
