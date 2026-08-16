@@ -9,6 +9,8 @@ import {
   assertEncounterInvariants,
   createEncounter,
   finishEncounter,
+  sortContactIntents,
+  type ContactIntent,
   type EncounterConfig,
   type EncounterEvent,
   type FighterCombatState,
@@ -1153,13 +1155,23 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
-      targetOverrides: { locomotionIntent: 'circle-left', action: boundDefense('fast-evade', { defenseRoll: { direction: 0.1 } }) },
+      // `locomotionIntent` is deliberately set to a direction that does NOT
+      // match rankEvadeDirections(0.1)'s primary ('circle-left') -- Task 9
+      // review finding 2: `evadeIntent` previously read
+      // `targetLive.locomotionIntent` directly, which nothing ever set to
+      // the evade's actual dashed direction, so a fixture that happened to
+      // set `locomotionIntent` to the "right" answer masked the bug. This
+      // only passes if `evadeIntent` genuinely derives from `defenseRoll`
+      // via `selectEvadeDirection`, not from `locomotionIntent`.
+      targetOverrides: { locomotionIntent: 'advance', action: boundDefense('fast-evade', { defenseRoll: { direction: 0.1 } }) },
     })
 
     const { events } = advanceEncounterTick(state)
     const evadeBatch = events.filter((event) => event.type === 'attack-evaded' || event.type === 'defense-failed')
 
     expect(types(evadeBatch)).toEqual(['attack-evaded'])
+    // roll 0.1 ranks 'circle-left' first; freeArena is large enough that it's
+    // never blocked from (5,0), so selectEvadeDirection resolves to it too.
     expect(evadeBatch[0]).toMatchObject({ evadeIntent: 'circle-left', actorId: 'actor', targetId: 'target' })
   })
 
@@ -1610,6 +1622,87 @@ describe('advanceEncounterTick: contact resolution -- snapshot discipline and to
     const expectedFirstActor = tieKeyA1 < tieKeyA2 ? 'a1' : 'a2'
     expect(damageEvents[0].actorId).toBe(expectedFirstActor)
   })
+
+  it('a three-way priority tie (design.md: "even when three or more intents share priority") sorts all three purely by tieKey', () => {
+    const created = createEncounter({
+      seed: 9,
+      combatants: [
+        combatant('a1', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
+        combatant('a2', 'home', { archetype: 'fast', startPosition: { x: -1, z: 10 } }),
+        combatant('a3', 'home', { archetype: 'fast', startPosition: { x: -1, z: 20 } }),
+        combatant('t1', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
+        combatant('t2', 'away', { archetype: 'fast', startPosition: { x: 0, z: 10 } }),
+        combatant('t3', 'away', { archetype: 'fast', startPosition: { x: 0, z: 20 } }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'free-for-all' },
+      combatStyles: COMBAT_STYLES,
+    })
+
+    function attackAction(instanceId: string, targetId: string): CombatActionState {
+      return {
+        type: 'active',
+        instanceId,
+        definitionId: 'fast-slash', // priority 40 for all three: a genuine three-way tie
+        phase: 'windup',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK,
+        targetId,
+        attackRolls: { accuracy: 0.1, critical: 0.9 },
+      }
+    }
+
+    let state = created.state
+    for (const [actorId, targetId] of [
+      ['a1', 't1'],
+      ['a2', 't2'],
+      ['a3', 't3'],
+    ] as const) {
+      state = patchCombatant(state, actorId, { targetId: undefined, nextDecisionTick: 999_999, facing: { x: 1, z: 0 }, action: attackAction(`${actorId}:0`, targetId) })
+      state = patchCombatant(state, targetId, { targetId: undefined, nextDecisionTick: 999_999, locomotionIntent: 'hold-range' })
+    }
+    state = { ...state, tick: CONTACT_TICK - 1 }
+
+    const tieKeys: Record<string, number> = {
+      a1: derivedUnitValue(9, `contact-tie:${CONTACT_TICK}:a1:0`),
+      a2: derivedUnitValue(9, `contact-tie:${CONTACT_TICK}:a2:0`),
+      a3: derivedUnitValue(9, `contact-tie:${CONTACT_TICK}:a3:0`),
+    }
+    const distinctTieKeys = new Set(Object.values(tieKeys))
+    expect(distinctTieKeys.size).toBe(3) // all three must genuinely tie-break through tieKey, not coincide
+
+    const { events } = advanceEncounterTick(state)
+    const damageEvents = events.filter((event): event is Extract<EncounterEvent, { type: 'damage-dealt' }> => event.type === 'damage-dealt')
+    expect(damageEvents).toHaveLength(3)
+
+    const expectedOrder = (['a1', 'a2', 'a3'] as const).slice().sort((a, b) => tieKeys[a] - tieKeys[b])
+    expect(damageEvents.map((event) => event.actorId)).toEqual(expectedOrder)
+  })
+})
+
+describe('sortContactIntents', () => {
+  function intent(actionInstanceId: string, priority: number, tieKey: number): ContactIntent {
+    return { actorId: actionInstanceId.split(':')[0], targetId: 'x', actionInstanceId, actionId: 'fast-slash', priority, tieKey }
+  }
+
+  it('colliding tieKey falls back to ascending ActionInstanceId as the final tiebreak (Task 9 review: minor test gap)', () => {
+    // `derivedUnitValue`'s continuous float distribution cannot realistically
+    // be coaxed into colliding through the public tick API, so this exercises
+    // the fallback branch directly with a synthetic collision.
+    const intents = [intent('b:3', 40, 0.5), intent('a:9', 40, 0.5), intent('a:2', 40, 0.5)]
+
+    const sorted = sortContactIntents(intents)
+
+    expect(sorted.map((i) => i.actionInstanceId)).toEqual(['a:2', 'a:9', 'b:3'])
+  })
+
+  it('sorts strictly by descending priority first, regardless of tieKey or ActionInstanceId', () => {
+    const intents = [intent('low:0', 10, 0.1), intent('high:0', 40, 0.9)]
+
+    const sorted = sortContactIntents(intents)
+
+    expect(sorted.map((i) => i.actionInstanceId)).toEqual(['high:0', 'low:0'])
+  })
 })
 
 describe('advanceEncounterTick: shield jab is unparryable (defense-in-depth at resolution, not only at scheduling)', () => {
@@ -1690,6 +1783,95 @@ describe('advanceEncounterTick: accumulated push (phase 10)', () => {
   })
 })
 
+describe('advanceEncounterTick: motion diagnostics -- velocity/travelledDistance reflect the tick total (Task 9 review finding 1)', () => {
+  it('a combatant that only walks (never pushed) ends the tick with a non-zero velocity matching its actual displacement x TICKS_PER_SECOND', () => {
+    // Regression guard: phase 10 (`applyAccumulatedPush`) used to call the
+    // same position-mutating helper phase 8 does, which unconditionally
+    // overwrote `velocity` -- including with `{0,0}` for the overwhelming
+    // majority of combatants who receive zero push on a given tick, silently
+    // discarding phase 8's correct locomotion velocity.
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('self', 'home', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
+        combatant('other', 'away', { archetype: 'fast', startPosition: { x: 20, z: 0 } }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'different-factions' },
+      combatStyles: COMBAT_STYLES,
+    })
+    let state = patchCombatant(created.state, 'self', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      locomotionIntent: 'advance',
+      action: { type: 'neutral' },
+    })
+    state = patchCombatant(state, 'other', { targetId: undefined, nextDecisionTick: 999_999 })
+    state = { ...state, tick: 5 }
+
+    const { state: next } = advanceEncounterTick(state)
+
+    const dx = next.combatants.self.position.x - 0
+    const dz = next.combatants.self.position.z - 0
+    expect(dx).toBeGreaterThan(0) // sanity: locomotion actually moved it this tick
+    // fast's forwardUnitsPerSecond is 2.4: displacement x TICKS_PER_SECOND(60) collapses back to exactly the style speed.
+    expect(next.combatants.self.velocity.x).toBeCloseTo(2.4, 9)
+    expect(next.combatants.self.velocity.z).toBeCloseTo(0, 9)
+    expect(next.combatants.self.velocity).toEqual({ x: dx * 60, z: dz * 60 })
+  })
+
+  it('a combatant both walking and pushed in the same tick reports the combined displacement, not just the push', () => {
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('attacker', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
+        combatant('v', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'free-for-all' },
+      combatStyles: COMBAT_STYLES,
+    })
+
+    let state = patchCombatant(created.state, 'attacker', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      action: {
+        type: 'active',
+        instanceId: 'attacker:0',
+        definitionId: 'fast-slash',
+        phase: 'windup',
+        phaseStartedTick: CONTACT_TICK - 1,
+        phaseEndsAtTick: CONTACT_TICK,
+        targetId: 'v',
+        attackRolls: { accuracy: 0.1, critical: 0.9 },
+      },
+    })
+    // 'v' has no target of its own (facing never turns) and retreats along
+    // the same axis the push lands on (+x, away from 'attacker') so the
+    // combination is an exact colinear sum, not entangled with push
+    // direction being recomputed from v's already-shifted post-locomotion
+    // position (which a perpendicular locomotion axis would introduce as a
+    // small off-axis coupling term).
+    state = patchCombatant(state, 'v', { targetId: undefined, nextDecisionTick: 999_999, facing: { x: 1, z: 0 }, locomotionIntent: 'retreat' })
+    state = { ...state, tick: CONTACT_TICK - 1 }
+
+    const { state: next, events } = advanceEncounterTick(state)
+
+    expect(events.some((event) => event.type === 'damage-dealt')).toBe(true)
+    const dx = next.combatants.v.position.x - 0
+    const dz = next.combatants.v.position.z - 0
+    // retreat (fast backwardUnitsPerSecond 2.7, facing +x) alone gives velocity.x == -2.7;
+    // push (fast-slash pushDistance 0.18, toward +x) alone gives velocity.x == 10.8.
+    // The old bug would report exactly 10.8 (phase 10's own delta only, discarding phase 8's -2.7);
+    // the fix reports the true combined net: -2.7 + 10.8 == 8.1.
+    expect(next.combatants.v.velocity.x).toBeCloseTo(8.1, 9)
+    expect(next.combatants.v.velocity.z).toBeCloseTo(0, 9)
+    expect(next.combatants.v.velocity).toEqual({ x: dx * 60, z: dz * 60 })
+  })
+})
+
 describe('advanceEncounterTick: Fast evade windup dash (carried forward from Task 8)', () => {
   it('applies 0.9 + 0.3 * directionRoll distributed across the remaining windup ticks, reading the stored roll back without re-drawing', () => {
     const created = createEncounter({
@@ -1730,6 +1912,95 @@ describe('advanceEncounterTick: Fast evade windup dash (carried forward from Tas
     const expectedStep = totalDistance / 7 // windupSpan = phaseEndsAtTick(7) - phaseStartedTick(0)
     expect(next.combatants.self.position.x).toBeCloseTo(0, 9)
     expect(next.combatants.self.position.z).toBeCloseTo(expectedStep, 9) // circle-left of facing (1,0) is +z
+  })
+
+  it('falls through to the second-ranked direction when the primary ranked direction is blocked by an arena boundary (Task 9 review finding 3)', () => {
+    // Narrow lateral band (5), generous radius (30): from z=4.9, the primary
+    // ranked direction ('circle-left', +z, roll 0.1) would land at z=5.83 --
+    // past lateralLimit -- so `selectEvadeDirection` must fall through to
+    // 'circle-right' (-z), which lands at z=3.97, well inside.
+    const narrowArena = { radius: 30, lateralLimit: 5, minimumSeparation: 0.9, movementPolicy: 'free' as const }
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('self', 'away', { archetype: 'fast', startPosition: { x: 0, z: 4.9 } }),
+        combatant('other', 'home', { archetype: 'fast', startPosition: { x: 20, z: 4.9 } }),
+      ],
+      arena: narrowArena,
+      hostility: { mode: 'different-factions' },
+      combatStyles: COMBAT_STYLES,
+    })
+
+    const directionRoll = 0.1 // primary ranked direction is circle-left (+z), blocked from z=4.9
+    let state = patchCombatant(created.state, 'self', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      action: {
+        type: 'active',
+        instanceId: 'self:0',
+        definitionId: 'fast-evade',
+        phase: 'windup',
+        phaseStartedTick: 0,
+        phaseEndsAtTick: 7,
+        targetId: 'other',
+        reactingToActionId: 'other:0',
+        defenseRoll: { direction: directionRoll },
+      },
+    })
+    state = patchCombatant(state, 'other', { targetId: undefined, nextDecisionTick: 999_999, locomotionIntent: 'hold-range' })
+    state = { ...state, tick: 1 }
+
+    const { state: next } = advanceEncounterTick(state)
+
+    const totalDistance = 0.9 + 0.3 * directionRoll
+    const expectedStep = totalDistance / 7
+    expect(next.combatants.self.position.x).toBeCloseTo(0, 9)
+    expect(next.combatants.self.position.z).toBeCloseTo(4.9 - expectedStep, 9) // circle-right (2nd ranked): -z, not +z
+  })
+
+  it('contributes zero displacement this tick when the arena boundary blocks all three ranked directions (Task 9 review finding 3)', () => {
+    // Tiny radius (0.5), generous lateral band: every one of the three
+    // ranked directions' full authored dash distance (0.93 for roll 0.1)
+    // from self's position (-0.5, 0) lands outside the radius disk. `other`
+    // sits diametrically opposite (distance 1.0, still > minimumSeparation
+    // 0.9) so the separation solver never perturbs self's own zero-movement
+    // result.
+    const tinyArena = { radius: 0.5, lateralLimit: 5, minimumSeparation: 0.9, movementPolicy: 'free' as const }
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('self', 'away', { archetype: 'fast', startPosition: { x: -0.5, z: 0 } }),
+        combatant('other', 'home', { archetype: 'fast', startPosition: { x: 0.5, z: 0 } }),
+      ],
+      arena: tinyArena,
+      hostility: { mode: 'different-factions' },
+      combatStyles: COMBAT_STYLES,
+    })
+
+    const directionRoll = 0.1
+    let state = patchCombatant(created.state, 'self', {
+      targetId: undefined,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      action: {
+        type: 'active',
+        instanceId: 'self:0',
+        definitionId: 'fast-evade',
+        phase: 'windup',
+        phaseStartedTick: 0,
+        phaseEndsAtTick: 7,
+        targetId: 'other',
+        reactingToActionId: 'other:0',
+        defenseRoll: { direction: directionRoll },
+      },
+    })
+    state = patchCombatant(state, 'other', { targetId: undefined, nextDecisionTick: 999_999, locomotionIntent: 'hold-range' })
+    state = { ...state, tick: 1 }
+
+    const { state: next } = advanceEncounterTick(state)
+
+    expect(next.combatants.self.position).toEqual({ x: -0.5, z: 0 }) // the evade is "visibly attempted" but produces no net escape
   })
 
   it('a started bound evade that never leaves contact geometry resolves as an ordinary geometry-eligible defense-failed, not a crash or a free evade', () => {
@@ -1815,6 +2086,80 @@ describe("advanceEncounterTick: Technical's forced parry-counter start (carried 
     const { events } = advanceEncounterTick(state)
     expect(types(events.filter((event) => event.type === 'attack-missed'))).toEqual(['attack-missed'])
     expect(events.find((event) => event.type === 'attack-missed')).toMatchObject({ reason: 'geometry' })
+  })
+})
+
+describe("advanceEncounterTick: forced parry-counter timing is pinned to the parry's own contact tick (Task 9 review finding 4)", () => {
+  it("starts the counter's windup on (parry contact tick + 1), pre-empting the parry's own impact/recovery, landing its own contact well inside the attacker's 24-tick stagger", () => {
+    const state = contactFixture({
+      actorArchetype: 'technical',
+      targetArchetype: 'technical',
+      actionId: 'technical-thrust', // parryable, contactRange 1.2-2.8
+      actorPosition: { x: -2, z: 0 },
+      targetPosition: { x: 0, z: 0 }, // distance 2: within technical-thrust's range AND within the counter's 2.3-unit gate
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9,
+      targetOverrides: { targetId: 'actor', facing: { x: -1, z: 0 }, action: boundDefense('technical-parry') },
+    })
+
+    const { state: afterParry } = advanceEncounterTick(state) // tick CONTACT_TICK: parry resolves
+    expect(afterParry.combatants.target.forcedActionId).toBe('technical-parry-counter')
+    expect(afterParry.combatants.actor.staggerUntilTick).toBe(CONTACT_TICK + 24)
+    // The parry's own action is untouched here -- still `contact` this same tick (phase 1 hasn't run again yet).
+    expect(afterParry.combatants.target.action).toMatchObject({ definitionId: 'technical-parry', phase: 'contact' })
+
+    const { state: afterCounterStart } = advanceEncounterTick(afterParry) // tick CONTACT_TICK + 1
+    expect(afterCounterStart.combatants.target.forcedActionId).toBeUndefined()
+    // Pre-empts whatever phase the parry's own action naturally reached this tick (would otherwise be `impact`):
+    // the counter starts its own fresh windup immediately, not after 4 ticks of impact + 16 of recovery.
+    expect(afterCounterStart.combatants.target.action).toMatchObject({
+      type: 'active',
+      definitionId: 'technical-parry-counter',
+      phase: 'windup',
+      phaseStartedTick: CONTACT_TICK + 1,
+      phaseEndsAtTick: CONTACT_TICK + 1 + 8, // CONTACT_TICK + 9
+    })
+    expect(CONTACT_TICK + 9).toBeLessThan(CONTACT_TICK + 24) // comfortably inside the attacker's stagger window
+
+    const { state: atCounterContact } = advanceEncounterTicks(afterCounterStart, 8) // advance to CONTACT_TICK + 9
+    expect(atCounterContact.tick).toBe(CONTACT_TICK + 9)
+    expect(atCounterContact.combatants.target.action).toMatchObject({ definitionId: 'technical-parry-counter', phase: 'contact' })
+  })
+
+  it("plays out the parry's own impact and recovery normally when the counter is cleared by distance, instead of being pre-empted", () => {
+    const state = contactFixture({
+      actorArchetype: 'technical',
+      targetArchetype: 'technical',
+      actionId: 'technical-thrust',
+      actorPosition: { x: -2.5, z: 0 },
+      targetPosition: { x: 0, z: 0 }, // distance 2.5: within technical-thrust's range (1.2-2.8) but past the counter's 2.3-unit gate
+      actorFacing: { x: 1, z: 0 },
+      accuracyRoll: 0.1,
+      criticalRoll: 0.9,
+      targetOverrides: { targetId: 'actor', facing: { x: -1, z: 0 }, action: boundDefense('technical-parry') },
+    })
+
+    const { state: afterParry, events } = advanceEncounterTick(state) // tick CONTACT_TICK: parry resolves
+    expect(events.some((event) => event.type === 'attack-parried')).toBe(true)
+    expect(afterParry.combatants.target.forcedActionId).toBe('technical-parry-counter')
+
+    const { state: afterGateCheck } = advanceEncounterTick(afterParry) // tick CONTACT_TICK + 1: gate fails (2.5 > 2.3)
+    expect(afterGateCheck.combatants.target.forcedActionId).toBeUndefined()
+    // Left completely alone by the gate-fail branch: phase 1 already advanced it to `impact` on its own, ordinary schedule.
+    expect(afterGateCheck.combatants.target.action).toMatchObject({
+      definitionId: 'technical-parry',
+      phase: 'impact',
+      phaseStartedTick: CONTACT_TICK + 1,
+      phaseEndsAtTick: CONTACT_TICK + 1 + 4, // technical-parry's authored impactTicks
+    })
+
+    const { state: atRecovery } = advanceEncounterTicks(afterGateCheck, 4) // advance to CONTACT_TICK + 5: impact ends
+    expect(atRecovery.combatants.target.action).toMatchObject({
+      definitionId: 'technical-parry',
+      phase: 'recovery',
+      phaseEndsAtTick: CONTACT_TICK + 5 + 16, // technical-parry's authored recoveryTicks
+    })
   })
 })
 

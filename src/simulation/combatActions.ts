@@ -393,10 +393,8 @@ export type EvadeDirection = 'circle-left' | 'circle-right' | 'backstep'
 /**
  * Ranks Fast evade's three candidate directions from the same `directionRoll`
  * that also picks the dash distance, splitting `[0,1)` into equal thirds.
- * This slice's phase-7 windup-displacement wiring only ever uses the primary
- * (first) ranked direction for the whole dash -- design.md's "blocked
- * directions fall through" dynamic per-tick fallback is not implemented
- * here; see the Task 9 report for this documented simplification.
+ * `selectEvadeDirection` below walks this order to implement design.md's
+ * "blocked directions fall through in that deterministic order."
  */
 export function rankEvadeDirections(directionRoll: number): readonly EvadeDirection[] {
   if (directionRoll < 1 / 3) return ['circle-left', 'circle-right', 'backstep']
@@ -422,6 +420,55 @@ export function evadeDirectionVector(intent: EvadeDirection, facing: Readonly<Ve
     case 'backstep':
       return { x: -facing.x + 0, z: -facing.z + 0 }
   }
+}
+
+/**
+ * `true` when `position` already satisfies the arena's walkable bounds (the
+ * lateral band `z ∈ [-lateralLimit, lateralLimit]` and the `radius` disk
+ * around the origin) with no correction needed -- i.e. `movement.ts`'s
+ * private `clampToArena` would return it unchanged. Duplicated here (like
+ * `evadeDirectionVector`'s perpendiculars, above) since `movement.ts` exports
+ * neither `clampToArena` nor an arena-membership check and this file cannot
+ * reach a private function across the module boundary.
+ */
+function isInsideArenaBounds(position: Readonly<Vec2>, arena: Readonly<CombatArenaDefinition>): boolean {
+  if (position.z < -arena.lateralLimit || position.z > arena.lateralLimit) return false
+  return Math.sqrt(position.x * position.x + position.z * position.z) <= arena.radius
+}
+
+/**
+ * Picks the first of Fast evade's three ranked directions (design.md's Fast
+ * evade section: "blocked directions fall through in that deterministic
+ * order") whose full authored dash distance, projected from `position` in
+ * that direction, would still land inside the arena's walkable bounds.
+ * `undefined` when the arena boundary blocks all three -- design.md's "If
+ * arena boundaries prevent all ranked displacements from leaving the contact
+ * geometry, the evade is visibly attempted, `defense-failed` emits with
+ * reason `geometry`" then falls out naturally: zero displacement leaves the
+ * defender's position (and therefore contact geometry) unchanged, so the
+ * ordinary geometry check in `encounter.ts`'s contact resolution reports the
+ * same outcome it would for any other still-in-range defender.
+ *
+ * A pure function of its inputs, so every call site -- the live windup
+ * displacement computed fresh each tick from the defender's *current*
+ * position, and the `attack-evaded`/`defense-failed` event's `evadeIntent`
+ * label recomputed once more from the resolved contact snapshot -- agrees by
+ * construction without needing to persist which direction "won" anywhere in
+ * `CombatActionState`.
+ */
+export function selectEvadeDirection(
+  directionRoll: number,
+  facing: Readonly<Vec2>,
+  position: Readonly<Vec2>,
+  totalDistance: number,
+  arena: Readonly<CombatArenaDefinition>,
+): EvadeDirection | undefined {
+  for (const candidate of rankEvadeDirections(directionRoll)) {
+    const direction = evadeDirectionVector(candidate, facing)
+    const endpoint = { x: position.x + direction.x * totalDistance, z: position.z + direction.z * totalDistance }
+    if (isInsideArenaBounds(endpoint, arena)) return candidate
+  }
+  return undefined
 }
 
 // ---------------------------------------------------------------------------

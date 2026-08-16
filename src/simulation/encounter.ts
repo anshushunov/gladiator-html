@@ -38,6 +38,7 @@ import {
   isWithinIncomingFacingArc,
   PARRY_ATTACKER_STAGGER_TICKS,
   rankEvadeDirections,
+  selectEvadeDirection,
   startAttackAction,
   transitionActionPhase,
   type AttackActionDefinition,
@@ -913,17 +914,36 @@ function completeForcedStateTransitions(
  * Technical's forced parry-counter (design.md's "Technical parry" section;
  * carried forward from Task 8 into this task): a successful parry
  * (contact-resolution phase 9, this task) stamps the defender's
- * `forcedActionId = 'technical-parry-counter'`. This checks that flag once
- * the defender's own action returns to `neutral` -- i.e. their parry's own
- * windup/contact/impact/recovery has already run its ordinary course, this
- * uses the same uniform phase machinery as every other action, no special
- * termination -- so "the defender's forced NEXT action" is read literally:
- * whichever tick the defender becomes free again, still using the current
- * (post phase-3 target-refresh) target. `resolveForcedParryCounterStart`
- * (Task 7's existing helper) decides whether the target is still close
- * enough; either way `forcedActionId` is a one-shot flag, always cleared
- * here. Bypasses phase 4's weighted selection entirely for this tick when it
- * fires -- see `forcedActionActorIds` there.
+ * `forcedActionId = 'technical-parry-counter'`, and this function checks
+ * that flag on the very next tick -- *not* once the defender's own action
+ * naturally returns to `neutral`. `forcedActionId` is a one-shot flag,
+ * always cleared the first time it is inspected here, so a defender whose
+ * parry resolved on tick `T` is checked once, on tick `T + 1`, regardless of
+ * whether their `technical-parry` action (still progressing through its own
+ * ordinary 1-tick contact -> 4-tick impact -> 16-tick recovery, untouched by
+ * the parry branch of `resolveOneIntent`) happens to be `impact` at that
+ * point. `resolveForcedParryCounterStart` (Task 7's existing helper) decides
+ * whether the target is still within `2.3` units:
+ * - if it fires, `pendingActionStarts` carries it to phase 5
+ *   (`startSelectedActions`), which unconditionally overwrites `action` with
+ *   the counter's fresh `windup` -- pre-empting whatever phase the parry's
+ *   own action was still in, so counter contact lands on `(T + 1) + 8`,
+ *   comfortably inside the attacker's 24-tick stagger window (Task 9 review
+ *   finding 4's ruling: waiting out the parry's own impact/recovery first
+ *   would land counter contact *after* the stagger expires, making the
+ *   24-tick value incoherent -- the literal "next tick" reading is the only
+ *   one under which the numbers work);
+ * - if it doesn't, only `forcedActionId` is cleared -- `action` is left
+ *   completely alone, so "the parry plays out its impact and recovery
+ *   normally" (design.md) actually happens: the 4/16-tick values this task
+ *   does not touch. `nextDecisionTick` is still pulled to `tick` in this
+ *   branch so ordinary weighted selection resumes the instant the parry's
+ *   own recovery *does* end naturally (`isDecisionReady` additionally
+ *   requires `action.type === 'neutral'`, so this has no effect while the
+ *   parry is still mid-impact/recovery).
+ *
+ * Bypasses phase 4's weighted selection entirely for this tick when it fires
+ * -- see `forcedActionActorIds` there.
  */
 function resolveForcedActionStarts(
   combatants: Readonly<Record<CombatantId, FighterCombatState>>,
@@ -935,7 +955,7 @@ function resolveForcedActionStarts(
 
   for (const id of combatantIds) {
     const combatant = next[id]
-    if (combatant.status !== 'active' || combatant.forcedActionId === undefined || combatant.action.type !== 'neutral') continue
+    if (combatant.status !== 'active' || combatant.forcedActionId === undefined) continue
 
     const targetId = combatant.targetId
     const target = targetId ? combatants[targetId] : undefined
@@ -948,7 +968,8 @@ function resolveForcedActionStarts(
     } else {
       // Cleared: "Technical selects advance/hold-range normally" -- pull
       // `nextDecisionTick` to the current tick so ordinary weighted
-      // selection resumes immediately this same tick, matching Fast's own
+      // selection resumes immediately once the parry's own action (left
+      // untouched here) naturally reaches `neutral`, matching Fast's own
       // forced-disengage exit convention (`completeForcedStateTransitions`
       // above).
       next[id] = { ...combatant, forcedActionId: undefined, nextDecisionTick: tick }
@@ -1266,7 +1287,7 @@ function computeDesiredDisplacement(
   tick: number,
   combatStyles: CombatStyleCatalog,
   combatants: Readonly<Record<CombatantId, FighterCombatState>>,
-  minimumSeparation: number,
+  arena: Readonly<CombatArenaDefinition>,
 ): Vec2 {
   if (combatant.staggerUntilTick > tick) return { x: 0, z: 0 }
 
@@ -1277,10 +1298,10 @@ function computeDesiredDisplacement(
         if (attackDefinition) {
           const perTick = attackDefinition.rootTravel / attackDefinition.windupTicks
           const target = combatants[combatant.action.targetId]
-          const step = target ? Math.min(perTick, Math.max(0, distanceBetween(combatant.position, target.position) - minimumSeparation)) : perTick
+          const step = target ? Math.min(perTick, Math.max(0, distanceBetween(combatant.position, target.position) - arena.minimumSeparation)) : perTick
           return { x: facing.x * step, z: facing.z * step }
         }
-        return fastEvadeWindupDisplacement(combatant.action, facing)
+        return fastEvadeWindupDisplacement(combatant.action, facing, combatant.position, arena)
       }
       case 'contact':
       case 'impact':
@@ -1300,24 +1321,39 @@ function computeDesiredDisplacement(
  * carried forward from Task 8 into this task): a total distance of
  * `0.9 + 0.3 * directionRoll` distributed evenly across the defense's
  * *remaining* windup ticks (`phaseEndsAtTick - phaseStartedTick`, fixed once
- * the defense starts), along the primary ranked direction from that same
- * stored roll -- read back from `CombatActionState.defenseRoll.direction`,
+ * the defense starts), along the current best-ranked direction from that
+ * same stored roll -- read back from `CombatActionState.defenseRoll.direction`,
  * never re-drawn (Task 7 already consumed it from the defense stream).
- * Independent of the style's ordinary locomotion speed profile; the result
- * still flows through this tick's ordinary arena/movement-policy/separation
- * resolution (phase 8) like any other displacement. Heavy guard and
- * Technical parry hold root (return zero); this only ever fires for
- * `fast-evade`.
+ * `selectEvadeDirection` (combatActions.ts) re-evaluates the ranked-direction
+ * fall-through fresh every tick from the defender's *current* position, so a
+ * direction blocked by an arena boundary earlier in the windup is retried
+ * (and a direction that becomes blocked, e.g. dashing toward a wall, falls
+ * through to the next-ranked one) without needing to persist a choice
+ * anywhere. Independent of the style's ordinary locomotion speed profile;
+ * the result still flows through this tick's ordinary arena/movement-
+ * policy/separation resolution (phase 8) like any other displacement. Heavy
+ * guard and Technical parry hold root (return zero); this only ever fires
+ * for `fast-evade`. `undefined` from `selectEvadeDirection` (arena boundaries
+ * block all three ranked directions from `position`) contributes zero
+ * displacement this tick.
  */
-function fastEvadeWindupDisplacement(action: Extract<CombatActionState, { type: 'active' }>, facing: Readonly<Vec2>): Vec2 {
+function fastEvadeWindupDisplacement(
+  action: Extract<CombatActionState, { type: 'active' }>,
+  facing: Readonly<Vec2>,
+  position: Readonly<Vec2>,
+  arena: Readonly<CombatArenaDefinition>,
+): Vec2 {
   if (action.definitionId !== 'fast-evade' || !action.defenseRoll) return { x: 0, z: 0 }
 
   const windupSpan = action.phaseEndsAtTick - action.phaseStartedTick
   if (windupSpan <= 0) return { x: 0, z: 0 }
 
   const totalDistance = calculateEvadeDisplacementDistance(action.defenseRoll.direction)
+  const chosen = selectEvadeDirection(action.defenseRoll.direction, facing, position, totalDistance, arena)
+  if (!chosen) return { x: 0, z: 0 }
+
   const perTick = totalDistance / windupSpan
-  const direction = evadeDirectionVector(rankEvadeDirections(action.defenseRoll.direction)[0], facing)
+  const direction = evadeDirectionVector(chosen, facing)
   return { x: direction.x * perTick, z: direction.z * perTick }
 }
 
@@ -1346,7 +1382,7 @@ function computeMovementIntents(
     const combatant = combatants[id]
     if (combatant.status !== 'active') continue
     const style = combatStyles.styles[combatant.definition.archetype]
-    const displacement = computeDesiredDisplacement(combatant, style, updatedFacing[id], tick, combatStyles, combatants, arena.minimumSeparation)
+    const displacement = computeDesiredDisplacement(combatant, style, updatedFacing[id], tick, combatStyles, combatants, arena)
     requests.push({ id, position: combatant.position, desiredDisplacement: displacement })
   }
 
@@ -1357,10 +1393,14 @@ function computeMovementIntents(
 
 /**
  * Resolves `intents` through `resolveSimultaneousMovement` (arena clamp,
- * `movementPolicy` constraint, three fixed separation passes) and persists
- * the actual post-constraint motion diagnostics: `velocity = actualDisplacement
- * x TICKS_PER_SECOND` and `travelledDistance += |actualDisplacement|`, both
- * derived from the real post-constraint delta, never the desired one.
+ * `movementPolicy` constraint, three fixed separation passes) and writes the
+ * resulting `facing`/`position`. This function is called twice in one tick
+ * (phase 8's ordinary locomotion, phase 10's accumulated push) and must NOT
+ * touch `velocity`/`travelledDistance` itself -- doing so per call would let
+ * a later zero-displacement call (e.g. phase 10 for an unpushed combatant)
+ * stomp an earlier call's correct diagnostics back to zero. Those two fields
+ * are instead derived once, for the tick as a whole, by
+ * `applyTickMotionDiagnostics` after every position-mutating phase has run.
  */
 function resolveMovementConstraints(
   combatants: Readonly<Record<CombatantId, FighterCombatState>>,
@@ -1376,14 +1416,46 @@ function resolveMovementConstraints(
     if (combatant.status !== 'active') continue
     const facing = intents.updatedFacing[id]
     const newPosition = resolution.positions[id]
-    const dx = newPosition.x - combatant.position.x
-    const dz = newPosition.z - combatant.position.z
     next[id] = {
       ...combatant,
       facing,
       position: newPosition,
+    }
+  }
+
+  return next
+}
+
+/**
+ * Derives `velocity`/`travelledDistance` exactly once per tick, from the
+ * combatant's position at the very start of the tick (`start`, i.e.
+ * `previous.combatants`) versus its position after every phase that can move
+ * it this tick has already run (phase 8's ordinary locomotion and phase 10's
+ * accumulated push, both via `resolveMovementConstraints` above). `velocity
+ * = totalDisplacement x TICKS_PER_SECOND` reflects the tick's true net root
+ * motion regardless of how many separate movement-resolution calls produced
+ * it -- a combatant that only walked, only got pushed, or did both in the
+ * same tick all get one correct combined value. `travelledDistance` adds
+ * that same total magnitude once, so successive ticks sum real displacement
+ * without double-counting a single tick's motion across two calls.
+ */
+function applyTickMotionDiagnostics(
+  start: Readonly<Record<CombatantId, FighterCombatState>>,
+  combatants: Readonly<Record<CombatantId, FighterCombatState>>,
+  combatantIds: readonly CombatantId[],
+): Record<CombatantId, FighterCombatState> {
+  const next: Record<CombatantId, FighterCombatState> = { ...combatants }
+
+  for (const id of combatantIds) {
+    const combatant = combatants[id]
+    if (combatant.status !== 'active') continue
+    const startCombatant = start[id]
+    const dx = combatant.position.x - startCombatant.position.x
+    const dz = combatant.position.z - startCombatant.position.z
+    next[id] = {
+      ...combatant,
       velocity: { x: dx * TICKS_PER_SECOND, z: dz * TICKS_PER_SECOND },
-      travelledDistance: combatant.travelledDistance + Math.sqrt(dx * dx + dz * dz),
+      travelledDistance: startCombatant.travelledDistance + Math.sqrt(dx * dx + dz * dz),
     }
   }
 
@@ -1456,8 +1528,16 @@ function buildContactIntents(
   return intents
 }
 
-/** Descending priority, then ascending `tieKey`, then ascending `ActionInstanceId` -- a stable total order over explicit keys, never a pairwise random comparator. */
-function sortContactIntents(intents: readonly ContactIntent[]): ContactIntent[] {
+/**
+ * Descending priority, then ascending `tieKey`, then ascending
+ * `ActionInstanceId` -- a stable total order over explicit keys, never a
+ * pairwise random comparator. Exported (Task 9 review: minor test gap) so
+ * `encounter.test.ts` can exercise the final `ActionInstanceId` fallback
+ * directly with a synthetic colliding `tieKey`, which the continuous
+ * `derivedUnitValue` distribution used in real play cannot be coaxed into
+ * producing through the public tick API.
+ */
+export function sortContactIntents(intents: readonly ContactIntent[]): ContactIntent[] {
   return [...intents].sort((a, b) => {
     if (a.priority !== b.priority) return b.priority - a.priority
     if (a.tieKey !== b.tieKey) return a.tieKey - b.tieKey
@@ -1526,6 +1606,30 @@ interface ContactIntentResolution {
 }
 
 /**
+ * The `evadeIntent` label for a successful `attack-evaded` event: the same
+ * ranked-direction fall-through `fastEvadeWindupDisplacement` used to
+ * actually move the defender (`selectEvadeDirection`, combatActions.ts),
+ * re-evaluated once more from the defender's resolved contact-snapshot
+ * position/facing rather than read from an unrelated field (Task 9 review
+ * finding 2: this previously read `locomotionIntent`, which nothing ever set
+ * to the evade's actual dashed direction). Falls back to the roll's primary
+ * ranked direction -- for labeling only, never for the success/fail
+ * determination, which is decided purely by `geometryOk` above -- in the
+ * edge case where the arena boundary blocks all three directions from the
+ * defender's own final resting position.
+ */
+function resolveEvadeIntentLabel(
+  boundDefense: Extract<CombatActionState, { type: 'active' }>,
+  targetPosition: Readonly<Vec2>,
+  targetFacing: Readonly<Vec2>,
+  arena: Readonly<CombatArenaDefinition>,
+): LocomotionIntent {
+  const directionRoll = boundDefense.defenseRoll?.direction ?? 0
+  const totalDistance = calculateEvadeDisplacementDistance(directionRoll)
+  return selectEvadeDirection(directionRoll, targetFacing, targetPosition, totalDistance, arena) ?? rankEvadeDirections(directionRoll)[0]
+}
+
+/**
  * Resolves one intent per design.md's numbered algorithm (target-unavailable
  * -> bound evade -> geometry -> accuracy -> bound guard/parry facing gate ->
  * critical -> damage/push/stagger/zone/point -> events in canonical order).
@@ -1546,6 +1650,7 @@ function resolveOneIntent(
   combatStyles: CombatStyleCatalog,
   tick: number,
   cursor: EventIdCursor,
+  arena: Readonly<CombatArenaDefinition>,
 ): ContactIntentResolution {
   const actionDef = combatStyles.attacks[intent.actionId]
   const actorSnapshot = snapshot[intent.actorId]
@@ -1582,7 +1687,7 @@ function resolveOneIntent(
         targetId: intent.targetId,
         actionInstanceId: intent.actionInstanceId,
         actionId: intent.actionId,
-        evadeIntent: targetLive.locomotionIntent,
+        evadeIntent: resolveEvadeIntentLabel(boundDefense, targetSnapshot.position, targetSnapshot.facing, arena),
       })
       return { combatants: next, events }
     }
@@ -1674,6 +1779,9 @@ function resolveOneIntent(
     next = { ...next, [intent.actorId]: staggerResult.combatant }
     events.push(...staggerResult.events)
 
+    // `resolveForcedActionStarts` (phase 3.5, next tick) is what actually
+    // decides the counter's fate -- see its own doc comment for why this
+    // branch does *not* also touch `action` here (Task 9 review finding 4).
     next = { ...next, [intent.targetId]: { ...next[intent.targetId], forcedActionId: 'technical-parry-counter' } }
 
     return { combatants: next, events }
@@ -1782,6 +1890,7 @@ export function resolveContactIntents(
   seed: number,
   tick: number,
   cursor: EventIdCursor,
+  arena: Readonly<CombatArenaDefinition>,
 ): ContactResolutionResult {
   const snapshot = combatants
   let live: Record<CombatantId, FighterCombatState> = { ...combatants }
@@ -1794,7 +1903,7 @@ export function resolveContactIntents(
     const actorLive = live[intent.actorId]
     if (!actorLive || actorLive.status !== 'active') continue
 
-    const result = resolveOneIntent(intent, snapshot, live, combatStyles, tick, cursor)
+    const result = resolveOneIntent(intent, snapshot, live, combatStyles, tick, cursor, arena)
     live = result.combatants
     events.push(...result.events)
 
@@ -1923,12 +2032,17 @@ export function advanceEncounterTick(previous: EncounterState): EncounterTransit
   combatants = resolveMovementConstraints(combatants, previous.combatantIds, intents, previous.arena)
 
   // Phase 9
-  const contactResolution = resolveContactIntents(combatants, previous.combatantIds, previous.combatStyles, previous.seed, tick, cursor)
+  const contactResolution = resolveContactIntents(combatants, previous.combatantIds, previous.combatStyles, previous.seed, tick, cursor, previous.arena)
   combatants = contactResolution.combatants
   events.push(...contactResolution.events)
 
   // Phase 10
   combatants = applyAccumulatedPush(combatants, previous.combatantIds, contactResolution.pushByTarget, previous.arena)
+
+  // Motion diagnostics (`velocity`/`travelledDistance`): derived once here,
+  // from the tick's true start-to-end displacement, now that both
+  // position-mutating phases (8 and 10) have finished.
+  combatants = applyTickMotionDiagnostics(previous.combatants, combatants, previous.combatantIds)
 
   const nextState: EncounterState = {
     ...previous,

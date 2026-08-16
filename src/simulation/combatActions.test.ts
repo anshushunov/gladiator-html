@@ -14,12 +14,13 @@ import {
   isWithinIncomingFacingArc,
   PARRY_ATTACKER_STAGGER_TICKS,
   rankEvadeDirections,
+  selectEvadeDirection,
   startAttackAction,
   startDefenseAction,
   transitionActionPhase,
   type AttackActionDefinition,
 } from './combatActions'
-import type { Vec2 } from './movement'
+import type { CombatArenaDefinition, Vec2 } from './movement'
 
 // Local fixture mirroring the authored `fast-slash` row (src/content/combatStyles.ts
 // owns the real content catalog; this file stays independent of it, matching
@@ -425,5 +426,31 @@ describe('evadeDirectionVector', () => {
 
   it('backstep is the negated facing', () => {
     expect(evadeDirectionVector('backstep', facing)).toEqual({ x: -1, z: 0 })
+  })
+})
+
+describe('selectEvadeDirection', () => {
+  const facing: Vec2 = { x: 1, z: 0 }
+  const generousArena: CombatArenaDefinition = { radius: 30, lateralLimit: 20, minimumSeparation: 0.9, movementPolicy: 'free' }
+
+  it('picks the primary ranked direction when it is not blocked by the arena', () => {
+    expect(selectEvadeDirection(0.1, facing, { x: 0, z: 0 }, 0.93, generousArena)).toBe('circle-left')
+  })
+
+  it('falls through to the second-ranked direction when the primary is blocked (design.md: "blocked directions fall through in that deterministic order")', () => {
+    const narrowArena: CombatArenaDefinition = { radius: 30, lateralLimit: 5, minimumSeparation: 0.9, movementPolicy: 'free' }
+    // roll 0.1 ranks circle-left (+z) first; from z=4.9, +0.93 exceeds lateralLimit 5, so it falls through to circle-right (-z).
+    expect(selectEvadeDirection(0.1, facing, { x: 0, z: 4.9 }, 0.93, narrowArena)).toBe('circle-right')
+  })
+
+  it('returns undefined when the arena blocks all three ranked directions', () => {
+    const tinyArena: CombatArenaDefinition = { radius: 0.5, lateralLimit: 5, minimumSeparation: 0.9, movementPolicy: 'free' }
+    expect(selectEvadeDirection(0.1, facing, { x: -0.5, z: 0 }, 0.93, tinyArena)).toBeUndefined()
+  })
+
+  it('is a pure function of its inputs: identical arguments always resolve to the same direction', () => {
+    const first = selectEvadeDirection(0.42, { x: 0, z: 1 }, { x: 2, z: -3 }, 1.05, generousArena)
+    const second = selectEvadeDirection(0.42, { x: 0, z: 1 }, { x: 2, z: -3 }, 1.05, generousArena)
+    expect(first).toBe(second)
   })
 })
