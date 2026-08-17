@@ -886,24 +886,15 @@ function deterministicFallbackDecision(
     }
   }
 
-  // `hold-range` reads "already in a good place", but that is a statement
-  // about the range to the target, not about where the combatant is standing.
-  // A fighter pressed against the arena boundary is in the one position where
-  // every action takes the authored `-20` penalty, so holding there is the
-  // dead zone itself. Prefer whichever legal locomotion most improves the
-  // boundary margin; ties keep authored order, so this stays deterministic.
-  const margin = arenaBoundaryMargin(context.arena, context.self.position)
-  if (margin < ARENA_BOUNDARY_MARGIN) {
-    let best: { intent: LocomotionIntent; margin: number } | undefined
-    for (const candidate of ordinary) {
-      if (candidate.type !== 'locomotion') continue
-      const moved = projectedPosition(context, style, candidate.locomotionIntent, DECISION_INTERVAL_RANGES[style.archetype].max)
-      const movedMargin = arenaBoundaryMargin(context.arena, moved)
-      if (movedMargin > (best?.margin ?? margin)) best = { intent: candidate.locomotionIntent, margin: movedMargin }
-    }
-    if (best) return { type: 'locomotion', locomotionIntent: best.intent }
-  }
-
+  // design.md:525 ends the rule here: "policy deterministically selects
+  // movement toward the preferred range, or `hold-range` when already inside
+  // it." No boundary-aware clause follows, and none is added -- an earlier
+  // revision of this function did prefer whichever intent most improved the
+  // arena boundary margin, which was an undisclosed eighth decision rule with
+  // no design anchor. It was scaffolding from when the boundary dead zone was
+  // the dominant stall mechanism, and both rules that actually address that
+  // (the arena-path filter and the anti-stall movement exemption) landed
+  // afterwards with anchors of their own, leaving it redundant.
   return { type: 'locomotion', locomotionIntent: 'hold-range' }
 }
 
