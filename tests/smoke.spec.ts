@@ -68,16 +68,16 @@ test('plays three bouts, reports a 2–1 win, and rematches the same seed', asyn
 test('reports school defeat in the summary heading for a losing lineup', async ({ page }) => {
   // Task 11 swapped this test off the all-counter ordering because that lineup
   // had started sweeping 3-0, and left a note to revisit "once the golden
-  // lineup loses again". Task 13's balance work went a different way: the
-  // all-counter lineup no longer sweeps, but it does not lose either -- it wins
-  // 2-1, which is exactly the "useful but not a guaranteed answer" outcome the
-  // design asks for, and it is now the lineup the school-victory test above
-  // uses. So this test needs a genuinely losing ordering, and
-  // `nerva/aquila/brutus` is the one that does (1-2). Its job is the "School
-  // defeat" heading and score rendering, so which losing lineup it uses is
-  // incidental -- but it is chosen from the final measured balance rather than
-  // to dodge it. See series.test.ts's golden-scenario block for the full
-  // six-lineup table.
+  // lineup loses again". Under Task 13's final calibration it does lose -- the
+  // all-counter lineup `brutus/aquila/nerva` finishes 1-2 -- so the note's
+  // condition is met, but that makes it a candidate for THIS test rather than
+  // for the victory test above, which now plays `aquila/brutus/nerva`.
+  //
+  // `nerva/aquila/brutus` is used here instead simply to keep the two tests on
+  // different orderings. This test's job is the "School defeat" heading and
+  // score rendering, so which losing lineup it uses is incidental -- but it is
+  // chosen from the final measured balance rather than to dodge it. See
+  // series.test.ts's golden-scenario block for the full six-lineup table.
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.assign('nerva', 0)

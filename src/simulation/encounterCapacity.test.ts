@@ -147,7 +147,7 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
     // every HP row to put the duel cohort's median bout inside 1500..2400
     // ticks, and 600 ticks of a 100-way melee no longer kills anyone even
     // though this run is now MORE active than when the assertion was written
-    // (387 actions vs 301, 350 resolutions vs 272). The `600` is design-fixed
+    // (375 actions vs 301, 330 resolutions vs 272). The `600` is design-fixed
     // ("advance 600 ticks", mass-foundation acceptance), so it is not available
     // as a knob.
     //

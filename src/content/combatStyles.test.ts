@@ -555,7 +555,7 @@ describe('validateCombatStyleCatalog: style structural rules', () => {
 // `Heavy < Technical < Fast`.
 //
 // Task 13's calibration moved several of these numbers close to each other --
-// `technical-driving-thrust` sits at 1.74 against `heavy-cleave`'s 1.75 -- so
+// `technical-driving-thrust` sits at 1.82 against `heavy-cleave`'s 1.98 -- so
 // the orderings are pinned as properties here rather than left to be re-derived
 // by whoever tunes next.
 // ---------------------------------------------------------------------------
@@ -571,8 +571,8 @@ describe('authored qualitative orderings survive tuning', () => {
   // exists so a viewer can tell a probe from a commitment by how it lands, and a
   // probe that out-damages some other style's commitment undercuts that. The
   // authored table satisfied it as a class (max probe 1.00 < min committed
-  // 1.25), and the calibration keeps it that way -- `technical-thrust` is
-  // deliberately capped at 1.24, just under `fast-burst-lunge`'s 1.25.
+  // 1.25), and the calibration keeps it that way -- `technical-thrust` at 1.34
+  // stays under `fast-burst-lunge`'s 1.40, the smallest committed payoff.
   it('keeps every probe quicker and lower-payoff than every committed action', () => {
     const probes = Object.values(attacks).filter((a) => (a.tags as readonly string[]).includes('probe'))
     const committed = Object.values(attacks).filter((a) => (a.tags as readonly string[]).includes('committed'))

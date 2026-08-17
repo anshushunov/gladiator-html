@@ -3173,7 +3173,7 @@ describe('Task 10 Step 4: informational pacing probe -- Brutus vs. Drusus, 20 se
     console.log(
       `[Task 10 pacing probe] Brutus vs. Drusus, ${PROBE_SEED_COUNT} seeds: ` +
         `finished ${finishedCount}/${PROBE_SEED_COUNT}, still running ${stillRunningCount}/${PROBE_SEED_COUNT}, ` +
-        `invariant-violated ${invariantViolations.length}/${PROBE_SEED_COUNT} (pre-existing, out-of-scope -- see task report), ` +
+        `invariant-violated ${invariantViolations.length}/${PROBE_SEED_COUNT}, ` +
         `within ${MAX_PROBE_TICKS} ticks; ` +
         `median duration ${medianDuration} ticks; ` +
         `geometry-miss fraction ${(geometryMissFraction * 100).toFixed(1)}% (${geometryMisses}/${totalResolutions} attack resolutions).`,

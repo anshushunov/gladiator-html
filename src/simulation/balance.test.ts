@@ -306,11 +306,19 @@ describe('fixed equal-stat style cohorts (500 seeds per ordered matchup)', () =>
     const MIN_REPOSITION = 0.40
     /**
      * ...or, failing that, minimum ground covered per elapsed tick. At 0.005 the
-     * bar is 0.5 units per 100 ticks: far below what any style's locomotion
-     * produces (Heavy's slowest is 0.8 u/s, i.e. 1.33 units per 100 ticks) but
-     * well above what an action's own authored root travel can supply on its own
-     * over a full attack cycle, which is what makes it a test of locomotion
-     * rather than of lunging.
+     * bar is 0.5 units per 100 ticks, far below what any style's locomotion
+     * produces (Heavy's slowest is 0.8 u/s, i.e. 1.33 units per 100 ticks).
+     *
+     * It is NOT above what an action's own root travel could supply per cycle
+     * tick -- `heavy-cleave` is 0.45/74 = 0.0061, `technical-driving-thrust`
+     * 0.50/58 = 0.0086, `fast-burst-lunge` 1.40/45 = 0.0311, all above this bar.
+     * The arm still discriminates, but for a different reason: root travel is
+     * clamped at `max(arena.minimumSeparation, contactRange.min)` during windup
+     * (`encounter.ts`), so a fighter that is ALREADY at contact range travels
+     * zero while attacking -- and that is precisely the stationary cooldown
+     * trading this test exists to catch. A fighter closing from range does move,
+     * and should pass; a fighter trading on the spot contributes nothing from
+     * its actions and must clear the bar on locomotion alone.
      */
     const MIN_TRAVEL_PER_TICK = 0.005
     const failures: string[] = []

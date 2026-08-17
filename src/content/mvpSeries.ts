@@ -24,20 +24,26 @@ import type { FighterDefinition } from '../simulation/fighters'
 //   lowest HP plus top-tier per-hit power is at least a coherent glass cannon --
 //   but it is a real change of standing and is flagged as one.
 //
-// Two magnitude deviations that preserve every rank:
+// Magnitude changes that preserve every rank. The first two are the ones the
+// owner ruled on; the third is ordinary tuning under the design's blanket
+// "Implementation may tune these fighter numbers" clause, listed in full so an
+// audit against the approved set finds no unexplained value:
 //
-//   - The HP spread is compressed: Aquila sits at ~78% of Drusus's HP against the
-//     authored 65%, so "fragile" survives as an ordinal but is softer as a
-//     magnitude. This is the other half of what makes `aquila/drusus` reachable.
+//   - The HP spread is compressed: Aquila sits at 78% of Drusus's HP (274 vs
+//     350) against the authored 65% (120 vs 185), so "fragile" survives as an
+//     ordinal but is softer as a magnitude. The per-row scale factors are
+//     deliberately NOT uniform -- they span 1.892 (Drusus) to 2.283 (Aquila) --
+//     because the compression IS the deviation: a uniform scale would have kept
+//     the authored 65% and left `aquila/drusus` unreachable. HP is also what
+//     puts the cohort's median bout inside 1500..2400 ticks.
 //   - Magnus is buffed toward his neighbours (accuracy 0.78 -> 0.85, critical
 //     0.06 -> 0.099, defence 0.32 -> 0.335) while staying last on accuracy and
 //     critical and fifth on defence. Needed to hold `brutus/magnus` and
 //     `nerva/magnus` under the 85% ceiling; he remains the weakest opponent on
 //     every axis the design names for him.
-//
-// HP is scaled uniformly from the authored table, which preserves every rank
-// AND the ratios between rows; the scale exists only to put the cohort's median
-// bout inside 1500..2400 ticks.
+//   - Small in-rank steps taken while the rows around them moved, crossing no
+//     neighbour: Aquila accuracy 0.84 -> 0.855, defence 0.31 -> 0.315, critical
+//     0.14 -> 0.148; Cassius defence 0.38 -> 0.395.
 //
 // The Heavy/Fast/Technical triangle is tight: on the equal-stat style cohort,
 // strengthening any one style lifts its own advantaged matchup and lowers the

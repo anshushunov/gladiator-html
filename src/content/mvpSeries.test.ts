@@ -45,18 +45,35 @@ describe('MVP series content', () => {
 
   it('records the one deviated rank order: Aquila is no longer lowest on power', () => {
     // Authored: brutus > drusus > nerva > cassius > magnus > aquila.
-    // Aquila moves from strictly lowest to tied third with Nerva. Without it
+    // Aquila moves from strictly lowest to tied THIRD with Nerva. Without it
     // `aquila/drusus` measures 1.5% and `aquila/magnus` 10.5% against the
     // cohort's 15..85% band -- see the note in `mvpSeries.ts` for the levers
     // that were measured and rejected first. Pinned so the deviation stays
     // exactly this size and does not quietly grow.
+    //
+    // Asserted as RELATIONS rather than as a sorted rank array. A rank array is
+    // the natural shape here but cannot express "tied third" without depending
+    // on sort stability to break the Aquila/Nerva tie, and an earlier version of
+    // this test compared `rankBy('power')` against a literal that was itself
+    // sorted by the same live comparator -- so both sides moved together and it
+    // could not fail for any power assignment at all.
     const byId = Object.fromEntries([...homeRoster, ...opponents].map((f) => [f.id, f]))
-    expect(rankBy('power')).toEqual(['brutus', 'aquila', 'nerva', 'drusus', 'cassius', 'magnus'].sort(
-      (a, b) => byId[b].power - byId[a].power,
-    ))
-    expect(byId.aquila.power).toBe(20)
-    expect(byId.aquila.power).toBeGreaterThan(byId.cassius.power)
-    expect(byId.aquila.power).toBeLessThan(byId.brutus.power) // Brutus keeps top power
+    const power = (id: string) => byId[id].power
+    const all = [...homeRoster, ...opponents]
+
+    // Exactly two fighters out-power her: Brutus and Drusus. This is the
+    // statement "tied third", and it fails the moment the deviation grows
+    // (Aquila passing Drusus) or shrinks (Nerva pulling ahead of her).
+    expect(all.filter((f) => f.power > power('aquila'))).toHaveLength(2)
+    expect(power('aquila')).toBe(20)
+    expect(power('aquila')).toBe(power('nerva')) // the tie itself
+    expect(power('brutus')).toBeGreaterThan(power('drusus')) // authored top two, unchanged
+    expect(power('drusus')).toBeGreaterThan(power('aquila'))
+
+    // ...and she is genuinely no longer at the bottom, which is the deviation.
+    expect(power('aquila')).toBeGreaterThan(power('cassius'))
+    expect(power('aquila')).toBeGreaterThan(power('magnus'))
+    expect(Math.min(...all.map((f) => f.power))).toBe(power('magnus'))
   })
 
   it('keeps the named identities from the design table', () => {
