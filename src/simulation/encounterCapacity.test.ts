@@ -131,13 +131,13 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
     // below rule that out by requiring the run to be genuinely contact-heavy.
     //
     // Measured against this fixture's fixed seed (20260815) after Task 13's
-    // calibration: 387 unique action-started instances, 350 contact-resolution
-    // outcomes (193 damage-dealt, 4 attack-blocked, 13 attack-evaded, 139
-    // attack-missed, 1 attack-parried), 5749 total damage spread across 68 of
-    // the 100 combatants, and 0 fighter-defeated. Thresholds are set at
-    // roughly a fifth of each observed count: large enough that an inert or
-    // near-inert run (which produces exactly 0 of each) cannot pass, small
-    // enough to tolerate future retuning.
+    // calibration: 375 unique action-started instances, 330 contact-resolution
+    // outcomes (186 damage-dealt, 2 attack-blocked, 12 attack-evaded, 129
+    // attack-missed, 1 attack-parried), damage spread across 63 of the 100
+    // combatants, and 0 fighter-defeated. Thresholds are set at roughly a fifth
+    // of each observed count: large enough that an inert or near-inert run
+    // (which produces exactly 0 of each) cannot pass, small enough to tolerate
+    // future retuning.
     //
     // NOTE ON `fighter-defeated`: Task 12 also asserted at least one defeat
     // here, against 2 observed. That assertion has been replaced rather than
@@ -170,12 +170,22 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
     expect(first).toMatch(/^[0-9a-f]{8}$/)
   }, CAPACITY_TIMEOUT_MS)
 
-  // CANONICAL HASH FREEZE DEFERRED (Task 13 Step 6) -- see the matching note in
-  // `encounter.test.ts`. Two further conformance fixes and an open question on
-  // the content calibration all move this trace, so the literal is withheld
-  // rather than frozen twice. The determinism and shape this hash depends on are
-  // asserted above and in the anti-inertness census, so a regression still fails
-  // here today.
+  // FROZEN CANONICAL HASH (Task 13 Step 6): the mass-scale half of the
+  // simulation contract, folding all 100 combatants' per-tick state and every
+  // emitted event across the design's fixed 600-tick window.
+  //
+  // Read from a probe that printed the hash beside the trace it folds, not
+  // copied from a diff. The reviewed run: 600 ticks, all 100 combatants still
+  // present, 63 of them damaged, 2327 events -- 375 action-starts, 186
+  // damage-dealt, 129 misses, 12 evades, 2 blocks, 1 parry, 6 criticals, 187
+  // staggers, 68 interruptions, 1105 movement-intent changes. That census is the
+  // same one the anti-inertness thresholds above derive from, so the two are
+  // consistent by construction.
+  it('matches its frozen canonical trace hash', () => {
+    const hash = traceHash(createEncounter(createHundredCombatantFfa()), CAPACITY_TICKS)
+    expect(hash).toMatch(/^[0-9a-f]{8}$/)
+    expect(hash).toBe('44a08b74')
+  }, CAPACITY_TIMEOUT_MS)
 
   it('is invariant to input combatant order: a fixed (non-random) shuffle produces identical sorted ids, state, events, and trace hash', () => {
     const config = createHundredCombatantFfa()

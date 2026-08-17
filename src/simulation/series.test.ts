@@ -221,16 +221,20 @@ it('makes stats matter more than blindly taking all counters', () => {
   }
 })
 
-// CANONICAL HASH FREEZE DEFERRED (Task 13 Step 6) -- see the matching note in
-// `encounter.test.ts`. The design's golden scenario asks that "one complete
-// lineup has a checked canonical event-trace hash"; this is the site for it,
-// and the literals are withheld only until the calibration is final.
+// FROZEN CANONICAL HASHES (Task 13 Step 6): the design's golden scenario asks
+// that "one complete lineup has a checked canonical event-trace hash". This is
+// the `Aquila/Nerva/Brutus` lineup, all three bouts, at the fixed seed.
 //
-// Per-bout hashes will be pinned individually rather than folded together, so a
-// failure names the bout that moved. Until then this asserts that each bout
-// folds a deterministic hash and that the series has the shape the golden
-// scenario requires, which is what a frozen literal would be standing in for.
-it('folds deterministic per-bout trace hashes for the Aquila/Nerva/Brutus lineup', () => {
+// Per-bout hashes are pinned individually rather than folded into one value, so
+// a failure names the bout that moved instead of just saying the series changed.
+// Each was read from a probe that printed the hash beside its trace, never
+// copied from a failing diff. The reviewed run:
+//   bout 0  aquila vs drusus   away wins by defeat in 1886 ticks -> 62438b1f
+//   bout 1  nerva  vs cassius  home wins by defeat in 2183 ticks -> dee79f52
+//   bout 2  brutus vs magnus   home wins by defeat in 1202 ticks -> 563432bd
+// Score 2-1, every bout decided by defeat rather than the tick cap, and all
+// three durations inside the roster cohort's 1200..2700 median band.
+it('matches the frozen canonical trace hashes for the Aquila/Nerva/Brutus lineup', () => {
   let state = createMvpSeries()
   for (const [boutIndex, fighterId] of (['aquila', 'nerva', 'brutus'] as const).entries()) {
     state = assignFighter(state, fighterId, boutIndex).state
@@ -252,13 +256,14 @@ it('folds deterministic per-bout trace hashes for the Aquila/Nerva/Brutus lineup
     }
   }
 
-  // The shape a frozen literal would be standing in for: three decisive bouts,
-  // each resolving well inside the tick cap.
-  expect(boutHashes).toHaveLength(3)
-  for (const hash of boutHashes) expect(hash).toMatch(/^[0-9a-f]{8}$/)
-  expect(new Set(boutHashes).size).toBe(3) // three distinct bouts, not one repeated
+  // Pin the trace's shape alongside its hashes, so a differently-shaped series
+  // cannot coincidentally satisfy the literals.
+  expect(state.score).toEqual({ home: 2, away: 1 })
   expect(state.results.map((result) => result.endedBy)).toEqual(['defeat', 'defeat', 'defeat'])
-  for (const result of state.results) expect(result.durationTicks).toBeLessThan(MAX_BOUT_TICKS)
+  expect(state.results.map((result) => result.durationTicks)).toEqual([1886, 2183, 1202])
+
+  for (const hash of boutHashes) expect(hash).toMatch(/^[0-9a-f]{8}$/)
+  expect(boutHashes).toEqual(['62438b1f', 'dee79f52', '563432bd'])
 })
 
 // AMENDED CRITERION. The design originally required "at least three distinct
