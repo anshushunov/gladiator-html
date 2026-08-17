@@ -826,6 +826,92 @@ describe('locomotion candidates are filtered by arena path', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// design.md's locomotion section, Technical: "Technical holds spear measure,
+// selects `backstep` when an opponent enters below 1.2 units, and may circle
+// only while remaining able to face the opponent." Neither clause was
+// implemented.
+//
+// The first mattered a great deal. `backstep` sat in Technical's authored
+// baseWeights at 12 with no range gate, so Technical could back off from its
+// own preferred 2.1-2.8 measure. Since Technical retreats at 2.0 u/s and Heavy
+// advances at 1.4, that let Technical kite a Heavy indefinitely -- Task 13
+// measured `technical vs heavy` at 88.6% on the equal-stat cohort against a
+// required 55-75%.
+// ---------------------------------------------------------------------------
+
+describe('Technical locomotion range gates', () => {
+  const duel = { radius: 6.5, lateralLimit: 2.5, minimumSeparation: 0.9, movementPolicy: 'ordered-pair' as const, orderedPair: ['self', 'foe'] as const }
+
+  function technicalAt(distance: number, tick = 0) {
+    const self = fighterState('self', 'technical', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 }, lastResolutionTick: tick })
+    const target = fighterState('foe', 'technical', { factionId: 'other', position: { x: distance, z: 0 } })
+    return makeContext({ self, target, tick, arena: duel })
+  }
+
+  const intentsAt = (distance: number) =>
+    scoreCombatCandidates(technicalAt(distance), COMBAT_STYLES.styles.technical)
+      .filter((c) => c.decision.type === 'locomotion')
+      .map((c) => (c.decision as { locomotionIntent: string }).locomotionIntent)
+
+  it('offers backstep only below 1.2 units', () => {
+    expect(intentsAt(1.0)).toContain('backstep')
+    expect(intentsAt(1.19)).toContain('backstep')
+    expect(intentsAt(1.2)).not.toContain('backstep')
+    expect(intentsAt(1.5)).not.toContain('backstep')
+  })
+
+  it('does not let Technical backstep away from its own preferred measure', () => {
+    // The kiting case: at 2.1-2.8 units Technical is exactly where it wants to
+    // be and must commit to holding, circling, advancing or attacking -- not
+    // walk backwards faster than a Heavy can follow.
+    for (const distance of [2.1, 2.4, 2.8]) {
+      const intents = intentsAt(distance)
+      expect(intents).not.toContain('backstep')
+      expect(intents.length).toBeGreaterThan(0) // still has legal locomotion
+    }
+  })
+
+  it('keeps every other Technical intent available at measure', () => {
+    const intents = intentsAt(2.4)
+    expect(intents).toContain('hold-range')
+    expect(intents).toContain('circle-left')
+    expect(intents).toContain('circle-right')
+  })
+
+  it('allows circling only while the style can keep facing the opponent', () => {
+    // v/d <= sin(maxTurn). Technical circles at 1.3 u/s (0.02167/tick) and
+    // turns 2.6 degrees/tick (sin 0.04536), so it needs d > ~0.478. Every
+    // arena's minimumSeparation is 0.9, so this never binds on real content --
+    // asserted here against a synthetic style that circles far faster than it
+    // can look, so the rule is pinned rather than merely present.
+    const spinner: CombatStyleDefinition = {
+      ...COMBAT_STYLES.styles.technical,
+      locomotion: { ...COMBAT_STYLES.styles.technical.locomotion, lateralUnitsPerSecond: 30 },
+    }
+    const context = technicalAt(1.5)
+    const spun = scoreCombatCandidates(context, spinner)
+      .filter((c) => c.decision.type === 'locomotion')
+      .map((c) => (c.decision as { locomotionIntent: string }).locomotionIntent)
+    expect(spun).not.toContain('circle-left')
+    expect(spun).not.toContain('circle-right')
+
+    // Authored content is unaffected at the same distance.
+    expect(intentsAt(1.5)).toContain('circle-left')
+  })
+
+  it('leaves the authored styles able to circle everywhere the arena allows', () => {
+    for (const archetype of ['heavy', 'fast', 'technical'] as const) {
+      const style = COMBAT_STYLES.styles[archetype]
+      const lateralPerTick = style.locomotion.lateralUnitsPerSecond / 60
+      // The binding distance is v / sin(maxTurn); assert it stays under the
+      // arena's separation floor for every style, i.e. the rule is currently
+      // non-binding on real content.
+      expect(lateralPerTick / style.locomotion.turnSinPerTick).toBeLessThan(duel.minimumSeparation)
+    }
+  })
+})
+
 describe('chooseCombatDecision: proportional selection among positive weights', () => {
   it('selects the candidate whose cumulative weight band contains the selection roll', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })

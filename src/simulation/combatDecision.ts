@@ -300,6 +300,57 @@ const STALE_SUPPRESSED_INTENTS: ReadonlySet<LocomotionIntent> = new Set<Locomoti
 const BURST_IN_MIN_RANGE = 2.8
 const BURST_IN_MAX_RANGE = 4.0
 
+// design.md's locomotion section, Technical: "Technical holds spear measure,
+// selects `backstep` when an opponent enters below 1.2 units, and may circle
+// only while remaining able to face the opponent."
+//
+// That is a range gate, not an unconditional candidate. `backstep` is authored
+// only in Technical's `baseWeights`, so gating the intent itself is equivalent
+// to gating the style and matches how `burst-in`'s band is handled -- also
+// described in a style-specific sentence, also implemented as an intent-level
+// range gate.
+//
+// Leaving it ungated let Technical backstep from its own preferred 2.1-2.8
+// measure, which is what made it able to kite a Heavy indefinitely: Heavy
+// closes at 1.4 u/s and Technical retreats at 2.0 u/s, so an ordinary backstep
+// available at any distance means the exchange never has to happen.
+const BACKSTEP_MAX_RANGE = 1.2
+
+/**
+ * "...and may circle only while remaining able to face the opponent."
+ *
+ * Circling at lateral speed `v` around a target at distance `d` swings the
+ * bearing to that target at roughly `v / d` radians per tick. The combatant
+ * keeps the target in front only while its authored turn step can match that,
+ * so the constraint is `v / d <= sin(maxTurn)`, rearranged to avoid a division
+ * and evaluated against the authored sine literal directly -- no runtime
+ * trigonometry, per design.md's simulation constraints.
+ *
+ * With the current authored content this never binds: the tightest style needs
+ * only `d > 0.59` (Fast), and every arena's `minimumSeparation` is `0.9`. It is
+ * implemented because it is a stated rule and because content tuning can move
+ * lateral speeds and turn rates independently, at which point a style could
+ * silently acquire the ability to circle faster than it can look.
+ */
+function canFaceWhileCircling(style: CombatStyleDefinition, distance: number): boolean {
+  const lateralPerTick = style.locomotion.lateralUnitsPerSecond / LOOKAHEAD_TICKS_PER_SECOND
+  return lateralPerTick <= distance * style.locomotion.turnSinPerTick
+}
+
+/**
+ * Whether `intent` is a legal ordinary locomotion candidate for this style at
+ * this moment, ignoring weight entirely. Collects every authored legality gate
+ * in one place: `burst-in`'s band, `backstep`'s range gate, circling's
+ * facing constraint, and the arena-path filter. The anti-stall suppression is
+ * applied by the caller, which also owns its exemption.
+ */
+function isLocomotionLegal(context: CombatDecisionContext, style: CombatStyleDefinition, intent: LocomotionIntent, distance: number): boolean {
+  if (intent === 'burst-in' && (distance < BURST_IN_MIN_RANGE || distance > BURST_IN_MAX_RANGE)) return false
+  if (intent === 'backstep' && distance >= BACKSTEP_MAX_RANGE) return false
+  if ((intent === 'circle-left' || intent === 'circle-right') && !canFaceWhileCircling(style, distance)) return false
+  return hasArenaPath(context, style, intent)
+}
+
 /**
  * Ordinary locomotion candidates are exactly the locomotion keys present in
  * `style.baseWeights`, in the order those keys were authored (that object's
@@ -309,8 +360,10 @@ const BURST_IN_MAX_RANGE = 4.0
  * confirms: Heavy's authored order is
  * `advance, hold-range, pressure, circle-left, circle-right, retreat`, and
  * dropping the two that score non-positive leaves exactly that sequence.
- * Anti-stall-suppressed intents and `burst-in` outside its authored range
- * band are excluded here (legality), not merely penalized (scoring).
+ * Anti-stall-suppressed intents and everything `isLocomotionLegal` rejects --
+ * `burst-in` outside its band, `backstep` beyond its range gate, circling the
+ * combatant could not keep facing through, and any path the arena blocks --
+ * are excluded here (legality), not merely penalized (scoring).
  */
 function ordinaryLocomotionCandidates(
   context: CombatDecisionContext,
@@ -327,8 +380,7 @@ function ordinaryLocomotionCandidates(
 
   for (const key of Object.keys(style.baseWeights)) {
     if (!isLocomotionIntent(key)) continue
-    if (key === 'burst-in' && (currentDistance < BURST_IN_MIN_RANGE || currentDistance > BURST_IN_MAX_RANGE)) continue
-    if (!hasArenaPath(context, style, key)) continue
+    if (!isLocomotionLegal(context, style, key, currentDistance)) continue
     if (stale && STALE_SUPPRESSED_INTENTS.has(key)) {
       if (!mayUnsuppress) continue
       if (!movementRestoresAction(context, style, key, modifiers)) continue
@@ -799,7 +851,7 @@ function deterministicFallbackDecision(
     const stale = isLocalResolutionStale(context.tick, context.self.lastResolutionTick)
     for (const intent of priority) {
       if (stale && STALE_SUPPRESSED_INTENTS.has(intent)) continue
-      if (!hasArenaPath(context, style, intent)) continue
+      if (!isLocomotionLegal(context, style, intent, currentDistance)) continue
       return { type: 'locomotion', locomotionIntent: intent }
     }
   }

@@ -193,7 +193,7 @@ it('produces a deterministic, non-uniform score across lineups for the same seed
   const allCounters = playSeries(['brutus', 'aquila', 'nerva'])
   const mixed = playSeries(['aquila', 'nerva', 'brutus'])
   expect(allCounters.score).toEqual({ home: 2, away: 1 })
-  expect(mixed.score).toEqual({ home: 2, away: 1 })
+  expect(mixed.score).toEqual({ home: 1, away: 2 })
   for (const result of [...allCounters.results, ...mixed.results]) {
     expect(['defeat', 'time-limit']).toContain(result.endedBy)
   }
