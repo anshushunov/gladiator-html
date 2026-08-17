@@ -38,14 +38,16 @@ test('resets arena presentation for the second bout', async ({ page }) => {
 })
 
 test('plays three bouts, reports a 2–1 win, and rematches the same seed', async ({ page }) => {
-  // The all-counter lineup (Brutus->Drusus, Aquila->Cassius, Nerva->Magnus).
-  // Under Task 13's final balance it wins 2-1: a real edge, but not the 3-0
-  // sweep the design prohibits -- `brutus/nerva/aquila` is the ordering that
-  // sweeps, which is the point of the puzzle.
+  // A stats-led ordering, deliberately NOT the all-counter one. Under Task 13's
+  // final balance the all-counter lineup (Brutus->Drusus, Aquila->Cassius,
+  // Nerva->Magnus) actually loses 1-2, which is the design's golden scenario
+  // working as intended: the visible counter triangle is useful but is not a
+  // mechanical answer to stronger individual opponents. See series.test.ts's
+  // golden-scenario block for the full six-lineup table.
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.assign('brutus', 0)
-    window.__GLADIATOR_TEST__.assign('aquila', 1)
+    window.__GLADIATOR_TEST__.assign('aquila', 0)
+    window.__GLADIATOR_TEST__.assign('brutus', 1)
     window.__GLADIATOR_TEST__.assign('nerva', 2)
     window.__GLADIATOR_TEST__.confirm()
   })

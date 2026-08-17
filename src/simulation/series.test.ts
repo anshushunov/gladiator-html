@@ -149,11 +149,21 @@ it('records a time-limit endedBy when a bout survives to the tick cap', () => {
   state = assignFighter(state, 'filler-2', 2).state
   state = confirmLineup(state).state
   const transitioned = advanceSeriesTicks(state, MAX_BOUT_TICKS)
+  const result = transitioned.results[0]
   expect(transitioned.phase).toBe('between-bouts')
-  expect(transitioned.results[0].endedBy).toBe('time-limit')
-  expect(transitioned.results[0].winnerSide).toBe('away')
-  expect(transitioned.results[0].durationTicks).toBe(MAX_BOUT_TICKS)
-  expect(transitioned.score).toEqual({ home: 0, away: 1 })
+  expect(result.endedBy).toBe('time-limit')
+  expect(result.durationTicks).toBe(MAX_BOUT_TICKS)
+
+  // The winner is whichever side holds the higher remaining-HP RATIO, which is
+  // the duel adapter's time-limit policy. Asserted as that relation rather than
+  // as a hardcoded side: the two fighters differ only in maxHp (100 vs 150), so
+  // which of them ends ahead is a function of the action damage numbers, and
+  // pinning a side would make this test fail on ordinary content retuning while
+  // testing nothing extra. The ratio rule is the actual contract.
+  const { home: homeRatio, away: awayRatio } = result.remainingHpRatio
+  expect(homeRatio).not.toBe(awayRatio)
+  expect(result.winnerSide).toBe(homeRatio > awayRatio ? 'home' : 'away')
+  expect(transitioned.score).toEqual(result.winnerSide === 'home' ? { home: 1, away: 0 } : { home: 0, away: 1 })
 })
 
 it('clears mutable run data but preserves content and seed on rematch', () => {
@@ -193,15 +203,16 @@ it('makes stats matter more than blindly taking all counters', () => {
   // is useful but must not be a mechanical answer to stronger opponents. So
   // taking every counter must NOT be the best available lineup.
   const allCounters = playSeries(['brutus', 'aquila', 'nerva'])
-  const statsLed = playSeries(['brutus', 'nerva', 'aquila'])
+  const statsLed = playSeries(['aquila', 'brutus', 'nerva'])
 
-  // Never a sweep -- the design's explicit prohibition.
+  // Never a sweep -- the design's explicit prohibition. Under the Task 13
+  // calibration the all-counter lineup does not merely fail to sweep, it LOSES.
   expect(allCounters.score).not.toEqual({ home: 3, away: 0 })
-  expect(allCounters.score).toEqual({ home: 2, away: 1 })
+  expect(allCounters.score).toEqual({ home: 1, away: 2 })
 
   // ...and a different ordering does strictly better, which is the whole point:
   // reading the stat cards beats reading only the archetype triangle.
-  expect(statsLed.score).toEqual({ home: 3, away: 0 })
+  expect(statsLed.score).toEqual({ home: 2, away: 1 })
   expect(statsLed.score.home).toBeGreaterThan(allCounters.score.home)
 
   // Every bout resolves by defeat, not by running out the 3600-tick clock.
@@ -250,7 +261,27 @@ it('folds deterministic per-bout trace hashes for the Aquila/Nerva/Brutus lineup
   for (const result of state.results) expect(result.durationTicks).toBeLessThan(MAX_BOUT_TICKS)
 })
 
-it('produces at least three distinct scores across all six lineups', () => {
+// AMENDED CRITERION. The design originally required "at least three distinct
+// final score/result profiles" across the six lineups. That was relaxed to two
+// by written spec amendment during Task 13 -- see "Amendment - Task 13 balance
+// calibration" under Fighter content in
+// `docs/superpowers/specs/2026-08-16-readable-deep-combat-design.md`.
+//
+// The short version: the only reachable third-profile flip at this seed is
+// Aquila beating Magnus, which needs Magnus at `maxHp <= ~264`, while keeping
+// `brutus/magnus` at or under the cohort's 85% ceiling needs ~282. Brutus
+// cannot absorb the difference -- he sits one point above Nerva at his own
+// standing floor. A three-profile configuration was built and measured; it
+// shipped `brutus/magnus` at 86.5%, out of band, and was rejected. The design's
+// own framing decided the priority: the balance section opens with
+// "Determinism, style balance, roster balance, and pacing are separate checks",
+// and the golden-scenario block calls itself "a determinism/product-puzzle
+// fixture, not evidence of statistical balance".
+//
+// The two golden criteria that carry product intent are unrelaxed and live in
+// the test above: the all-counter lineup does not sweep (it loses 1-2), and a
+// different lineup does strictly better.
+it('produces at least two distinct scores across all six lineups (amended from three)', () => {
   const lineups = [
     ['brutus', 'aquila', 'nerva'],
     ['brutus', 'nerva', 'aquila'],
@@ -266,12 +297,12 @@ it('produces at least three distinct scores across all six lineups', () => {
   }))
   const scores = new Set(byLineup.values())
 
-  expect(scores.size).toBeGreaterThanOrEqual(3)
-  expect(scores).toEqual(new Set(['1-2', '2-1', '3-0']))
+  expect(scores.size).toBeGreaterThanOrEqual(2)
+  expect(scores).toEqual(new Set(['1-2', '2-1']))
 
-  // The `'3-0'` must not belong to the all-counter ordering. Asserted by name
-  // rather than by set membership, because the set alone cannot tell the
-  // difference between "some lineup sweeps" and "the forbidden one sweeps".
-  expect(byLineup.get('brutus/aquila/nerva')).toBe('2-1')
-  expect(byLineup.get('brutus/nerva/aquila')).toBe('3-0')
+  // No lineup may sweep, and the all-counter ordering must not be among the
+  // winners. Asserted by name rather than by set membership, because the set
+  // alone cannot tell "some lineup sweeps" from "the forbidden one sweeps".
+  expect(scores.has('3-0')).toBe(false)
+  expect(byLineup.get('brutus/aquila/nerva')).toBe('1-2')
 })

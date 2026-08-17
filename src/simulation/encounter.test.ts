@@ -1284,11 +1284,11 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
 
     expect(types(blockBatch)).toEqual(['attack-blocked', 'damage-dealt', 'fighter-staggered'])
     expect(blockBatch[0]).toMatchObject({ contactZone: 'shield' })
-    expect(blockBatch[1]).toMatchObject({ amount: 12, remainingHp: 88, contactZone: 'shield' }) // round(35*0.35)=12.25->12
+    expect(blockBatch[1]).toMatchObject({ amount: 14, remainingHp: 86, contactZone: 'shield' }) // round(20*1.98*0.35)=13.86->14
     expect(blockBatch[2]).toMatchObject({ durationTicks: 10 }) // max(1,round(24*0.40))=10
     expect((blockBatch[2] as Extract<EncounterEvent, { type: 'fighter-staggered' }>).direction.x).toBeCloseTo(1, 9)
 
-    expect(next.combatants.target.hp).toBe(88)
+    expect(next.combatants.target.hp).toBe(86)
     // push 0.70 * 0.30 = 0.21 away from the actor (toward +x); no separation correction needed at this distance.
     expect(next.combatants.target.position.x).toBeCloseTo(0.21, 6)
   })
@@ -1335,8 +1335,8 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
 
     expect(types(batch)).toEqual(['defense-failed', 'damage-dealt', 'fighter-staggered'])
     expect(batch[0]).toMatchObject({ reason: 'facing' })
-    expect(batch[1]).toMatchObject({ amount: 35, remainingHp: 65 }) // unblocked: round(20*1.75*1.00)=35
-    expect(next.combatants.target.hp).toBe(65)
+    expect(batch[1]).toMatchObject({ amount: 40, remainingHp: 60 }) // unblocked: round(20*1.98*1.00)=39.6->40
+    expect(next.combatants.target.hp).toBe(60)
   })
 
   it('parry: attack-parried -> fighter-staggered(attacker, 24 ticks), no damage-dealt, and queues the defender\'s forced counter', () => {
@@ -1393,7 +1393,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
 
     expect(types(criticalBatch)).toEqual(['critical-hit', 'damage-dealt', 'fighter-staggered'])
     expect(criticalBatch[0]).toMatchObject({ multiplier: 1.5 })
-    expect(criticalBatch[1]).toMatchObject({ amount: 21 }) // round(20*0.70*1.00*1.5)=21 (fast-slash multiplier tuned 0.75->0.70 in Task 13)
+    expect(criticalBatch[1]).toMatchObject({ amount: 20 }) // round(20*0.68*1.00*1.5)=20.4->20 (fast-slash multiplier tuned 0.75->0.68 in Task 13)
   })
 
   it('no critical when the target was not open in the snapshot, even with a winning critical roll', () => {

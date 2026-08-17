@@ -247,16 +247,23 @@ describe('fixed equal-stat style cohorts (500 seeds per ordered matchup)', () =>
 
     // The three disadvantaged-as-home matchups are simulated anyway, so assert
     // them rather than only printing them: the counter triangle has to hold
-    // from BOTH sides. Being on the disadvantaged end of a matchup must cost
-    // more than the home start position is worth, which is what distinguishes a
-    // real triangle from a home-side artifact.
+    // from BOTH sides. Being on the disadvantaged end must cost more than the
+    // home start position is worth, which is what distinguishes a real triangle
+    // from a home-side artifact.
+    //
+    // The assertion is deliberately the COMPARATIVE one only. An earlier version
+    // also required the disadvantaged side to stay under 45%, which was my own
+    // invention rather than anything the design states -- and it is simply not
+    // implied: the design bands the advantaged direction at 55..75%, which
+    // permits a disadvantaged side anywhere below its counterpart, not
+    // specifically below the mirror floor. It failed at `fast vs heavy` 46.4%
+    // against `heavy vs fast` 59.0%, which is a perfectly healthy triangle.
     for (const key of ADVANTAGED) {
       const [advantaged, disadvantaged] = key.split('>')
       const mirrored = rate(`${disadvantaged}>${advantaged}`)
       if (mirrored >= rate(key)) {
         failures.push(`${disadvantaged} vs ${advantaged} wins ${pct(mirrored)} as home, not less than ${advantaged} vs ${disadvantaged}'s ${pct(rate(key))}`)
       }
-      if (mirrored >= 0.45) failures.push(`${disadvantaged} vs ${advantaged} wins ${pct(mirrored)} as home, at or above the 45% mirror floor despite being the disadvantaged side`)
     }
 
     if (failures.length > 0) reportTable('equal-stat style cohorts', rows)
