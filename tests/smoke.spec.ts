@@ -71,14 +71,15 @@ test('reports school defeat in the summary heading for a losing lineup', async (
   // 2-1, which is exactly the "useful but not a guaranteed answer" outcome the
   // design asks for, and it is now the lineup the school-victory test above
   // uses. So this test needs a genuinely losing ordering, and
-  // `aquila/nerva/brutus` is one (1-2). Its job is the "School defeat" heading
-  // and score rendering, so which losing lineup it uses is incidental -- but it
-  // is chosen from the final measured balance rather than to dodge it. See
-  // series.test.ts's golden-scenario block for the full six-lineup table.
+  // `nerva/aquila/brutus` is the one that does (1-2). Its job is the "School
+  // defeat" heading and score rendering, so which losing lineup it uses is
+  // incidental -- but it is chosen from the final measured balance rather than
+  // to dodge it. See series.test.ts's golden-scenario block for the full
+  // six-lineup table.
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.assign('aquila', 0)
-    window.__GLADIATOR_TEST__.assign('nerva', 1)
+    window.__GLADIATOR_TEST__.assign('nerva', 0)
+    window.__GLADIATOR_TEST__.assign('aquila', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
     window.__GLADIATOR_TEST__.confirm()
   })
