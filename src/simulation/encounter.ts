@@ -1279,10 +1279,32 @@ function computeUpdatedFacing(combatant: Readonly<FighterCombatState>, target: R
 /**
  * Movement constraint by action phase (design.md, exact): `windup` allows
  * only the action's authored root travel, evenly distributed across its
- * windup ticks along the (already turned) facing, **capped so the step
- * never closes the live distance to the attack's own target past
- * `arena.minimumSeparation`** ("stops early at minimum separation and never
- * expands the legal contact range" -- design.md:392). The cap is
+ * windup ticks along the (already turned) facing, **capped so the step never
+ * closes the live distance to the attack's own target past the nearer of
+ * `arena.minimumSeparation` and the action's own `contactRange.min`** ("stops
+ * early at minimum separation and never expands the legal contact range" --
+ * design.md:392).
+ *
+ * The `contactRange.min` half of that floor is what makes root travel a
+ * MAXIMUM rather than a mandatory step, and it has to be here because the
+ * mover and the decision seam must agree about where contact lands. Clamping
+ * only at `arena.minimumSeparation` (0.9) let the two actions whose
+ * `contactRange.min` exceeds the arena floor walk straight out of their own
+ * range during windup and geometry-miss by construction:
+ *
+ *   - `technical-thrust` (min 1.2, travel 0.20) started anywhere in
+ *     [1.2, 1.4) walked to ~1.1 and missed;
+ *   - `technical-driving-thrust` (min 1.6, travel 0.50) started anywhere in
+ *     [1.6, 2.1) walked below 1.6 and missed.
+ *
+ * `combatDecision.ts`'s `predictedContactDistance` already predicts
+ * `max(contactRange.min, d - rootTravel)`, so before this the scorer believed
+ * contact landed in range while the mover put it outside -- a self-inflicted
+ * miss the policy could not see. Both sides now compute the same value.
+ *
+ * The original separation-floor deadlock stays cured: at `d = 0.9` a jab
+ * (min 0.9) has floor `max(0.9, 0.9) = 0.9`, so it takes no step and contacts
+ * at 0.9, inside its range. The cap is
  * conservative: it treats the full displacement length as reducing distance
  * 1:1 (true when facing points at the target, which it generally does by
  * this point since facing turns toward the target every tick), so it can
@@ -1316,7 +1338,8 @@ function computeDesiredDisplacement(
         if (attackDefinition) {
           const perTick = attackDefinition.rootTravel / attackDefinition.windupTicks
           const target = combatants[combatant.action.targetId]
-          const step = target ? Math.min(perTick, Math.max(0, distanceBetween(combatant.position, target.position) - arena.minimumSeparation)) : perTick
+          const approachFloor = Math.max(arena.minimumSeparation, attackDefinition.contactRange.min)
+          const step = target ? Math.min(perTick, Math.max(0, distanceBetween(combatant.position, target.position) - approachFloor)) : perTick
           return { x: facing.x * step, z: facing.z * step }
         }
         return fastEvadeWindupDisplacement(combatant.action, facing, combatant.position, arena)

@@ -122,7 +122,7 @@ export const COMBAT_STYLES = {
       windupTicks: 10,
       impactTicks: 2,
       recoveryTicks: 15,
-      damageMultiplier: 0.8,
+      damageMultiplier: 0.75,
       accuracyModifier: 0.06,
       rootTravel: 0.25,
       pushDistance: 0.18,
@@ -138,7 +138,7 @@ export const COMBAT_STYLES = {
       windupTicks: 18,
       impactTicks: 3,
       recoveryTicks: 24,
-      damageMultiplier: 1.33,
+      damageMultiplier: 1.25,
       accuracyModifier: 0,
       rootTravel: 1.40,
       pushDistance: 0.35,
@@ -153,12 +153,7 @@ export const COMBAT_STYLES = {
       windupTicks: 20,
       impactTicks: 3,
       recoveryTicks: 22,
-      // Tuned up from the design table's 1.0 (Task 13). Technical's authored
-      // ordinary offence was never self-sufficient: `technical-parry-counter`
-      // was leaking into ordinary weighted selection and carrying 72% of its
-      // damage. With that defect fixed, thrust and driving-thrust have to do
-      // the work the counter was doing.
-      damageMultiplier: 1.68,
+      damageMultiplier: 1.0,
       accuracyModifier: 0.04,
       rootTravel: 0.20,
       pushDistance: 0.30,
@@ -173,11 +168,7 @@ export const COMBAT_STYLES = {
       windupTicks: 30,
       impactTicks: 4,
       recoveryTicks: 30,
-      // Tuned up from the design table's 1.5 (Task 13), for the same reason as
-      // `technical-thrust`. Deliberately kept just below `heavy-cleave`'s 1.75
-      // so Heavy's slow commitment remains the single highest-payoff action in
-      // the game and the readability intent holds.
-      damageMultiplier: 1.74,
+      damageMultiplier: 1.5,
       accuracyModifier: -0.03,
       rootTravel: 0.50,
       pushDistance: 0.50,

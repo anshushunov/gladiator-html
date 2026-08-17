@@ -570,6 +570,55 @@ describe('advanceEncounterTick: movement constraints by action phase (design.md,
     expect(state.combatants.other.position).toEqual(otherBefore) // the target never moves to accommodate the attacker's approach.
   })
 
+  // Root travel is a MAXIMUM that "stops early" (design.md:392), and the floor
+  // it stops at is the nearer of `arena.minimumSeparation` and the action's own
+  // `contactRange.min`. Clamping only at the arena floor made the two actions
+  // whose minimum exceeds it walk straight out of their own range during windup
+  // and geometry-miss by construction -- while
+  // `combatDecision.ts`'s `predictedContactDistance` predicted
+  // `max(contactRange.min, d - rootTravel)` and so believed contact landed in
+  // range. The mover and the decision seam have to agree, or the policy is
+  // scoring a contact the mover will not produce.
+  it.each([
+    ['technical-thrust', 1.3] as const,
+    ['technical-driving-thrust', 1.8] as const,
+  ])('windup: %s started at %s never walks inside its own contactRange.min', (definitionId, startDistance) => {
+    const definition = COMBAT_STYLES.attacks[definitionId]
+    // Chosen so the unclamped travel would carry the actor below contactRange.min:
+    expect(startDistance - definition.rootTravel).toBeLessThan(definition.contactRange.min)
+    expect(startDistance).toBeGreaterThanOrEqual(definition.contactRange.min)
+
+    let state = patchCombatant(movementConstraintFixture(), 'other', { position: { x: startDistance, z: 0 }, nextDecisionTick: 999_999 })
+    state = patchCombatant(state, 'self', {
+      position: { x: 0, z: 0 },
+      facing: { x: 1, z: 0 },
+      targetId: 'other',
+      nextDecisionTick: 999_999,
+      action: {
+        type: 'active',
+        instanceId: 'self:0',
+        definitionId,
+        phase: 'windup',
+        phaseStartedTick: 0,
+        phaseEndsAtTick: 999,
+        targetId: 'other',
+        attackRolls: { accuracy: 0.5, critical: 0.5 },
+      },
+    })
+
+    // Walk the whole windup, holding the action in `windup` so the approach runs
+    // to completion, and check it never crosses its own minimum.
+    for (let tick = 0; tick < definition.windupTicks * 2; tick += 1) {
+      const next = advanceEncounterTick({ ...state, tick: 5 })
+      state = patchCombatant(next.state, 'other', { position: { x: startDistance, z: 0 } })
+      const distance = distanceBetween(state.combatants.self.position, state.combatants.other.position)
+      expect(distance).toBeGreaterThanOrEqual(definition.contactRange.min - 1e-9)
+    }
+
+    // ...and it did close as far as it legally could, rather than not moving.
+    expect(distanceBetween(state.combatants.self.position, state.combatants.other.position)).toBeCloseTo(definition.contactRange.min, 6)
+  })
+
   it('contact: freezes root motion during the one-tick contact phase, even when entered this same tick', () => {
     const base = patchCombatant(movementConstraintFixture(), 'self', {
       position: { x: 0, z: 0 },
