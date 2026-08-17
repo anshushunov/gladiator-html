@@ -106,7 +106,7 @@ describe('authored attack rows', () => {
         windupTicks: 10,
         impactTicks: 2,
         recoveryTicks: 15,
-        damageMultiplier: 0.8,
+        damageMultiplier: 0.7,
         accuracyModifier: 0.06,
         rootTravel: 0.25,
         pushDistance: 0.18,
@@ -124,7 +124,7 @@ describe('authored attack rows', () => {
         windupTicks: 18,
         impactTicks: 3,
         recoveryTicks: 24,
-        damageMultiplier: 1.33,
+        damageMultiplier: 1.25,
         accuracyModifier: 0,
         rootTravel: 1.40,
         pushDistance: 0.35,
@@ -141,8 +141,8 @@ describe('authored attack rows', () => {
         minimumFacingDot: 0.9397,
         windupTicks: 20,
         impactTicks: 3,
-        recoveryTicks: 22,
-        damageMultiplier: 1.68,
+        recoveryTicks: 15,
+        damageMultiplier: 1.24,
         accuracyModifier: 0.04,
         rootTravel: 0.20,
         pushDistance: 0.30,
@@ -159,7 +159,7 @@ describe('authored attack rows', () => {
         minimumFacingDot: 0.9511,
         windupTicks: 30,
         impactTicks: 4,
-        recoveryTicks: 30,
+        recoveryTicks: 24,
         damageMultiplier: 1.74,
         accuracyModifier: -0.03,
         rootTravel: 0.50,
@@ -563,6 +563,30 @@ describe('validateCombatStyleCatalog: style structural rules', () => {
 describe('authored qualitative orderings survive tuning', () => {
   const attacks = COMBAT_STYLES.attacks
   const cycle = (id: keyof typeof attacks) => attacks[id].windupTicks + attacks[id].impactTicks + attacks[id].recoveryTicks
+
+  // design.md:698 fixes "probes remain quicker/lower-payoff than committed
+  // actions", and design.md:15-16 defines a probe as "quick, low-commitment"
+  // against a committed action as "slower, higher-payoff". Those are statements
+  // about the two CLASSES, not only about each style's own pair: the constraint
+  // exists so a viewer can tell a probe from a commitment by how it lands, and a
+  // probe that out-damages some other style's commitment undercuts that. The
+  // authored table satisfied it as a class (max probe 1.00 < min committed
+  // 1.25), and the calibration keeps it that way -- `technical-thrust` is
+  // deliberately capped at 1.24, just under `fast-burst-lunge`'s 1.25.
+  it('keeps every probe quicker and lower-payoff than every committed action', () => {
+    const probes = Object.values(attacks).filter((a) => (a.tags as readonly string[]).includes('probe'))
+    const committed = Object.values(attacks).filter((a) => (a.tags as readonly string[]).includes('committed'))
+    expect(probes.length).toBeGreaterThan(0)
+    expect(committed.length).toBeGreaterThan(0)
+
+    const slowestProbe = Math.max(...probes.map((a) => cycle(a.id)))
+    const quickestCommitment = Math.min(...committed.map((a) => cycle(a.id)))
+    expect(slowestProbe).toBeLessThan(quickestCommitment)
+
+    const biggestProbe = Math.max(...probes.map((a) => a.damageMultiplier))
+    const smallestCommitment = Math.min(...committed.map((a) => a.damageMultiplier))
+    expect(biggestProbe).toBeLessThan(smallestCommitment)
+  })
 
   it('keeps each style probe quicker and lower-payoff than its committed action', () => {
     const pairs = [
