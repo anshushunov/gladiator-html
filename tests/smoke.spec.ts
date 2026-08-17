@@ -38,11 +38,15 @@ test('resets arena presentation for the second bout', async ({ page }) => {
 })
 
 test('plays three bouts, reports a 2–1 win, and rematches the same seed', async ({ page }) => {
+  // The all-counter lineup (Brutus->Drusus, Aquila->Cassius, Nerva->Magnus).
+  // Under Task 13's final balance it wins 2-1: a real edge, but not the 3-0
+  // sweep the design prohibits -- `brutus/nerva/aquila` is the ordering that
+  // sweeps, which is the point of the puzzle.
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.assign('aquila', 0)
-    window.__GLADIATOR_TEST__.assign('nerva', 1)
-    window.__GLADIATOR_TEST__.assign('brutus', 2)
+    window.__GLADIATOR_TEST__.assign('brutus', 0)
+    window.__GLADIATOR_TEST__.assign('aquila', 1)
+    window.__GLADIATOR_TEST__.assign('nerva', 2)
     window.__GLADIATOR_TEST__.confirm()
   })
   for (let bout = 0; bout < 3; bout += 1) {
@@ -60,15 +64,22 @@ test('plays three bouts, reports a 2–1 win, and rematches the same seed', asyn
 })
 
 test('reports school defeat in the summary heading for a losing lineup', async ({ page }) => {
-  // This lineup order (not the all-counters one) is the one that actually
-  // loses 1-2 for seed 20260815 under the deep-combat kernel this task wires
-  // in -- see series.test.ts's comment on the same deterministic, currently
-  // un-tuned balance (Task 13 owns rebalancing).
+  // Task 11 swapped this test off the all-counter ordering because that lineup
+  // had started sweeping 3-0, and left a note to revisit "once the golden
+  // lineup loses again". Task 13's balance work went a different way: the
+  // all-counter lineup no longer sweeps, but it does not lose either -- it wins
+  // 2-1, which is exactly the "useful but not a guaranteed answer" outcome the
+  // design asks for, and it is now the lineup the school-victory test above
+  // uses. So this test needs a genuinely losing ordering, and
+  // `aquila/nerva/brutus` is one (1-2). Its job is the "School defeat" heading
+  // and score rendering, so which losing lineup it uses is incidental -- but it
+  // is chosen from the final measured balance rather than to dodge it. See
+  // series.test.ts's golden-scenario block for the full six-lineup table.
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.assign('aquila', 0)
-    window.__GLADIATOR_TEST__.assign('brutus', 1)
-    window.__GLADIATOR_TEST__.assign('nerva', 2)
+    window.__GLADIATOR_TEST__.assign('nerva', 1)
+    window.__GLADIATOR_TEST__.assign('brutus', 2)
     window.__GLADIATOR_TEST__.confirm()
   })
   for (let bout = 0; bout < 3; bout += 1) {
