@@ -21,6 +21,52 @@ async function finishActiveBout(page: import('@playwright/test').Page) {
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
 }
 
+async function startSeededFirstBout(page: import('@playwright/test').Page) {
+  await page.goto('/?seed=20260815&snapshot')
+  await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.assign('aquila', 0)
+    window.__GLADIATOR_TEST__.assign('nerva', 1)
+    window.__GLADIATOR_TEST__.assign('brutus', 2)
+    window.__GLADIATOR_TEST__.confirm()
+  })
+}
+
+test('tracks previous/current tick snapshots for render interpolation', async ({ page }) => {
+  await startSeededFirstBout(page)
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(10))
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState())).toMatchObject({
+    previousTick: 9,
+    currentTick: 10,
+    paused: true,
+  })
+})
+
+test('resets render snapshot ticks to zero when the next bout starts', async ({ page }) => {
+  await startSeededFirstBout(page)
+  await finishActiveBout(page)
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState())).toMatchObject({
+    previousTick: 0,
+    currentTick: 0,
+  })
+})
+
+test('clears render snapshots and combatant data on rematch, with no leak from the prior bout', async ({ page }) => {
+  await startSeededFirstBout(page)
+  for (let bout = 0; bout < 3; bout += 1) {
+    await finishActiveBout(page)
+    if (bout < 2) await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
+  }
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveBattleTraceHash())).not.toBeNull()
+  await page.evaluate(() => window.__GLADIATOR_TEST__.rematch())
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState())).toMatchObject({
+    previousTick: null,
+    currentTick: null,
+  })
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveBattleTraceHash())).toBeNull()
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveCombatantPositions())).toEqual({})
+})
+
 test('resets arena presentation for the second bout', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
