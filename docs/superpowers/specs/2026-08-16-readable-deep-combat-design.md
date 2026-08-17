@@ -708,23 +708,36 @@ the numbers are. `src/content/mvpSeries.test.ts` pins the rank orders below as p
 
 Task 13 could not satisfy the fixed statistical cohorts while holding every relative standing in the
 table. The plan owner approved the following deviations, each recorded with the measurement that
-forced it. Everything not listed here is unchanged: four of the five stat rank-orders (`maxHp`,
-`accuracy`, `defenseChance`, `criticalChance`) are exactly as authored, as are names, styles,
-opponent order, the `Heavy < Technical < Fast` turn ordering, Fast's `0.9–1.2` evade envelope, and
-the qualitative action ordering.
+forced it.
+
+What is **unchanged**: four of the five stat rank-orders (`maxHp`, `accuracy`, `defenseChance`,
+`criticalChance`) are exactly as authored, as are names, styles, opponent order, the
+`Heavy < Technical < Fast` turn ordering, Fast's `0.9–1.2` evade envelope, and the qualitative action
+ordering.
+
+What is **changed but not itemised below**: several values moved in magnitude without disturbing any
+rank, under the blanket "Implementation may tune these fighter numbers" clause above. Listed here in
+full so an audit of the freeze against the approved set finds no unexplained number — Aquila
+`accuracy` 0.84 → 0.855, `defenseChance` 0.31 → 0.315, `criticalChance` 0.14 → 0.148; Cassius
+`defenseChance` 0.38 → 0.395. Each is a small step taken to stay inside its own rank while the rows
+around it moved; none crosses a neighbour.
 
 **1. Aquila `power` 16 → 20** — from strictly lowest of the six to tied third with Nerva. This is the
 only rank-order change. Without it `aquila/drusus` measures 1.5% and `aquila/magnus` 10.5% against
-the cohort's `15..85%` band; with it, 19.0% and 40.0%. Every alternative was measured and is
+the cohort's `15..85%` band; with it, the shipped calibration measures 19.5% and 33.0%. Every
+alternative was measured and is
 insufficient: critical chance is nearly inert (+1.0 point when *doubled*, since criticals apply only
 to an unblocked hit on a target already in recovery or stagger), and compressing the HP spread alone
 reaches 5.5%. Aquila keeps strictly the lowest HP and the highest critical chance, so "fragile burst
 fighter" survives — and low HP with high per-hit power arguably reads as a truer glass cannon than
 the authored 16, which made her simply worse at everything.
 
-**2. HP-spread compression** — rank order preserved; magnitudes compressed. Aquila now sits at ~82%
-of Drusus's HP against the authored 65%, so "fragile" survives as an ordinal but is softer as a
-magnitude. This is the other half of what makes `aquila/drusus` reachable.
+**2. HP-spread compression** — rank order preserved; magnitudes compressed. Aquila now sits at
+**78%** of Drusus's HP (274 against 350) versus the authored 65% (120 against 185), so "fragile"
+survives as an ordinal but is softer as a magnitude. The scale factors are deliberately **not**
+uniform — they span 1.892 (Drusus) to 2.283 (Aquila) — because the compression *is* the deviation;
+a uniform scale would have preserved the authored 65% and left `aquila/drusus` unreachable. This is
+the other half of what makes that pairing clear its band.
 
 **3. Magnus buffed toward his neighbours** — accuracy `0.78 → 0.85`, critical `0.06 → 0.099`, defence
 `0.32 → 0.335`; rank order preserved, and he remains last on accuracy and critical and fifth on
