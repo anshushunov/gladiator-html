@@ -164,38 +164,48 @@ it('clears mutable run data but preserves content and seed on rematch', () => {
   expect(restarted.state.opponents).toBe(finished.opponents)
 })
 
-// GATE for Task 13 (Balance cohorts, tuning, freeze canonical hashes).
+// ===========================================================================
+// The design's golden scenario (readable-deep-combat-design.md,
+// "Golden scenario (`20260815`)"), restored in full by Task 13.
 //
-// HISTORY: Task 11's migration left this test asserting an all-counter sweep
-// of `{ home: 3, away: 0 }` and a `'3-0'` member of the six-lineup set, which
-// directly CONTRADICTED the design's golden-scenario acceptance
-// (readable-deep-combat-design.md, "Golden scenario (`20260815`)"): "the
-// all-counter lineup `Brutus→Drusus`, `Aquila→Cassius`, `Nerva→Magnus` must
-// not sweep `3–0`". It also relaxed the per-result check to
-// `['defeat', 'time-limit']` because roughly half of all bouts were reaching
-// the 3600-tick cap, against the design's "fewer than `2%`".
+// HISTORY, so nobody has to dig for it: Task 11's migration left these tests
+// asserting an all-counter SWEEP of `{ home: 3, away: 0 }` plus a `'3-0'`
+// belonging to that same lineup, which directly contradicted the design's "the
+// all-counter lineup `Brutus→Drusus`, `Aquila→Cassius`, `Nerva→Magnus` must not
+// sweep `3–0`". It also relaxed the per-result check to
+// `['defeat', 'time-limit']`, because roughly half of all bouts were reaching
+// the 3600-tick cap against the design's "fewer than `2%`".
 //
-// Task 13's cohort measurements traced both symptoms to two defects in
-// `combatDecision.ts` rather than to content balance: `rootTravel` was treated
-// as mandatory rather than as a maximum that stops early at minimum
-// separation (making every action illegal at the 0.9 separation floor), and
-// the zero-weight fallback stood still instead of closing toward the preferred
-// range. With those fixed, the all-counter lineup no longer sweeps and every
-// bout below ends by `defeat` -- see task-13-report.md.
-//
-// STILL OPEN for Task 13 proper: the literals below are post-fix but
-// PRE-TUNING, so they are not yet a passing balance target. The fixed
-// statistical cohorts still have to be built and the permitted content knobs
-// tuned; the score literals here will move again when they are, and the
-// `['defeat', 'time-limit']` relaxation and this test's name are restored at
-// that point, once the timeout band is actually measured rather than assumed.
-it('produces a deterministic, non-uniform score across lineups for the same seed', () => {
+// Neither was a balance problem. Task 13 traced them to five conformance
+// defects in `combatDecision.ts` -- root travel treated as mandatory rather
+// than as a maximum, the zero-weight fallback standing still, the anti-stall
+// suppression having no exemption, locomotion never filtered by arena path,
+// and `technical-parry-counter` leaking into ordinary weighted selection
+// against design.md:516. With those fixed and the content calibrated, the
+// cohort timeout rate is 0.06% and all 18 bouts across the six lineups end by
+// `defeat`, so both relaxations are now gone: `endedBy` is pinned to `defeat`
+// and the all-counter lineup is asserted NOT to sweep.
+// ===========================================================================
+
+it('makes stats matter more than blindly taking all counters', () => {
+  // The product puzzle the design is protecting: the visible counter triangle
+  // is useful but must not be a mechanical answer to stronger opponents. So
+  // taking every counter must NOT be the best available lineup.
   const allCounters = playSeries(['brutus', 'aquila', 'nerva'])
-  const mixed = playSeries(['aquila', 'nerva', 'brutus'])
-  expect(allCounters.score).toEqual({ home: 1, away: 2 })
-  expect(mixed.score).toEqual({ home: 2, away: 1 })
-  for (const result of [...allCounters.results, ...mixed.results]) {
-    expect(['defeat', 'time-limit']).toContain(result.endedBy)
+  const statsLed = playSeries(['brutus', 'nerva', 'aquila'])
+
+  // Never a sweep -- the design's explicit prohibition.
+  expect(allCounters.score).not.toEqual({ home: 3, away: 0 })
+  expect(allCounters.score).toEqual({ home: 2, away: 1 })
+
+  // ...and a different ordering does strictly better, which is the whole point:
+  // reading the stat cards beats reading only the archetype triangle.
+  expect(statsLed.score).toEqual({ home: 3, away: 0 })
+  expect(statsLed.score.home).toBeGreaterThan(allCounters.score.home)
+
+  // Every bout resolves by defeat, not by running out the 3600-tick clock.
+  for (const result of [...allCounters.results, ...statsLed.results]) {
+    expect(result.endedBy).toBe('defeat')
   }
 })
 
@@ -208,15 +218,19 @@ it('produces at least three distinct scores across all six lineups', () => {
     ['nerva', 'brutus', 'aquila'],
     ['nerva', 'aquila', 'brutus'],
   ] as const
-  const scores = new Set(lineups.map((lineup) => {
-    const { score } = playSeries(lineup)
-    return `${score.home}-${score.away}`
+  const byLineup = new Map(lineups.map((lineup) => {
+    const { score, results } = playSeries(lineup)
+    for (const result of results) expect(result.endedBy).toBe('defeat')
+    return [lineup.join('/'), `${score.home}-${score.away}`]
   }))
+  const scores = new Set(byLineup.values())
+
   expect(scores.size).toBeGreaterThanOrEqual(3)
-  // Post-defect-fix, pre-tuning literals (see the GATE note above). The `'3-0'`
-  // here is `brutus/nerva/aquila`, NOT the all-counter lineup, which is
-  // exactly the shape the design's golden scenario asks for: the all-counter
-  // ordering must not sweep, and "at least one different lineup wins 2-1 or
-  // 3-0". Task 13's content tuning will move these again.
-  expect(scores).toEqual(new Set(['2-1', '3-0', '1-2']))
+  expect(scores).toEqual(new Set(['1-2', '2-1', '3-0']))
+
+  // The `'3-0'` must not belong to the all-counter ordering. Asserted by name
+  // rather than by set membership, because the set alone cannot tell the
+  // difference between "some lineup sweeps" and "the forbidden one sweeps".
+  expect(byLineup.get('brutus/aquila/nerva')).toBe('2-1')
+  expect(byLineup.get('brutus/nerva/aquila')).toBe('3-0')
 })

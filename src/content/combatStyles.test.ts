@@ -106,7 +106,7 @@ describe('authored attack rows', () => {
         windupTicks: 10,
         impactTicks: 2,
         recoveryTicks: 15,
-        damageMultiplier: 0.75,
+        damageMultiplier: 0.8,
         accuracyModifier: 0.06,
         rootTravel: 0.25,
         pushDistance: 0.18,
@@ -124,7 +124,7 @@ describe('authored attack rows', () => {
         windupTicks: 18,
         impactTicks: 3,
         recoveryTicks: 24,
-        damageMultiplier: 1.25,
+        damageMultiplier: 1.33,
         accuracyModifier: 0,
         rootTravel: 1.40,
         pushDistance: 0.35,
@@ -142,7 +142,7 @@ describe('authored attack rows', () => {
         windupTicks: 20,
         impactTicks: 3,
         recoveryTicks: 22,
-        damageMultiplier: 1.0,
+        damageMultiplier: 1.68,
         accuracyModifier: 0.04,
         rootTravel: 0.20,
         pushDistance: 0.30,
@@ -160,7 +160,7 @@ describe('authored attack rows', () => {
         windupTicks: 30,
         impactTicks: 4,
         recoveryTicks: 30,
-        damageMultiplier: 1.5,
+        damageMultiplier: 1.74,
         accuracyModifier: -0.03,
         rootTravel: 0.50,
         pushDistance: 0.50,
@@ -543,5 +543,71 @@ describe('validateCombatStyleCatalog: style structural rules', () => {
     const next = structuredClone(COMBAT_STYLES) as CombatStyleCatalog
     ;(next.styles.heavy as any).archetype = 'fast'
     expect(() => validateCombatStyleCatalog(next, DUEL_ARENA)).toThrow('archetype')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The design permits tuning `damageMultiplier`, `recoveryTicks` and the turn
+// sine/cosine pairs, but fixes the QUALITATIVE orderings those numbers have to
+// keep: "probes remain quicker/lower-payoff than committed actions, Fast
+// remains quickest, Heavy's cleave remains the slowest commitment, and
+// Technical retains the longest practical reach", plus the turn ordering
+// `Heavy < Technical < Fast`.
+//
+// Task 13's calibration moved several of these numbers close to each other --
+// `technical-driving-thrust` sits at 1.74 against `heavy-cleave`'s 1.75 -- so
+// the orderings are pinned as properties here rather than left to be re-derived
+// by whoever tunes next.
+// ---------------------------------------------------------------------------
+
+describe('authored qualitative orderings survive tuning', () => {
+  const attacks = COMBAT_STYLES.attacks
+  const cycle = (id: keyof typeof attacks) => attacks[id].windupTicks + attacks[id].impactTicks + attacks[id].recoveryTicks
+
+  it('keeps each style probe quicker and lower-payoff than its committed action', () => {
+    const pairs = [
+      ['heavy-shield-jab', 'heavy-cleave'],
+      ['fast-slash', 'fast-burst-lunge'],
+      ['technical-thrust', 'technical-driving-thrust'],
+    ] as const
+    for (const [probe, committed] of pairs) {
+      expect(attacks[probe].tags).toContain('probe')
+      expect(attacks[committed].tags).toContain('committed')
+      expect(cycle(probe)).toBeLessThan(cycle(committed))
+      expect(attacks[probe].damageMultiplier).toBeLessThan(attacks[committed].damageMultiplier)
+    }
+  })
+
+  it('keeps Fast quickest and Heavy cleave the slowest commitment', () => {
+    expect(cycle('fast-slash')).toBeLessThan(cycle('heavy-shield-jab'))
+    expect(cycle('fast-slash')).toBeLessThan(cycle('technical-thrust'))
+    expect(cycle('fast-burst-lunge')).toBeLessThan(cycle('technical-driving-thrust'))
+    expect(cycle('fast-burst-lunge')).toBeLessThan(cycle('heavy-cleave'))
+
+    const commitments = ['heavy-cleave', 'fast-burst-lunge', 'technical-driving-thrust'] as const
+    expect(Math.max(...commitments.map(cycle))).toBe(cycle('heavy-cleave'))
+    // ...and it stays the single highest-payoff action in the game, which is
+    // what keeps Heavy's slow swing readable as the biggest hit.
+    expect(Math.max(...Object.values(attacks).map((a) => a.damageMultiplier))).toBe(attacks['heavy-cleave'].damageMultiplier)
+  })
+
+  it('keeps Technical the longest practical reach', () => {
+    const reach = (id: keyof typeof attacks) => attacks[id].contactRange.max
+    const technicalReach = Math.max(reach('technical-thrust'), reach('technical-driving-thrust'))
+    for (const id of ['heavy-shield-jab', 'heavy-cleave', 'fast-slash', 'fast-burst-lunge'] as const) {
+      expect(reach(id)).toBeLessThan(technicalReach)
+    }
+  })
+
+  it('keeps the Heavy < Technical < Fast turn ordering', () => {
+    // Larger `turnSinPerTick` is a larger maximum rotation per tick.
+    const turn = (a: 'heavy' | 'fast' | 'technical') => COMBAT_STYLES.styles[a].locomotion.turnSinPerTick
+    expect(turn('heavy')).toBeLessThan(turn('technical'))
+    expect(turn('technical')).toBeLessThan(turn('fast'))
+  })
+
+  it('keeps Fast evade displacement inside its authored 0.9..1.2 envelope', () => {
+    const evade = COMBAT_STYLES.defenses['fast-evade'].evadeDisplacement
+    expect(evade).toEqual({ min: 0.9, max: 1.2 })
   })
 })

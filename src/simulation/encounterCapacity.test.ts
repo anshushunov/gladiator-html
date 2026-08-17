@@ -59,6 +59,11 @@ function assertLegalTargets(state: EncounterState): void {
   }
 }
 
+/** How many combatants have taken at least one point of damage -- a breadth measure that, unlike a defeat count, does not depend on how large the HP rows happen to be. */
+function damagedCombatantCount(state: EncounterState): number {
+  return state.combatantIds.filter((id) => state.combatants[id].hp < state.combatants[id].definition.maxHp).length
+}
+
 describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
   it('advances 600 ticks maintaining invariants, unique action/event ids, and legal targets on every transition', () => {
     const config = createHundredCombatantFfa()
@@ -67,7 +72,7 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
     const seenEventIds = new Set<number>()
     const seenActionInstanceIds = new Set<string>()
     let contactResolutionCount = 0
-    let fighterDefeatedCount = 0
+    let totalDamageDealt = 0
 
     function absorb(batch: readonly EncounterEvent[]): void {
       for (const event of batch) {
@@ -78,7 +83,7 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
           seenActionInstanceIds.add(event.actionInstanceId)
         }
         if (CONTACT_RESOLUTION_EVENT_TYPES.has(event.type)) contactResolutionCount += 1
-        if (event.type === 'fighter-defeated') fighterDefeatedCount += 1
+        if (event.type === 'damage-dealt') totalDamageDealt += event.amount
       }
     }
 
@@ -108,28 +113,41 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
     expect(seenEventIds.size).toBeGreaterThan(0)
 
     // The checks above (uniqueness, invariants, legal targets) all hold
-    // vacuously on a well-formed but completely inert run -- e.g. a
-    // regression that froze every combatant's decision clock immediately
-    // after creation would still pass every assertion above, producing
-    // nothing but the creation tick's own `encounter-started` event forever.
-    // The assertions below rule that out by requiring the run to be
-    // genuinely contact-heavy. Observed against this fixture's fixed seed
-    // (20260815) at the time of writing: 301 unique action-started instances,
-    // 272 contact-resolution outcomes (148 damage-dealt, 2 attack-blocked, 9
-    // attack-evaded, 113 attack-missed, 0 attack-parried), and 2
-    // fighter-defeated. Thresholds below are set at roughly 1/5-1/6 of those
-    // observed counts -- large enough that an inert or near-inert run (which
-    // produces exactly 0 of each) cannot pass, small enough that Task 13's
-    // balance tuning (which changes accuracy/damage/weights, not the
-    // fixture's seed or grid) has generous room to shift these counts
-    // without turning this test red. `fighterDefeatedCount` is asserted only
-    // at its observed floor of 1: with just 2 defeats over 600 ticks among
-    // 100 combatants, that count is the thinnest of the three and the one
-    // most likely to move under rebalancing, so no margin is added beyond
-    // "at least one" -- a genuinely inert run still can't produce even that.
+    // vacuously on a well-formed but completely inert run -- e.g. a regression
+    // that froze every combatant's decision clock immediately after creation
+    // would still pass every assertion above, producing nothing but the
+    // creation tick's own `encounter-started` event forever. The assertions
+    // below rule that out by requiring the run to be genuinely contact-heavy.
+    //
+    // Measured against this fixture's fixed seed (20260815) after Task 13's
+    // calibration: 387 unique action-started instances, 350 contact-resolution
+    // outcomes (193 damage-dealt, 4 attack-blocked, 13 attack-evaded, 139
+    // attack-missed, 1 attack-parried), 5749 total damage spread across 68 of
+    // the 100 combatants, and 0 fighter-defeated. Thresholds are set at
+    // roughly a fifth of each observed count: large enough that an inert or
+    // near-inert run (which produces exactly 0 of each) cannot pass, small
+    // enough to tolerate future retuning.
+    //
+    // NOTE ON `fighter-defeated`: Task 12 also asserted at least one defeat
+    // here, against 2 observed. That assertion has been replaced rather than
+    // relaxed, because it was measuring the wrong thing. It only ever held
+    // because fighter HP happened to be small enough for someone to die inside
+    // the design's fixed 600-tick window; Task 13's calibration roughly doubled
+    // every HP row to put the duel cohort's median bout inside 1500..2400
+    // ticks, and 600 ticks of a 100-way melee no longer kills anyone even
+    // though this run is now MORE active than when the assertion was written
+    // (387 actions vs 301, 350 resolutions vs 272). The `600` is design-fixed
+    // ("advance 600 ticks", mass-foundation acceptance), so it is not available
+    // as a knob.
+    //
+    // The two replacements below prove the same property -- real combat is
+    // resolving, not just being attempted -- without depending on HP scale, and
+    // they are strictly harder to satisfy vacuously than a single defeat was:
+    // cumulative damage and the breadth of combatants that took it.
     expect(seenActionInstanceIds.size).toBeGreaterThanOrEqual(50)
     expect(contactResolutionCount).toBeGreaterThanOrEqual(50)
-    expect(fighterDefeatedCount).toBeGreaterThanOrEqual(1)
+    expect(totalDamageDealt).toBeGreaterThanOrEqual(1000)
+    expect(damagedCombatantCount(state)).toBeGreaterThanOrEqual(20)
   })
 
   it('two identical 100-combatant runs produce an identical trace hash (no frozen literal -- Task 13 records canonical hashes after tuning)', () => {

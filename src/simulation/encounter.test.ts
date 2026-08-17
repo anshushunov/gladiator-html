@@ -1344,7 +1344,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
 
     expect(types(criticalBatch)).toEqual(['critical-hit', 'damage-dealt', 'fighter-staggered'])
     expect(criticalBatch[0]).toMatchObject({ multiplier: 1.5 })
-    expect(criticalBatch[1]).toMatchObject({ amount: 23 }) // round(20*0.75*1.00*1.5)=22.5->23
+    expect(criticalBatch[1]).toMatchObject({ amount: 24 }) // round(20*0.80*1.00*1.5)=24 (fast-slash multiplier tuned 0.75->0.80 in Task 13)
   })
 
   it('no critical when the target was not open in the snapshot, even with a winning critical roll', () => {
