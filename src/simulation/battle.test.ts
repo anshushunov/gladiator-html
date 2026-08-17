@@ -283,32 +283,28 @@ describe('battle duel adapter', () => {
     expect(new Set(hashes).size).toBeGreaterThan(1)
   })
 
-  // FROZEN CANONICAL HASH (Task 13 Step 6) -- the adapter-duel literal, and the
-  // one Task 19 reuses for its Chromium cross-runtime check. Both runtimes must
-  // agree on this exact string, so it is the single most load-bearing value in
-  // the freeze: content changes after this point are not available without
-  // redoing the whole step.
+  // CANONICAL HASH FREEZE DEFERRED (Task 13 Step 6) -- see the matching note in
+  // `encounter.test.ts`. This is the adapter-duel site, the literal Task 19
+  // reuses for its Chromium cross-runtime check, which makes it the most
+  // load-bearing value in the freeze and the one least worth freezing twice: two
+  // further conformance fixes and an open question on the content calibration all
+  // move it.
   //
-  // Reviewed from the trace it folds, not copied from a diff. `brutus`/`drusus`
-  // here are this file's own local fixtures (100 HP, power 10), deliberately not
-  // the roster rows, so the literal is insulated from roster retuning. The
-  // reviewed run: a complete, decisive duel -- 1440 ticks, home wins by
-  // `defeat` with 10 HP against 0, 154 events comprising 30 action-starts, 16
-  // damage-dealt, 10 misses, 1 evade, 1 block, 16 staggers, 8 interruptions, one
-  // `fighter-defeated` and one `encounter-finished`. Identical across repeated
-  // runs.
-  it('matches its frozen canonical adapter-duel trace hash', () => {
-    const finishedBattle = finished(baseConfig({ home: brutus, away: drusus, seed: 123 }))
+  // The properties the eventual literal depends on are asserted here now, so the
+  // adapter cannot regress into a non-decisive or non-deterministic duel while
+  // the literal is withheld.
+  it('folds a deterministic trace of a complete, decisive adapter duel', () => {
+    const config = baseConfig({ home: brutus, away: drusus, seed: 123 })
+    const first = finished(config)
+    const second = finished(config)
 
-    // Assert the trace is the reviewed one, so a future change cannot quietly
-    // satisfy the hash from a different-shaped bout.
-    expect(finishedBattle.finishReason).toBe('defeat')
-    expect(finishedBattle.winnerSide).toBe('home')
-    expect(finishedBattle.encounter.tick).toBe(1440)
-
-    const hash = formatTraceHash(finishedBattle.traceHash)
-    expect(hash).toMatch(/^[0-9a-f]{8}$/)
-    expect(hash).toBe('46391a47')
+    expect(formatTraceHash(first.traceHash)).toMatch(/^[0-9a-f]{8}$/)
+    expect(first.traceHash).toBe(second.traceHash)
+    expect(first.finishReason).toBe('defeat')
+    expect(first.winnerSide).toBe('home')
+    expect(first.encounter.tick).toBeLessThan(MAX_BOUT_TICKS)
+    expect(first.events.filter((event) => event.type === 'fighter-defeated')).toHaveLength(1)
+    expect(first.events.filter((event) => event.type === 'encounter-finished')).toHaveLength(1)
   })
 
   it('does not shift the away encounter beyond one tick when only advanceBattleTick is called', () => {

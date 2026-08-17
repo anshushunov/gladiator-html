@@ -2946,33 +2946,41 @@ describe('canonical trace hash (Task 10 Step 3, test-only diagnostic helper)', (
     expect(new Set(hashes).size).toBeGreaterThan(1)
   })
 
-  // FROZEN CANONICAL HASHES (Task 13 Step 6). The simulation contract is fixed
-  // from here: Tasks 14-19 build presentation on top of it, and any change to
-  // simulation rules or to `src/content/**` will move these.
+  // CANONICAL HASH FREEZE DEFERRED (Task 13 Step 6). Literals were frozen here
+  // once and then withdrawn: code review found two further conformance defects
+  // (the mover clamping windup travel at the arena floor instead of the
+  // action's own `contactRange.min`, and an undisclosed boundary clause in the
+  // zero-weight fallback), and a question about how far the content calibration
+  // may move the design's authored relative standings is with the plan owner.
   //
-  // Each literal was accepted only after reviewing the trace it folds, not by
-  // copying a value out of a failing assertion. Reviewed at 150 ticks, from the
-  // fixture's own 100-HP/20-power combatants (NOT the roster rows) starting at
-  // +/-2.2:
-  //   seed 3  -> running, hp 86/86, separation 0.96, 18 events
-  //              (3 actions, 2 damage-dealt, 1 miss, 2 staggers)
-  //   seed 11 -> running, hp 76/100, separation 1.28, 12 events
-  //              (2 actions, 1 damage-dealt, 1 stagger)
-  //   seed 42 -> running, hp 76/86, separation 1.36, 17 events
-  //              (2 actions, 2 damage-dealt, 2 staggers)
-  // All three: both fighters closed from their start separation and traded real
-  // contacts inside the window, and each hash reproduced identically across
-  // repeated runs in the same process.
-  const FROZEN_DUEL_TRACE_HASHES: Readonly<Record<number, string>> = {
-    3: '92338f0b',
-    11: 'f63144c0',
-    42: '729c936b',
-  }
-
-  it.each(seeds)('seed %i: matches its frozen canonical trace hash', (seed) => {
-    const hash = traceHash(createEncounter(duelEncounterConfig({ seed })), 150)
+  // All three change traces, so freezing now would mean paying the review cost
+  // twice. Step 6 is explicitly conditional on the cohorts being final; until
+  // they are, these assertions pin the PROPERTIES a frozen hash depends on --
+  // determinism, format, and seed sensitivity -- plus the observable shape of
+  // each trace, so a regression still fails here rather than waiting for the
+  // freeze.
+  it.each(seeds)('seed %i: folds a deterministic, well-formed trace of a real exchange', (seed) => {
+    const config = duelEncounterConfig({ seed })
+    const hash = traceHash(createEncounter(config), 150)
     expect(hash).toMatch(/^[0-9a-f]{8}$/)
-    expect(hash).toBe(FROZEN_DUEL_TRACE_HASHES[seed])
+    expect(traceHash(createEncounter(config), 150)).toBe(hash)
+
+    // The trace the hash will fold: both fighters must actually close from
+    // their +/-2.2 start and trade real contacts inside the window, so a hash
+    // can never be frozen from an inert or non-engaging run.
+    let state = createEncounter(config).state
+    const events: EncounterEvent[] = []
+    for (let tick = 0; tick < 150 && state.phase === 'running'; tick += 1) {
+      const next = advanceEncounterTick(state)
+      state = next.state
+      events.push(...next.events)
+    }
+    const home = state.combatants['home.brutus']
+    const away = state.combatants['away.drusus']
+    expect(distanceBetween(home.position, away.position)).toBeLessThan(2.0) // closed from 4.4 apart
+    expect(events.filter((event) => event.type === 'action-started').length).toBeGreaterThan(0)
+    expect(events.filter((event) => event.type === 'damage-dealt').length).toBeGreaterThan(0)
+    expect(Math.min(home.hp, away.hp)).toBeLessThan(home.definition.maxHp)
   })
 })
 
