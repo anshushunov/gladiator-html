@@ -51,7 +51,7 @@ interface PairingMetrics {
   p10Ticks: number
   p95Ticks: number
   timeoutRate: number
-  maxResolutionGapTicks: number
+  resolutionGapP95Ticks: number
 }
 
 interface BoutOutcome {
@@ -106,7 +106,7 @@ function measure(outcomes: readonly BoutOutcome[]): PairingMetrics {
     p10Ticks: percentile(durations, 0.1),
     p95Ticks: percentile(durations, 0.95),
     timeoutRate: outcomes.filter((o) => o.reachedTickLimit).length / outcomes.length,
-    maxResolutionGapTicks: percentile(gaps, 0.95),
+    resolutionGapP95Ticks: percentile(gaps, 0.95),
   }
 }
 
@@ -177,17 +177,17 @@ describe('fixed roster balance cohorts (nine pairings x 200 consecutive seeds fr
     check(combined.p10Ticks >= 900, `duration p10 ${combined.p10Ticks} below 900`)
     check(combined.p95Ticks < 3200, `duration p95 ${combined.p95Ticks} not below 3200`)
     check(combined.timeoutRate < 0.02, `timeout rate ${pct(combined.timeoutRate)} not below 2%`)
-    check(combined.maxResolutionGapTicks <= 300, `resolution-gap p95 ${combined.maxResolutionGapTicks} above 300`)
+    check(combined.resolutionGapP95Ticks <= 300, `resolution-gap p95 ${combined.resolutionGapP95Ticks} above 300`)
 
     if (failures.length > 0) {
       reportTable('roster cohorts', [
         ['pairing', 'win%', 'median', 'p10', 'p95', 'timeout%', 'gapP95'],
         ...perPairing.map(({ label, metrics }) => [
           label, pct(metrics.homeWinRate), String(metrics.medianTicks), String(metrics.p10Ticks),
-          String(metrics.p95Ticks), pct(metrics.timeoutRate), String(metrics.maxResolutionGapTicks),
+          String(metrics.p95Ticks), pct(metrics.timeoutRate), String(metrics.resolutionGapP95Ticks),
         ]),
         ['COMBINED', pct(combined.homeWinRate), String(combined.medianTicks), String(combined.p10Ticks),
-          String(combined.p95Ticks), pct(combined.timeoutRate), String(combined.maxResolutionGapTicks)],
+          String(combined.p95Ticks), pct(combined.timeoutRate), String(combined.resolutionGapP95Ticks)],
       ])
     }
 
@@ -245,6 +245,20 @@ describe('fixed equal-stat style cohorts (500 seeds per ordered matchup)', () =>
       if (value < 0.45 || value > 0.55) failures.push(`${style} mirror win rate ${pct(value)} outside 45..55%`)
     }
 
+    // The three disadvantaged-as-home matchups are simulated anyway, so assert
+    // them rather than only printing them: the counter triangle has to hold
+    // from BOTH sides. Being on the disadvantaged end of a matchup must cost
+    // more than the home start position is worth, which is what distinguishes a
+    // real triangle from a home-side artifact.
+    for (const key of ADVANTAGED) {
+      const [advantaged, disadvantaged] = key.split('>')
+      const mirrored = rate(`${disadvantaged}>${advantaged}`)
+      if (mirrored >= rate(key)) {
+        failures.push(`${disadvantaged} vs ${advantaged} wins ${pct(mirrored)} as home, not less than ${advantaged} vs ${disadvantaged}'s ${pct(rate(key))}`)
+      }
+      if (mirrored >= 0.45) failures.push(`${disadvantaged} vs ${advantaged} wins ${pct(mirrored)} as home, at or above the 45% mirror floor despite being the disadvantaged side`)
+    }
+
     if (failures.length > 0) reportTable('equal-stat style cohorts', rows)
     expect(failures).toEqual([])
   }, COHORT_TIMEOUT_MS)
@@ -255,16 +269,25 @@ describe('fixed equal-stat style cohorts (500 seeds per ordered matchup)', () =>
     // devolves into stationary cooldown trading." Sampled rather than
     // exhaustive, by the design's own wording.
     //
-    // Two measurement choices worth stating:
+    // Three measurement choices worth stating:
     //
-    // 1. Movement is read from the combatant's own `travelledDistance`, the
-    //    kernel's accumulated post-constraint root displacement, rather than
-    //    from the change in position between the two exchanges. Comparing
-    //    endpoints would score a fighter that circled a full arc and came back
-    //    as motionless, which is the opposite of what "no stationary cooldown
-    //    trading" is asking. Lateral offset and distance-to-target are recorded
-    //    alongside it for the failure message.
-    // 2. A bout with fewer than two committed exchanges has no "between" to
+    // 1. The design names the two things that must change -- LATERAL POSITION or
+    //    DISTANCE to the opponent -- so those are what is asserted, at a
+    //    threshold large enough to mean something. An earlier version of this
+    //    test only required `travelledDistance` to advance by 0.05 between
+    //    exchanges, which is close to vacuous over windows of hundreds of ticks
+    //    and is satisfiable by the committed action's own authored root travel
+    //    alone (0.45-1.40 units), i.e. by a fighter that lunges and does nothing
+    //    else. `travelledDistance` is still recorded, but as corroboration in
+    //    the failure message rather than as the test.
+    // 2. Repositioning alone is not sufficient either, in the other direction: a
+    //    fighter can circle a wide arc and come back, ending an exchange where it
+    //    started while having been anything but stationary -- one measured Heavy
+    //    covered 3.25 units over 273 ticks and finished 0.03 units from where it
+    //    began. So the requirement is a disjunction: EITHER the exchange happens
+    //    somewhere meaningfully new, OR the fighter covered real ground getting
+    //    there. Only a combatant that fails both is trading on the spot.
+    // 3. A bout with fewer than two committed exchanges has no "between" to
     //    inspect, so it is not evidence either way. Rather than count that as a
     //    failure, seeds are scanned until enough usable samples are collected
     //    per style -- Technical's authored committed action (`base weight 8`,
@@ -272,7 +295,17 @@ describe('fixed equal-stat style cohorts (500 seeds per ordered matchup)', () =>
     //    window mostly yields one-exchange bouts for it.
     const SAMPLES_PER_STYLE = 4
     const MAX_SEEDS_SCANNED = 40
-    const MOVEMENT_EPSILON = 0.05
+    /** Minimum change in lateral offset or distance-to-target between two committed exchanges. Comfortably above float noise and above the smallest authored committed root travel (0.35). */
+    const MIN_REPOSITION = 0.40
+    /**
+     * ...or, failing that, minimum ground covered per elapsed tick. At 0.005 the
+     * bar is 0.5 units per 100 ticks: far below what any style's locomotion
+     * produces (Heavy's slowest is 0.8 u/s, i.e. 1.33 units per 100 ticks) but
+     * well above what an action's own authored root travel can supply on its own
+     * over a full attack cycle, which is what makes it a test of locomotion
+     * rather than of lunging.
+     */
+    const MIN_TRAVEL_PER_TICK = 0.005
     const failures: string[] = []
 
     for (const style of STYLES) {
@@ -289,7 +322,7 @@ describe('fixed equal-stat style cohorts (500 seeds per ordered matchup)', () =>
         const selfId = battle.descriptor.homeId
         const foeId = battle.descriptor.awayId
 
-        const atCommitted: { travelled: number; lateral: number; distance: number }[] = []
+        const atCommitted: { tick: number; travelled: number; lateral: number; distance: number }[] = []
         const seenInstances = new Set<string>()
         while (battle.phase === 'running' && battle.encounter.tick < MAX_BOUT_TICKS) {
           const previousTick = battle.encounter.tick
@@ -304,7 +337,7 @@ describe('fixed equal-stat style cohorts (500 seeds per ordered matchup)', () =>
             const foe = battle.encounter.combatants[foeId]
             const dx = self.position.x - foe.position.x
             const dz = self.position.z - foe.position.z
-            atCommitted.push({ travelled: self.travelledDistance, lateral: self.position.z, distance: Math.sqrt(dx * dx + dz * dz) })
+            atCommitted.push({ tick: event.tick, travelled: self.travelledDistance, lateral: self.position.z, distance: Math.sqrt(dx * dx + dz * dz) })
           }
         }
 
@@ -312,16 +345,32 @@ describe('fixed equal-stat style cohorts (500 seeds per ordered matchup)', () =>
         if (atCommitted.length < 2) continue // not evidence either way; keep scanning
         usableSamples += 1
 
-        for (let index = 1; index < atCommitted.length; index += 1) {
-          const previous = atCommitted[index - 1]
-          const current = atCommitted[index]
-          if (current.travelled - previous.travelled > MOVEMENT_EPSILON) continue
-          failures.push(
-            `${style} seed ${cohortSeed(seedIndex)} exchange ${index}: travelled only ` +
-            `${(current.travelled - previous.travelled).toFixed(3)} units since the previous committed exchange ` +
-            `(lateral ${previous.lateral.toFixed(2)}->${current.lateral.toFixed(2)}, distance ${previous.distance.toFixed(2)}->${current.distance.toFixed(2)})`,
-          )
-        }
+        // Asserted per TRACE, not per gap. design.md asks that sampled traces
+        // "contain lateral or distance-changing movement between committed
+        // exchanges" -- an existential over the trace. Requiring it of every
+        // consecutive pair is stricter than the design and produces false
+        // failures on short gaps, because those are dominated by the action
+        // phases themselves: `contact` and `impact` freeze root motion outright
+        // and `recovery` is capped at 35% of style speed, all by design. A
+        // fighter that is mid-cleave for most of a 47-tick window is obeying the
+        // rules, not devolving into cooldown trading.
+        const first = atCommitted[0]
+        const last = atCommitted[atCommitted.length - 1]
+        const biggestReposition = atCommitted.slice(1).reduce((best, current, offset) => {
+          const previous = atCommitted[offset]
+          return Math.max(best, Math.abs(current.lateral - previous.lateral), Math.abs(current.distance - previous.distance))
+        }, 0)
+        const totalTravelled = last.travelled - first.travelled
+        const totalTicks = last.tick - first.tick
+
+        if (biggestReposition > MIN_REPOSITION) continue
+        if (totalTravelled > MIN_TRAVEL_PER_TICK * totalTicks) continue
+        failures.push(
+          `${style} seed ${cohortSeed(seedIndex)}: stationary cooldown trading across ${atCommitted.length} committed ` +
+          `exchanges over ${totalTicks} ticks -- largest reposition between any two was ${biggestReposition.toFixed(2)} ` +
+          `(needed > ${MIN_REPOSITION}) and total ground covered was ${totalTravelled.toFixed(2)} units ` +
+          `(needed > ${(MIN_TRAVEL_PER_TICK * totalTicks).toFixed(2)})`,
+        )
       }
 
       if (usableSamples < SAMPLES_PER_STYLE) {
