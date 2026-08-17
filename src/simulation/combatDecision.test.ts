@@ -306,17 +306,46 @@ describe('scoreCombatCandidates: range reach legality', () => {
     expect(scored.some((c) => c.decision.type === 'action')).toBe(false)
   })
 
-  it('keeps every style able to attack at exactly the arena minimum separation', () => {
-    // The regression that mattered: at the 0.9 separation floor each style
-    // must still have at least one legal attack, or two fighters that close
-    // to contact can never resolve anything again.
-    for (const archetype of ['heavy', 'fast', 'technical'] as const) {
+  it('keeps the close-quarters styles able to attack at exactly the arena minimum separation', () => {
+    // The regression that mattered: at the 0.9 separation floor a style whose
+    // reach covers that distance must still have a legal attack, or two
+    // fighters that close to contact can never resolve anything again.
+    //
+    // SCOPE: Heavy and Fast only. Technical is deliberately excluded, and the
+    // exclusion is a real behavioural statement rather than a convenience.
+    // Technical's ordinary attacks start at 1.2 (`technical-thrust`) and 1.6
+    // (`technical-driving-thrust`), so a spear genuinely cannot be used at
+    // grappling range. It previously appeared to satisfy this assertion only
+    // because `technical-parry-counter` (contact range 0.9-2.3) leaked into
+    // ordinary weighted selection, which design.md:516 forbids -- so the thing
+    // that made Technical pass here was the defect, not the design.
+    //
+    // Technical does not deadlock at the floor. Two other rules compose to
+    // cover it: `backstep` is gated to targets inside 1.2 units, which is
+    // exactly this range, and the anti-stall movement exemption un-suppresses
+    // it when Technical has no viable action, so Technical steps back into its
+    // own measure and regains `technical-thrust`. The
+    // "restores suppressed movement for a wall-pinned technical" and
+    // "Technical locomotion range gates" blocks below pin that path.
+    for (const archetype of ['heavy', 'fast'] as const) {
       const self = fighterState('self', archetype)
       const target = fighterState('foe', archetype, { position: { x: freeArena.minimumSeparation, z: 0 } })
       const context = makeContext({ self, target })
       const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles[archetype])
       expect(scored.some((c) => c.decision.type === 'action')).toBe(true)
     }
+
+    // Technical has no ordinary attack here, but does have the movement that
+    // restores one -- the composition described above, asserted rather than
+    // assumed.
+    const technical = makeContext({
+      self: fighterState('self', 'technical', { lastResolutionTick: 0 }),
+      target: fighterState('foe', 'technical', { position: { x: freeArena.minimumSeparation, z: 0 } }),
+      tick: 400,
+    })
+    const scored = scoreCombatCandidates(technical, COMBAT_STYLES.styles.technical)
+    expect(scored.some((c) => c.decision.type === 'action')).toBe(false)
+    expect(scored.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'backstep')).toBe(true)
   })
 
   it('scores a stopped-short action at contactRange.min rather than at a distance it never occupies', () => {
@@ -839,6 +868,70 @@ describe('locomotion candidates are filtered by arena path', () => {
 // measured `technical vs heavy` at 88.6% on the equal-stat cohort against a
 // required 55-75%.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// design.md:516 -- "Forced `disengage` and `technical-parry-counter` bypass
+// weighted selection." `technical-parry-counter` is tagged
+// `attack forced counter weapon` (design.md:390) and is deliberately absent
+// from Technical's `baseWeights`, both of which say the same thing: it is
+// never weighed.
+//
+// It was nonetheless in `attackActionIds` with no tag filter, so it entered the
+// ordinary pool and earned a large range-fit score from its 0.9-2.3 span --
+// the widest in the game. Measured on the equal-stat cohort: 4.66 ordinary
+// starts per bout against 0.56 genuinely forced, carrying 72% of Technical's
+// total damage, which by itself put `technical vs heavy` at 88.6% against a
+// 55-75% band.
+// ---------------------------------------------------------------------------
+
+describe('forced-tagged actions bypass weighted selection', () => {
+  it('never offers technical-parry-counter as an ordinary candidate at any distance in its contact range', () => {
+    // Its authored contact range is 0.9-2.3 with 0.30 root travel, so without
+    // the filter it is legal and positively weighted across most of this sweep.
+    for (const distance of [0.9, 1.0, 1.3, 1.6, 1.9, 2.2, 2.3, 2.6]) {
+      const self = fighterState('self', 'technical', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 } })
+      const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: distance, z: 0 } })
+      const context = makeContext({ self, target })
+      const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.technical)
+      expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'technical-parry-counter')).toBe(false)
+    }
+  })
+
+  it('excludes it even where its range-fit score would otherwise be near maximal', () => {
+    // Predicted contact 1.6 sits exactly on the 0.9-2.3 midpoint, so rangeFit
+    // would be the full +20, plus +5 for Technical's advantage over Heavy --
+    // comfortably the strongest candidate in the pool if it were admitted.
+    const self = fighterState('self', 'technical', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 } })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 1.9, z: 0 } })
+    const context = makeContext({ self, target })
+    const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.technical)
+    expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'technical-parry-counter')).toBe(false)
+    // Technical's genuinely ordinary attacks are unaffected.
+    expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'technical-thrust')).toBe(true)
+  })
+
+  it('leaves every non-forced action selectable', () => {
+    // The filter must key on the tag, not on the style or the action id.
+    for (const archetype of ['heavy', 'fast', 'technical'] as const) {
+      const style = COMBAT_STYLES.styles[archetype]
+      for (const actionId of style.attackActionIds) {
+        const forced = (COMBAT_STYLES.attacks[actionId].tags as readonly string[]).includes('forced')
+        expect(forced).toBe(actionId === 'technical-parry-counter')
+      }
+    }
+  })
+
+  it('still starts the counter when it is genuinely forced after a parry', () => {
+    // The forced path does not run through candidate scoring at all: a
+    // successful parry sets `forcedActionId` via
+    // `resolveForcedParryCounterStart`, and the encounter starts that action
+    // directly. Excluding the tag from ordinary selection must not disable it.
+    expect(resolveForcedParryCounterStart(TECHNICAL_FORCED_COUNTER_RANGE)).toBe('technical-parry-counter')
+    expect(resolveForcedParryCounterStart(TECHNICAL_FORCED_COUNTER_RANGE - 0.5)).toBe('technical-parry-counter')
+    // ...and is still cleared beyond its authored start range.
+    expect(resolveForcedParryCounterStart(TECHNICAL_FORCED_COUNTER_RANGE + 0.01)).toBeUndefined()
+  })
+})
 
 describe('Technical locomotion range gates', () => {
   const duel = { radius: 6.5, lateralLimit: 2.5, minimumSeparation: 0.9, movementPolicy: 'ordered-pair' as const, orderedPair: ['self', 'foe'] as const }

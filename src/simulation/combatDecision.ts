@@ -434,6 +434,35 @@ const PATH_PROBE_TICKS = 1
 /** Below this a projected displacement is treated as none at all. Matches `movement.ts`'s own `EPSILON`. */
 const PATH_EPSILON = 1e-9
 
+/**
+ * Actions carrying this authored tag never enter ordinary weighted selection.
+ *
+ * design.md:516 states it directly: "Forced `disengage` and
+ * `technical-parry-counter` bypass weighted selection." `technical-parry-counter`
+ * is tagged `attack forced counter weapon` in the authored catalog
+ * (design.md:390), and its deliberate absence from Technical's `baseWeights`
+ * says the same thing a second way -- a forced action has no base weight
+ * because it is never weighed.
+ *
+ * It was nonetheless listed in Technical's `attackActionIds` and
+ * `legalActionCandidates` applied no tag filter, so it entered the ordinary
+ * pool and picked up a substantial range-fit score anyway (its 0.9-2.3 contact
+ * range is the widest in the game, so `20 x rangeFit` alone reached ~11 near
+ * its midpoint). Task 13 measured the result on the equal-stat cohort:
+ * 4.66 ordinary starts per bout against 0.56 genuinely forced by a parry --
+ * 89.3% of them illegitimate -- carrying 114.1 of Technical's 158.2 damage per
+ * bout, i.e. 72% of its entire offence, from an 8-tick-windup `+0.12`-accuracy
+ * attack that is supposed to exist only as a parry reward. That single defect
+ * accounted for `technical vs heavy` sitting at 88.6% against a 55-75% band,
+ * and it explains why nerfing `technical-thrust`/`technical-driving-thrust` had
+ * almost no effect: they were only 28% of the output.
+ *
+ * The forced path is untouched: `resolveForcedParryCounterStart` sets
+ * `forcedActionId` after a successful parry and the encounter starts that
+ * action directly, never through candidate scoring.
+ */
+const FORCED_ACTION_TAG = 'forced'
+
 /** The action candidates this combatant could actually choose right now: legal, and scored strictly positive. */
 function viableActionCandidates(
   context: CombatDecisionContext,
@@ -623,6 +652,7 @@ function legalActionCandidates(context: CombatDecisionContext, style: CombatStyl
 
   for (const actionId of style.attackActionIds) {
     const action = context.attacks[actionId]
+    if (action.tags.includes(FORCED_ACTION_TAG)) continue
     if (action.startMaxRange !== undefined && currentDistance > action.startMaxRange) continue
     if (farthestContact < action.contactRange.min) continue
     if (Math.max(separationFloor, currentDistance - action.rootTravel) > action.contactRange.max) continue
