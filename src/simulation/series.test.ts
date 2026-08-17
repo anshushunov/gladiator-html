@@ -3,6 +3,7 @@ import { COMBAT_STYLES } from '../content/combatStyles'
 import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
 import { advanceBattleTicks, fighterBySide, MAX_BOUT_TICKS } from './battle'
 import type { FighterDefinition } from './fighters'
+import { formatTraceHash } from './random'
 import { advanceSeriesTicks, assignFighter, confirmLineup, createSeries, rematch, startNextBout, unassignSlot } from './series'
 
 const createMvpSeries = () => createSeries({ homeRoster, opponents, seed: BASELINE_TEST_SEED, combatStyles: COMBAT_STYLES })
@@ -207,6 +208,52 @@ it('makes stats matter more than blindly taking all counters', () => {
   for (const result of [...allCounters.results, ...statsLed.results]) {
     expect(result.endedBy).toBe('defeat')
   }
+})
+
+// FROZEN CANONICAL HASHES (Task 13 Step 6): the design's golden scenario asks
+// that "one complete lineup has a checked canonical event-trace hash". This is
+// the `Aquila/Nerva/Brutus` lineup, all three bouts, at the fixed seed.
+//
+// Per-bout hashes are pinned individually rather than folded into one value, so
+// a failure names the bout that moved instead of just saying the series
+// changed. Each was reviewed from its real trace before being accepted -- never
+// copied from a failing assertion's diff. The reviewed run:
+//   bout 0  aquila vs drusus   away wins by defeat in 1881 ticks -> 442ac1df
+//   bout 1  nerva  vs cassius  home wins by defeat in 1399 ticks -> 61a74847
+//   bout 2  brutus vs magnus   away wins by defeat in 1648 ticks -> 1f8d4178
+// Score 1-2, every bout decided by defeat rather than the tick cap, and all
+// three durations inside the roster cohort's 1200..2700 median band. The hashes
+// reproduced identically across repeated runs.
+it('matches the frozen canonical trace hashes for the Aquila/Nerva/Brutus lineup', () => {
+  let state = createMvpSeries()
+  for (const [boutIndex, fighterId] of (['aquila', 'nerva', 'brutus'] as const).entries()) {
+    state = assignFighter(state, fighterId, boutIndex).state
+  }
+  state = confirmLineup(state).state
+
+  const boutHashes: string[] = []
+  let recorded = 0
+  while (state.phase !== 'summary') {
+    if (state.phase === 'fighting') {
+      state = advanceSeriesTicks(state, MAX_BOUT_TICKS)
+      if (state.results.length > recorded) {
+        recorded = state.results.length
+        if (!state.activeBattle) throw new Error('Finished bout is missing its battle')
+        boutHashes.push(formatTraceHash(state.activeBattle.traceHash))
+      }
+    } else {
+      state = startNextBout(state).state
+    }
+  }
+
+  // Pin the trace's shape alongside its hash, so a differently-shaped series
+  // cannot coincidentally satisfy the literals.
+  expect(state.score).toEqual({ home: 1, away: 2 })
+  expect(state.results.map((result) => result.endedBy)).toEqual(['defeat', 'defeat', 'defeat'])
+  expect(state.results.map((result) => result.durationTicks)).toEqual([1881, 1399, 1648])
+
+  for (const hash of boutHashes) expect(hash).toMatch(/^[0-9a-f]{8}$/)
+  expect(boutHashes).toEqual(['442ac1df', '61a74847', '1f8d4178'])
 })
 
 it('produces at least three distinct scores across all six lineups', () => {

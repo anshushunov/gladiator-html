@@ -2941,9 +2941,38 @@ describe('canonical trace hash (Task 10 Step 3, test-only diagnostic helper)', (
     expect(first).toMatch(/^[0-9a-f]{8}$/)
   })
 
-  it('a changed seed changes at least one of the three hashes (no frozen literal -- Task 13 records canonical hashes after tuning)', () => {
+  it('a changed seed changes at least one of the three hashes', () => {
     const hashes = seeds.map((seed) => traceHash(createEncounter(duelEncounterConfig({ seed })), 150))
     expect(new Set(hashes).size).toBeGreaterThan(1)
+  })
+
+  // FROZEN CANONICAL HASHES (Task 13 Step 6). The simulation contract is fixed
+  // from here: Tasks 14-19 build presentation on top of it, and any change to
+  // simulation rules or to `src/content/**` will move these.
+  //
+  // Each literal was accepted only after reviewing the trace it folds, not by
+  // copying a value out of a failing assertion. Reviewed at 150 ticks, from the
+  // fixture's own 100-HP/20-power combatants (NOT the roster rows) starting at
+  // +/-2.2:
+  //   seed 3  -> running, hp 86/86, separation 0.96, 18 events
+  //              (3 actions, 2 damage-dealt, 1 miss, 2 staggers)
+  //   seed 11 -> running, hp 76/100, separation 1.28, 12 events
+  //              (2 actions, 1 damage-dealt, 1 stagger)
+  //   seed 42 -> running, hp 76/86, separation 1.36, 17 events
+  //              (2 actions, 2 damage-dealt, 2 staggers)
+  // All three: both fighters closed from their start separation and traded real
+  // contacts inside the window, and each hash reproduced identically across
+  // repeated runs in the same process.
+  const FROZEN_DUEL_TRACE_HASHES: Readonly<Record<number, string>> = {
+    3: '92338f0b',
+    11: 'f63144c0',
+    42: '729c936b',
+  }
+
+  it.each(seeds)('seed %i: matches its frozen canonical trace hash', (seed) => {
+    const hash = traceHash(createEncounter(duelEncounterConfig({ seed })), 150)
+    expect(hash).toMatch(/^[0-9a-f]{8}$/)
+    expect(hash).toBe(FROZEN_DUEL_TRACE_HASHES[seed])
   })
 })
 

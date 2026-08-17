@@ -44,6 +44,17 @@ function patchCombatant(state: EncounterState, id: CombatantId, overrides: Parti
 
 const CAPACITY_TICKS = 600
 
+/**
+ * Every fixture in this file simulates 100 full-fidelity combatants for
+ * hundreds of ticks, which takes seconds rather than milliseconds. Vitest's 5s
+ * default was already marginal here (~3.5s observed for the 600-tick run alone)
+ * and became a flake once `balance.test.ts` started competing for CPU in the
+ * same run: the work is unchanged, but the wall clock it gets is not. These are
+ * deterministic acceptance fixtures, so a generous explicit budget is correct --
+ * a slow or busy machine must not turn a capacity guarantee into a failure.
+ */
+const CAPACITY_TIMEOUT_MS = 120_000
+
 // Event types that represent a contact actually being resolved (as opposed
 // to, say, a locomotion change or a defense scheduling itself): whichever way
 // a swing lands, one of these fires. Used below to prove the 600-tick run is
@@ -148,16 +159,33 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
     expect(contactResolutionCount).toBeGreaterThanOrEqual(50)
     expect(totalDamageDealt).toBeGreaterThanOrEqual(1000)
     expect(damagedCombatantCount(state)).toBeGreaterThanOrEqual(20)
-  })
+  }, CAPACITY_TIMEOUT_MS)
 
-  it('two identical 100-combatant runs produce an identical trace hash (no frozen literal -- Task 13 records canonical hashes after tuning)', () => {
+  it('two identical 100-combatant runs produce an identical trace hash', () => {
     const config = createHundredCombatantFfa()
     const first = traceHash(createEncounter(config), CAPACITY_TICKS)
     const second = traceHash(createEncounter(config), CAPACITY_TICKS)
 
     expect(first).toBe(second)
     expect(first).toMatch(/^[0-9a-f]{8}$/)
-  })
+  }, CAPACITY_TIMEOUT_MS)
+
+  // FROZEN CANONICAL HASH (Task 13 Step 6): the mass-scale half of the
+  // simulation contract, folding all 100 combatants' per-tick state and every
+  // emitted event across the design's fixed 600-tick window.
+  //
+  // Reviewed before pinning rather than copied from a failing diff. The trace it
+  // folds: 600 ticks, all 100 combatants still present, 68 of them damaged,
+  // 2361 events -- 387 action-starts, 193 damage-dealt, 139 misses, 13 evades,
+  // 4 blocks, 1 parry, 8 criticals, 194 staggers, 64 interruptions, 1093
+  // movement-intent changes. That census is the same one the anti-inertness
+  // thresholds above are derived from, so the two are consistent by
+  // construction, and the hash reproduced identically across repeated runs.
+  it('matches its frozen canonical trace hash', () => {
+    const hash = traceHash(createEncounter(createHundredCombatantFfa()), CAPACITY_TICKS)
+    expect(hash).toMatch(/^[0-9a-f]{8}$/)
+    expect(hash).toBe('6989feed')
+  }, CAPACITY_TIMEOUT_MS)
 
   it('is invariant to input combatant order: a fixed (non-random) shuffle produces identical sorted ids, state, events, and trace hash', () => {
     const config = createHundredCombatantFfa()
@@ -170,7 +198,7 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
     expect(shuffled.state).toEqual(original.state)
     expect(shuffled.events).toEqual(original.events)
     expect(traceHash(shuffled, 150)).toBe(traceHash(original, 150))
-  })
+  }, CAPACITY_TIMEOUT_MS)
 })
 
 // ===========================================================================
