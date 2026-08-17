@@ -341,6 +341,32 @@ describe('isWithinAttackGeometry', () => {
     expect(isWithinAttackGeometry(actorPosition, actorFacing, { x: 2, z: 0 }, contactRange, minimumFacingDot)).toBe(false)
   })
 
+  // The separation solver parks a pressed-together pair a hair BELOW the
+  // nominal floor -- measured at 0.89999999999999991, one ULP under 0.9 -- and
+  // every attack's `contactRange.min` coincides with that arena floor. A bare
+  // `<` rejected contact that should land, and the attacker took a geometry
+  // miss for standing exactly where the solver put it. Same class of defect as
+  // the decision seam's own floor clamp; ~10% of Technical's remaining geometry
+  // misses were this.
+  it('is true one ULP below contactRange.min, where the separation solver actually parks a pair', () => {
+    const oneUlpBelow = 0.9 - Number.EPSILON / 2
+    expect(oneUlpBelow).toBeLessThan(contactRange.min)
+    expect(isWithinAttackGeometry(actorPosition, actorFacing, { x: oneUlpBelow, z: 0 }, contactRange, minimumFacingDot)).toBe(true)
+  })
+
+  it('is true one ULP above contactRange.max, keeping the far edge symmetric', () => {
+    const oneUlpAbove = 1.35 + Number.EPSILON
+    expect(oneUlpAbove).toBeGreaterThan(contactRange.max)
+    expect(isWithinAttackGeometry(actorPosition, actorFacing, { x: oneUlpAbove, z: 0 }, contactRange, minimumFacingDot)).toBe(true)
+  })
+
+  it('still rejects a distance genuinely outside the range, not merely float noise', () => {
+    // The tolerance is 1e-9 against ranges expressed in tenths: it must not
+    // become a gameplay allowance.
+    expect(isWithinAttackGeometry(actorPosition, actorFacing, { x: 0.899, z: 0 }, contactRange, minimumFacingDot)).toBe(false)
+    expect(isWithinAttackGeometry(actorPosition, actorFacing, { x: 1.351, z: 0 }, contactRange, minimumFacingDot)).toBe(false)
+  })
+
   it('is false when the target is in range but outside the facing sector', () => {
     // distance 1.2, but directly to the side: dot(facing, towardTarget) = 0 < 0.4226.
     expect(isWithinAttackGeometry(actorPosition, actorFacing, { x: 0, z: 1.2 }, contactRange, minimumFacingDot)).toBe(false)

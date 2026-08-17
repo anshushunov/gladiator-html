@@ -365,6 +365,19 @@ export function calculateBlockedStaggerTicks(baseStaggerTicks: number): number {
  * Shared by ordinary attack geometry misses and a bound Fast evade's
  * success check (both ask the identical geometric question against the
  * contact snapshot).
+ *
+ * BOTH range bounds carry `CONTACT_EPSILON` of tolerance, for the same reason
+ * the decision seam clamps its own floor: the three-pass separation solver
+ * parks a pressed-together pair a hair BELOW the nominal minimum -- measured at
+ * `0.89999999999999991`, one ULP under `0.9` -- and every attack's
+ * `contactRange.min` coincides with that arena floor. A bare `<` then rejects
+ * contact that should land, and the attacker takes a geometry miss for standing
+ * exactly where the solver put it. Task 13 measured this as roughly 10% of
+ * Technical's remaining geometry misses, all within `1e-6` of the boundary.
+ *
+ * The tolerance is float-noise sized, not a gameplay allowance: `1e-9` units
+ * against contact ranges expressed in tenths. It is applied symmetrically at
+ * `max` so the far edge cannot develop the mirror-image knife-edge.
  */
 export function isWithinAttackGeometry(
   actorPosition: Readonly<Vec2>,
@@ -376,7 +389,7 @@ export function isWithinAttackGeometry(
   const dx = targetPosition.x - actorPosition.x
   const dz = targetPosition.z - actorPosition.z
   const distance = Math.sqrt(dx * dx + dz * dz)
-  if (distance < contactRange.min || distance > contactRange.max) return false
+  if (distance < contactRange.min - CONTACT_EPSILON || distance > contactRange.max + CONTACT_EPSILON) return false
   if (distance <= CONTACT_EPSILON) return true
   const dot = (actorFacing.x * dx + actorFacing.z * dz) / distance
   return dot >= minimumFacingDot
