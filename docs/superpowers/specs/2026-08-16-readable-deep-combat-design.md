@@ -699,6 +699,63 @@ Implementation may tune these fighter numbers plus action `damageMultiplier`/`re
 
 Planning cards replace attack interval with Power and Defense while retaining HP, Accuracy, Critical, and the always-visible counter rule.
 
+### Amendment — Task 13 balance calibration (approved during Task 13 execution on `feature/readable-deep-combat`)
+
+**The table above remains the authored initial content and is the historical record of intent.
+`src/content/mvpSeries.ts` and `src/content/combatStyles.ts` are now the source of truth for current
+values.** Read the table for *why* a fighter is shaped the way it is; read the content files for what
+the numbers are. `src/content/mvpSeries.test.ts` pins the rank orders below as properties.
+
+Task 13 could not satisfy the fixed statistical cohorts while holding every relative standing in the
+table. The plan owner approved the following deviations, each recorded with the measurement that
+forced it. Everything not listed here is unchanged: four of the five stat rank-orders (`maxHp`,
+`accuracy`, `defenseChance`, `criticalChance`) are exactly as authored, as are names, styles,
+opponent order, the `Heavy < Technical < Fast` turn ordering, Fast's `0.9–1.2` evade envelope, and
+the qualitative action ordering.
+
+**1. Aquila `power` 16 → 20** — from strictly lowest of the six to tied third with Nerva. This is the
+only rank-order change. Without it `aquila/drusus` measures 1.5% and `aquila/magnus` 10.5% against
+the cohort's `15..85%` band; with it, 19.0% and 40.0%. Every alternative was measured and is
+insufficient: critical chance is nearly inert (+1.0 point when *doubled*, since criticals apply only
+to an unblocked hit on a target already in recovery or stagger), and compressing the HP spread alone
+reaches 5.5%. Aquila keeps strictly the lowest HP and the highest critical chance, so "fragile burst
+fighter" survives — and low HP with high per-hit power arguably reads as a truer glass cannon than
+the authored 16, which made her simply worse at everything.
+
+**2. HP-spread compression** — rank order preserved; magnitudes compressed. Aquila now sits at ~82%
+of Drusus's HP against the authored 65%, so "fragile" survives as an ordinal but is softer as a
+magnitude. This is the other half of what makes `aquila/drusus` reachable.
+
+**3. Magnus buffed toward his neighbours** — accuracy `0.78 → 0.85`, critical `0.06 → 0.099`, defence
+`0.32 → 0.335`; rank order preserved, and he remains last on accuracy and critical and fifth on
+defence. Needed to hold `brutus/magnus` and `nerva/magnus` under the `85%` ceiling. He is still the
+weakest opponent on every axis the table names for him.
+
+**4. Golden scenario: "at least three distinct final score/result profiles" relaxed to two.**
+
+The only reachable third-profile flip at seed `20260815` is Aquila beating Magnus, which requires
+Magnus at `maxHp <= ~264`. Keeping `brutus/magnus` at or under `85%` requires him at `~282`. Brutus
+cannot absorb the difference: he sits one point above Nerva at his own standing floor. The four
+alternative flips that would also produce a third profile (Aquila beating Drusus or Cassius, Nerva
+losing to Cassius or Magnus) are 83–162 HP away against 15–26 HP for the Magnus flip, and Cassius and
+Nerva are each within a point or two of their standing ceilings. A configuration achieving three
+profiles was built and measured; it shipped `brutus/magnus` at 86.5% and `nerva/magnus` at exactly
+85.0%, and was rejected for that reason.
+
+The two golden criteria that carry product intent both still hold, and are asserted as strictly as
+before: the all-counter lineup does **not** sweep (it loses `1–2`), and a different lineup wins. What
+is lost is puzzle *variety* across the six orderings.
+
+The basis for prioritising the cohorts over this criterion is the design's own framing, two
+paragraphs below: "Determinism, style balance, roster balance, and pacing are **separate checks**",
+and the golden-scenario block closes by describing itself as "a determinism/product-puzzle fixture,
+**not evidence of statistical balance**". The statistical cohorts are the balance acceptance; this
+criterion is a property of one seed.
+
+Separately, and not a content matter: Task 13 found and fixed six conformance defects in
+`src/simulation/combatDecision.ts`, `encounter.ts` and `combatActions.ts`, three of which were
+silently propping up balance numbers. See `.superpowers/sdd/2026-08-16-readable-deep-combat/task-13-report.md`.
+
 ## Balance acceptance
 
 Determinism, style balance, roster balance, and pacing are separate checks.
@@ -707,7 +764,7 @@ Determinism, style balance, roster balance, and pacing are separate checks.
 
 - the all-counter lineup `Brutus→Drusus`, `Aquila→Cassius`, `Nerva→Magnus` must not sweep `3–0`; the UI counter rule is useful but not a guaranteed answer to stronger individual opponents;
 - at least one different lineup wins `2–1` or `3–0`;
-- the six possible lineups contain at least three distinct final score/result profiles;
+- ~~the six possible lineups contain at least three distinct final score/result profiles~~ — **AMENDED to at least two** during Task 13; see "Amendment — Task 13 balance calibration" under Fighter content for the measured conflict with the roster win-rate bands;
 - one complete lineup has a checked canonical event-trace hash. This is a determinism/product-puzzle fixture, not evidence of statistical balance.
 
 **Fixed statistical cohorts:**
