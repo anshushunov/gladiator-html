@@ -14,7 +14,7 @@ Keep the loop fast: make the smallest playable change, run the narrowest useful 
 - Simulation change: `npm test`
 - UI/rendering change: `npm run test:e2e`
 - Before handoff: `npm run check`
-- Update the visual baseline only for an intentional UI change: `npm run test:e2e:update`
+- Update the visual baseline only for an intentional UI change: `npm run test:e2e:update`. An ordinary run never writes a baseline (`updateSnapshots: 'none'` in `playwright.config.ts`); `-u` rewrites exactly the mismatching ones, so look at every regenerated PNG before committing it.
 
 ## Working agreement
 
