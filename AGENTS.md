@@ -15,6 +15,14 @@ Keep the loop fast: make the smallest playable change, run the narrowest useful 
 - UI/rendering change: `npm run test:e2e`
 - Before handoff: `npm run check`
 - Update the visual baseline only for an intentional UI change: `npm run test:e2e:update`. An ordinary run never writes a baseline (`updateSnapshots: 'none'` in `playwright.config.ts`); `-u` rewrites exactly the mismatching ones, so look at every regenerated PNG before committing it.
+- Baselines are per-OS (`tests/__screenshots__/<platform>/`). Your own run only refreshes your platform's set; CI runs Linux, so refresh that one too in the matching container:
+
+```bash
+git archive HEAD | tar -x -C /tmp/shots            # a clean tree, no host node_modules
+docker run --rm -v /tmp/shots:/work -w /work mcr.microsoft.com/playwright:v1.62.1-noble \
+  bash -lc "npm ci && npm run build && npx playwright test --update-snapshots"
+cp /tmp/shots/tests/__screenshots__/linux/*.png tests/__screenshots__/linux/
+```
 
 ## Working agreement
 
