@@ -10,3 +10,8 @@ debug.log
 
 # Subagent-driven-development scratch workspace
 .superpowers/
+
+# Human-review recordings (`npm run review:clips`): review material, not
+# artifacts -- regenerate them from the seed instead of committing ~100 MB of
+# video. The filled-in review document beside them IS committed.
+docs/reviews/clips/
