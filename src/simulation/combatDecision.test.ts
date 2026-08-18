@@ -445,6 +445,43 @@ describe('scoreCombatCandidates: pressure adjustment (+-8 x pressureLevel)', () 
   })
 })
 
+describe('scoreCombatCandidates: burst-in legality band (2.8..4.0 units)', () => {
+  // `isLocomotionLegal` (private) gates `burst-in` to this band -- see its
+  // own comment and `BURST_IN_MIN_RANGE`/`BURST_IN_MAX_RANGE`. It had no
+  // boundary test at all (unlike the adjacent gates covered above, e.g.
+  // `hasFastForcedDisengageEnded`'s true-at-boundary/false-just-beyond pairs)
+  // -- `isLocomotionLegal` is not itself exported, so this drives the gate
+  // indirectly through `scoreCombatCandidates`, checking whether `burst-in`
+  // is present (legal) or absent (illegal) among Fast's scored candidates at
+  // each boundary. Fast's `burstUnitsPerSecond` base weight (14) nets
+  // positive at both boundaries once the "reduces distance error" distance
+  // adjustment is added (see the two tests below), so presence/absence here
+  // tracks legality, not merely a coincidental zero score.
+  it('is legal at the lower boundary (2.8) and illegal just inside it (2.79)', () => {
+    const self = fighterState('self', 'fast', { position: { x: 0, z: 0 } })
+
+    const atBoundary = makeContext({ self, target: fighterState('foe', 'fast', { position: { x: 2.8, z: 0 } }) })
+    const scoredAtBoundary = scoreCombatCandidates(atBoundary, COMBAT_STYLES.styles.fast)
+    expect(scoredAtBoundary.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'burst-in')).toBe(true)
+
+    const justInside = makeContext({ self, target: fighterState('foe', 'fast', { position: { x: 2.79, z: 0 } }) })
+    const scoredJustInside = scoreCombatCandidates(justInside, COMBAT_STYLES.styles.fast)
+    expect(scoredJustInside.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'burst-in')).toBe(false)
+  })
+
+  it('is legal at the upper boundary (4.0) and illegal just beyond it (4.01)', () => {
+    const self = fighterState('self', 'fast', { position: { x: 0, z: 0 } })
+
+    const atBoundary = makeContext({ self, target: fighterState('foe', 'fast', { position: { x: 4.0, z: 0 } }) })
+    const scoredAtBoundary = scoreCombatCandidates(atBoundary, COMBAT_STYLES.styles.fast)
+    expect(scoredAtBoundary.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'burst-in')).toBe(true)
+
+    const justBeyond = makeContext({ self, target: fighterState('foe', 'fast', { position: { x: 4.01, z: 0 } }) })
+    const scoredJustBeyond = scoreCombatCandidates(justBeyond, COMBAT_STYLES.styles.fast)
+    expect(scoredJustBeyond.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'burst-in')).toBe(false)
+  })
+})
+
 describe('scoreCombatCandidates: matchup comparison (+-5)', () => {
   it('adds +5 for advantage and -5 for disadvantage relative to the neutral baseline', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })

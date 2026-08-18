@@ -4,13 +4,17 @@
 // the playable series stays the 1v1 duel adapter -- it is acceptance
 // coverage for the kernel design the whole series was built around.
 //
-// No content-dependent trace-hash literal is frozen here (Task 13 tunes
-// balance first, then records canonical hashes). The exact candidate-check
-// counts the task brief predicted (342 sparse / 1408 dense) are also NOT
-// hard-coded below -- the brief calls them a sanity check for implementers,
-// not a spec value, and they are sensitive to grid placement (see the task
-// report for the measured counts and why they legitimately differ from the
-// brief's own numbers). Only the brief's actual acceptance bounds (below
+// A content-dependent trace-hash literal (`44a08b74`, below) IS frozen here,
+// same as `battle.test.ts`/`encounter.test.ts`'s duel-scale hashes -- Task 13
+// tuned balance first and recorded it afterward, from a probe run, per that
+// task's own freeze cycle; this comment previously said no such literal
+// existed here, which stopped being true once that freeze happened and was
+// left uncorrected. The exact candidate-check counts the task brief
+// predicted (342 sparse / 1408 dense) are still NOT hard-coded below -- the
+// brief calls them a sanity check for implementers, not a spec value, and
+// they are sensitive to grid placement (see the task report for the measured
+// counts and why they legitimately differ from the brief's own numbers).
+// Beyond the frozen hash, only the brief's actual acceptance bounds (below
 // 800, never the full 4950, dense > sparse, exactly three passes, each real
 // pair at most once per pass) are asserted.
 

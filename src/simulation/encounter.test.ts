@@ -363,6 +363,105 @@ describe('assertEncounterInvariants', () => {
     }
     expect(() => assertEncounterInvariants(broken)).toThrow(/facing/)
   })
+
+  // ---------------------------------------------------------------------
+  // This runs on every production tick (`advanceEncounterTick` -- see the
+  // Task 8/9/10 report notes) and is the branch's main structural safety
+  // net; the four cases above cover only 3 of roughly ten distinct
+  // invariant families the function actually checks. The out-of-bounds
+  // position branch caught a real bug during Task 10 while still untested
+  // itself. This table covers the rest, each isolated to exactly one broken
+  // field so the thrown message can be pinned to that field alone.
+  // ---------------------------------------------------------------------
+  const invariantViolations: readonly { name: string; break: (state: EncounterState) => EncounterState; expectedFragment: RegExp }[] = [
+    {
+      name: 'non-finite tick',
+      break: (state) => ({ ...state, tick: Number.NaN }),
+      expectedFragment: /tick/,
+    },
+    {
+      name: 'non-finite nextEventId',
+      break: (state) => ({ ...state, nextEventId: Number.POSITIVE_INFINITY }),
+      expectedFragment: /nextEventId/,
+    },
+    {
+      name: 'combatants vs randomByCombatant key-set mismatch',
+      break: (state) => {
+        const { b: _dropped, ...rest } = state.randomByCombatant
+        return { ...state, randomByCombatant: rest }
+      },
+      expectedFragment: /randomByCombatant/,
+    },
+    {
+      name: 'out-of-bounds position',
+      break: (state) => ({
+        ...state,
+        combatants: { ...state.combatants, a: { ...state.combatants.a, position: { x: 10_000, z: 0 } } },
+      }),
+      expectedFragment: /position/,
+    },
+    {
+      name: 'hp above maxHp',
+      break: (state) => ({
+        ...state,
+        combatants: { ...state.combatants, a: { ...state.combatants.a, hp: state.combatants.a.definition.maxHp + 1 } },
+      }),
+      expectedFragment: /hp/,
+    },
+    {
+      name: 'negative clock (lastContactTick)',
+      break: (state) => ({
+        ...state,
+        combatants: { ...state.combatants, a: { ...state.combatants.a, lastContactTick: -1 } },
+      }),
+      expectedFragment: /lastContactTick/,
+    },
+    {
+      name: 'negative serial (nextActionSerial)',
+      break: (state) => ({
+        ...state,
+        combatants: { ...state.combatants, a: { ...state.combatants.a, nextActionSerial: -1 } },
+      }),
+      expectedFragment: /nextActionSerial/,
+    },
+    {
+      name: 'duplicate incomingActionId in reactionLedger',
+      break: (state) => ({
+        ...state,
+        combatants: {
+          ...state.combatants,
+          a: {
+            ...state.combatants.a,
+            reactionLedger: [
+              { incomingActionId: 'b:0', outcome: 'scheduled' },
+              { incomingActionId: 'b:0', outcome: 'failed' },
+            ],
+          },
+        },
+      }),
+      expectedFragment: /reactionLedger/,
+    },
+    {
+      name: 'wrong action.instanceId actor prefix',
+      break: (state) => ({
+        ...state,
+        combatants: {
+          ...state.combatants,
+          a: {
+            ...state.combatants.a,
+            action: { type: 'active', instanceId: 'b:0', definitionId: 'heavy-cleave', phase: 'windup', phaseStartedTick: 0, phaseEndsAtTick: 10, targetId: 'b' },
+          },
+        },
+      }),
+      expectedFragment: /action\.instanceId/,
+    },
+  ]
+
+  it.each(invariantViolations)('throws with a message naming the field for: $name', ({ break: breakState, expectedFragment }) => {
+    const transition = createEncounter(baseConfig())
+    const broken = breakState(transition.state)
+    expect(() => assertEncounterInvariants(broken)).toThrow(expectedFragment)
+  })
 })
 
 // ===========================================================================
@@ -2973,9 +3072,12 @@ describe("advanceEncounterTick: Fast's forced disengage measures its 30-tick tim
 // `foldTraceHash`/`formatTraceHash` (random.ts, built in Task 2 for exactly
 // this purpose); positions/facing are quantized to integer millionths so the
 // diagnostic (never combat itself, which stays full precision throughout
-// `encounter.ts`) is robust to last-bit float noise. No frozen literal is
-// asserted here -- Task 13 tunes balance first, then records canonical
-// hashes after reviewing traces.
+// `encounter.ts`) is robust to last-bit float noise. The tests immediately
+// below assert no frozen literal, only determinism/seed-sensitivity -- but
+// the `FROZEN_DUEL_TRACES` block further down in this same `describe` DOES
+// freeze three canonical hashes (Task 13 Step 6), so "no frozen literal" is
+// no longer true of this section as a whole; see that block's own comment
+// for the freeze itself.
 // ===========================================================================
 
 describe('canonical trace hash (Task 10 Step 3, test-only diagnostic helper)', () => {

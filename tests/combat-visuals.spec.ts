@@ -230,7 +230,14 @@ test('freezes heavy guard/cleave, fast burst/disengage, a mutual hit/stagger, a 
   const brutusAfterBlock = await combatantState(page, 'home.brutus')
   expect(brutusAfterBlock.hp).toBe(289) // 298 - 9 (shield chip damage, not a full hit)
   snapshot = await arenaSnapshot(page)
-  expect(snapshot!.activeEffectIds.some((id) => id.startsWith('shield-'))).toBe(true)
+  // Exactly one shield flash, not merely "one or more": a guard-blocked hit
+  // emits both `attack-blocked` and a paired `damage-dealt` for the same
+  // `actionInstanceId`, and `ArenaView.processNewEvents`'s `blockedInstanceIds`
+  // dedupe exists precisely so that single exchange spawns one flash, not two
+  // overlapping ones burning both of `shield`'s pool slots. `.some(...)`
+  // alone is satisfied by either outcome, so it is not a regression guard for
+  // that dedupe -- assert the count.
+  expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('shield-'))).toHaveLength(1)
 
   // tick 357: away.drusus's forced disengage (Fast's post-burst-lunge
   // recovery locomotion) -- on the frozen trace this is a genuine, if
@@ -347,18 +354,27 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
 // unrelated planning/interstitial/summary change riding along.
 // ---------------------------------------------------------------------------
 
-async function captureFrame(page: Page, name: string): Promise<void> {
+async function captureFrame(page: Page, name: string, options?: { maxDiffPixelRatio?: number }): Promise<void> {
   const debugState = await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState())
   expect(debugState.paused).toBe(true)
   await page.evaluate(() => window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha!(1))
-  await expect(page).toHaveScreenshot(name)
+  await expect(page).toHaveScreenshot(name, options)
 }
+
+// Final-review fix #8: the global `maxDiffPixelRatio: 0.05` (playwright.config.ts)
+// is ~52,480 pixels at this file's 1280x820 viewport -- roughly a 229x229
+// block, larger than a fighter silhouette. These four pose captures exist
+// precisely to catch pose regressions, so they tighten the threshold to
+// `0.005` (~2,624 pixels) instead of inheriting the global default; the
+// other screenshot tests in this suite (the planning snapshot, the safe
+// two-fighter frame) are unaffected and keep the global tolerance.
+const TIGHT_POSE_DIFF_TOLERANCE = { maxDiffPixelRatio: 0.005 }
 
 test('key pose: heavy cleave windup', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   await startBoutZeroWith(page, 'brutus')
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(253))
-  await captureFrame(page, 'heavy-cleave.png')
+  await captureFrame(page, 'heavy-cleave.png', TIGHT_POSE_DIFF_TOLERANCE)
 })
 
 test('key pose: fast burst-lunge windup', async ({ page }) => {
@@ -370,14 +386,14 @@ test('key pose: fast burst-lunge windup', async ({ page }) => {
   // from the same bout A run Step 2 freezes above, picked for a clearer,
   // less cluttered silhouette than the earlier instance.
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(765))
-  await captureFrame(page, 'fast-burst.png')
+  await captureFrame(page, 'fast-burst.png', TIGHT_POSE_DIFF_TOLERANCE)
 })
 
 test('key pose: technical parry contact', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   await startBoutZeroWith(page, 'nerva')
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(1567))
-  await captureFrame(page, 'technical-parry.png')
+  await captureFrame(page, 'technical-parry.png', TIGHT_POSE_DIFF_TOLERANCE)
 })
 
 test('combat outcomes: defeat', async ({ page }) => {
@@ -392,7 +408,7 @@ test('combat outcomes: defeat', async ({ page }) => {
   // bouts result panel -- this is the actual, deterministic post-defeat UI,
   // not an unrelated interstitial riding along.
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(1910))
-  await captureFrame(page, 'combat-outcomes.png')
+  await captureFrame(page, 'combat-outcomes.png', TIGHT_POSE_DIFF_TOLERANCE)
 })
 
 test('a complete safe two-fighter frame', async ({ page }) => {

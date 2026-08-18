@@ -152,8 +152,11 @@ export function createHundredCombatantFfa(seed = 20260815): EncounterConfig {
 // `encounter.test.ts` and `encounterCapacity.test.ts` reuse exactly the same
 // folding approach rather than each maintaining its own copy. Test-only
 // diagnostic: `EncounterState` itself never stores an event log or a running
-// hash. No frozen literal is ever asserted from this helper's output in this
-// task -- Task 13 tunes balance first, then records canonical hashes.
+// hash. This helper's own output was not yet frozen when this comment was
+// written (Task 12, before Task 13's balance pass) -- it now backs several
+// frozen literals: `encounter.test.ts`'s `FROZEN_DUEL_TRACES` (Task 13 Step
+// 6) and `encounterCapacity.test.ts`'s own `44a08b74`, both asserted via
+// this exact function.
 // ---------------------------------------------------------------------------
 
 function quantizeMillionths(value: number): number {

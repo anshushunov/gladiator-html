@@ -561,13 +561,35 @@ describe('computePresentationVariation', () => {
     expect(a).not.toEqual(b)
   })
 
-  it('stays within a small cosmetic range around unity', () => {
+  it('stays within the exact authored range around unity (pitch 0.94..1.06, duration 0.92..1.08)', () => {
+    // Tightened from a 0.85..1.15 band (final-review fix #6): that band was
+    // roughly 2.5x wider than the implementation's actual
+    // `PITCH_VARIATION_MIN/MAX`/`DURATION_VARIATION_MIN/MAX` constants, so it
+    // would also have passed for a mixer that authored ~2.5x more wobble
+    // than intended, or for one that broke and always returned exactly
+    // `1.0`. Both bounds are asserted, and variation itself is checked
+    // separately below.
+    let sawPitchBelowUnity = false
+    let sawPitchAboveUnity = false
+    let sawDurationBelowUnity = false
+    let sawDurationAboveUnity = false
     for (let id = 0; id < 50; id += 1) {
       const { pitch, durationScale } = computePresentationVariation(0, id)
-      expect(pitch).toBeGreaterThan(0.85)
-      expect(pitch).toBeLessThan(1.15)
-      expect(durationScale).toBeGreaterThan(0.85)
-      expect(durationScale).toBeLessThan(1.15)
+      expect(pitch).toBeGreaterThanOrEqual(0.94)
+      expect(pitch).toBeLessThanOrEqual(1.06)
+      expect(durationScale).toBeGreaterThanOrEqual(0.92)
+      expect(durationScale).toBeLessThanOrEqual(1.08)
+      if (pitch < 1) sawPitchBelowUnity = true
+      if (pitch > 1) sawPitchAboveUnity = true
+      if (durationScale < 1) sawDurationBelowUnity = true
+      if (durationScale > 1) sawDurationAboveUnity = true
     }
+    // The values actually vary on both sides of unity across this run, not
+    // just staying within bounds -- rules out a constant-1.0 (or any other
+    // constant) mixer passing the range assertions above vacuously.
+    expect(sawPitchBelowUnity).toBe(true)
+    expect(sawPitchAboveUnity).toBe(true)
+    expect(sawDurationBelowUnity).toBe(true)
+    expect(sawDurationAboveUnity).toBe(true)
   })
 })
