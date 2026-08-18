@@ -62,7 +62,7 @@ async function arenaSnapshot(page: Page) {
 //   1. The SAME simulation code, executed by Chromium's V8 instead of
 //      Node's, produces the byte-identical canonical trace hash Task 13
 //      froze and Vitest already asserts (`battle.test.ts`'s "matches its
-//      frozen canonical adapter-duel trace hash", `828ad7cb`). This is
+//      frozen canonical adapter-duel trace hash", `dc635911`). This is
 //      deliberately NOT run through the roster/series UI -- that plays a
 //      different matchup (`aquila`/`nerva`/`brutus` at seed 20260815) than
 //      the one the frozen literal belongs to (`battle.test.ts`'s own local
@@ -84,7 +84,7 @@ async function arenaSnapshot(page: Page) {
 //      render-rate-sensitive property left to prove is this one.
 // ---------------------------------------------------------------------------
 
-const CANONICAL_CHROMIUM_DUEL_HASH = '828ad7cb'
+const CANONICAL_CHROMIUM_DUEL_HASH = 'dc635911'
 
 test('matches the post-tuning Node trace hash in Chromium', async ({ page }) => {
   await page.goto('/?snapshot')
@@ -205,7 +205,7 @@ test('freezes heavy guard/cleave, fast burst/disengage, a mutual hit/stagger, a 
   expect(contactEvents.filter((event) => event.type === 'fighter-staggered')).toHaveLength(2)
   const brutusAfterHit = await combatantState(page, 'home.brutus')
   const drususAfterHit = await combatantState(page, 'away.drusus')
-  expect(brutusAfterHit.hp).toBe(298) // 324 - 26 (fast-burst-lunge body hit)
+  expect(brutusAfterHit.hp).toBe(297) // 324 - 27 (fast-burst-lunge body hit)
   expect(drususAfterHit.hp).toBe(302) // 350 - 48 (heavy-cleave body hit)
   expect(brutusAfterHit.staggerUntilTick).toBeGreaterThan(256)
   expect(drususAfterHit.staggerUntilTick).toBeGreaterThan(256)
@@ -226,9 +226,9 @@ test('freezes heavy guard/cleave, fast burst/disengage, a mutual hit/stagger, a 
   const blockEvents = await eventsAtTick(page, 329)
   expect(blockEvents.some((event) => event.type === 'attack-blocked')).toBe(true)
   const shieldDamage = blockEvents.find((event) => event.type === 'damage-dealt')
-  expect(shieldDamage).toMatchObject({ contactZone: 'shield', amount: 9 })
+  expect(shieldDamage).toMatchObject({ contactZone: 'shield', amount: 10 })
   const brutusAfterBlock = await combatantState(page, 'home.brutus')
-  expect(brutusAfterBlock.hp).toBe(289) // 298 - 9 (shield chip damage, not a full hit)
+  expect(brutusAfterBlock.hp).toBe(287) // 297 - 10 (shield chip damage, not a full hit)
   snapshot = await arenaSnapshot(page)
   // Exactly one shield flash, not merely "one or more": a guard-blocked hit
   // emits both `attack-blocked` and a paired `damage-dealt` for the same
@@ -240,26 +240,33 @@ test('freezes heavy guard/cleave, fast burst/disengage, a mutual hit/stagger, a 
   expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('shield-'))).toHaveLength(1)
 
   // tick 357: away.drusus's forced disengage (Fast's post-burst-lunge
-  // recovery locomotion) -- on the frozen trace this is a genuine, if
-  // single-tick, `movement-intent-changed` to `'disengage'`.
+  // recovery locomotion). The lunge that started at 311 contacted at 329 and
+  // its recovery ran out at 352, so the forcing was stamped at 353 and is
+  // still held here, four ticks in -- it stays until drusus has opened the
+  // range back out to 2.4 units (or 30 ticks pass). Before
+  // `hasFastForcedDisengageEnded`'s range test was fixed this was a
+  // single-tick blip, which is why the assertion now names the stamp too:
+  // an intent that merely happens to read `'disengage'` on one frame is not
+  // the mechanic.
   await advanceToTick(page, 357, cursor)
   const disengaging = await combatantState(page, 'away.drusus')
   expect(disengaging.locomotionIntent).toBe('disengage')
+  expect(disengaging.forcedDisengageStartTick).toBe(353)
 
-  // tick 400: a quiet baseline read, before the decline below -- away.drusus
-  // is neutral (recovered from its previous stagger at tick 393, its next
-  // action doesn't start until tick 417), so no reaction-overlay layer
-  // (recognition-flinch, block/evade/parry, stagger, or defeat) touches its
-  // `head` joint here. `PoseController`'s own layering leaves an untouched
-  // joint at the identity transform, so this is `[0, 0, 0]` -- captured only
-  // to give the tick-478 assertion below a same-run, same-rig comparison
-  // point, not asserted as a standalone fact about the renderer.
-  await advanceToTick(page, 400, cursor)
+  // tick 1100: a quiet baseline read, before the decline below -- away.drusus
+  // is neutral (its stagger cleared at tick 970 and it has no action of its
+  // own running), so no reaction-overlay layer (recognition-flinch,
+  // block/evade/parry, stagger, or defeat) touches its `head` joint here.
+  // `PoseController`'s own layering leaves an untouched joint at the identity
+  // transform, so this is `[0, 0, 0]` -- captured only to give the tick-1123
+  // assertion below a same-run, same-rig comparison point, not asserted as a
+  // standalone fact about the renderer.
+  await advanceToTick(page, 1100, cursor)
   const drususBaselineHead = (await arenaSnapshot(page))!.jointRotations['away.drusus'].head
 
-  // tick 478: a `defense-declined` window -- away.drusus declined to defend
-  // against home.brutus's `heavy-cleave` (instance `home.brutus:4`, event at
-  // tick 475), and the eventual damage (tick 482) has not landed yet.
+  // tick 1123: a `defense-declined` window -- away.drusus declined to defend
+  // against home.brutus's `heavy-cleave` (instance `home.brutus:11`, event at
+  // tick 1120), and the eventual damage (tick 1127) has not landed yet.
   //
   // This is the recognition-flinch trigger window `PoseController`/
   // `ArenaView` consume (see `ArenaView.ts`'s `pendingDefenseDeclinedTick`).
@@ -277,12 +284,12 @@ test('freezes heavy guard/cleave, fast burst/disengage, a mutual hit/stagger, a 
   // wiring in `ArenaView.ts`, or the `recognitionFlinchActive` branch in
   // `PoseController.ts`, would leave this `head` reading at the tick-400
   // baseline and fail this assertion, unlike the old finite-only check.
-  await advanceToTick(page, 478, cursor)
-  const declineEvents = await eventsAtTick(page, 475)
-  expect(declineEvents).toContainEqual(expect.objectContaining({ type: 'defense-declined', defenderId: 'away.drusus', incomingActionId: 'home.brutus:4' }))
+  await advanceToTick(page, 1123, cursor)
+  const declineEvents = await eventsAtTick(page, 1120)
+  expect(declineEvents).toContainEqual(expect.objectContaining({ type: 'defense-declined', defenderId: 'away.drusus', incomingActionId: 'home.brutus:11' }))
   const drususBeforeDamage = await combatantState(page, 'away.drusus')
-  expect(drususBeforeDamage.hp).toBe(254) // unchanged -- the decline's own damage lands at tick 482, not yet
-  expect(drususBeforeDamage.staggerUntilTick).toBeLessThanOrEqual(478) // not staggered -- isolates the flinch overlay from the stagger overlay
+  expect(drususBeforeDamage.hp).toBe(191) // unchanged -- the decline's own damage lands at tick 1127, not yet
+  expect(drususBeforeDamage.staggerUntilTick).toBeLessThanOrEqual(1123) // not staggered -- isolates the flinch overlay from the stagger overlay
   expect(drususBeforeDamage.status).toBe('active') // not defeated -- isolates the flinch overlay from the defeat overlay
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
@@ -290,9 +297,9 @@ test('freezes heavy guard/cleave, fast burst/disengage, a mutual hit/stagger, a 
   expect(drususFlinchHead).not.toEqual(drususBaselineHead)
   expect(drususFlinchHead).toEqual([0.14, 0.08, 0])
 
-  // tick 1910: home.brutus's defeat -- the bout's decisive `fighter-defeated`.
-  await advanceToTick(page, 1910, cursor)
-  const defeatEvents = await eventsAtTick(page, 1910)
+  // tick 2106: home.brutus's defeat -- the bout's decisive `fighter-defeated`.
+  await advanceToTick(page, 2106, cursor)
+  const defeatEvents = await eventsAtTick(page, 2106)
   expect(defeatEvents).toContainEqual(expect.objectContaining({ type: 'fighter-defeated', defeatedId: 'home.brutus', sourceId: 'away.drusus' }))
   const brutusDefeated = await combatantState(page, 'home.brutus')
   expect(brutusDefeated.status).toBe('defeated')
@@ -305,38 +312,39 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
   await startBoutZeroWith(page, 'nerva')
   const cursor = { current: 0 }
 
-  // tick 1090: home.nerva settles into `hold-range` -- Technical's
+  // tick 860: home.nerva settles into `hold-range` -- Technical's
   // "measuring" stance between exchanges (movement-intent-changed to
-  // `hold-range` at tick 1085).
-  await advanceToTick(page, 1090, cursor)
+  // `hold-range` at tick 853), with no action of its own running.
+  await advanceToTick(page, 860, cursor)
   const measuring = await combatantState(page, 'home.nerva')
   expect(measuring.locomotionIntent).toBe('hold-range')
   let snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
 
-  // tick 1560: home.nerva mid `technical-parry` windup, reacting to
-  // away.drusus's `fast-slash` (both started tick 1557, windup ends 1567).
-  await advanceToTick(page, 1560, cursor)
+  // tick 951: home.nerva mid `technical-parry` windup, reacting to
+  // away.drusus's `fast-burst-lunge` (started 940; the parry started 948 and
+  // both reach contact at 958).
+  await advanceToTick(page, 951, cursor)
   const parryWindup = await combatantState(page, 'home.nerva')
   expect(parryWindup.action).toMatchObject({ type: 'active', definitionId: 'technical-parry', phase: 'windup' })
 
-  // tick 1567: the parry connects -- `attack-parried` on the frozen trace,
+  // tick 958: the parry connects -- `attack-parried` on the frozen trace,
   // weapon-zone contact flash live.
-  await advanceToTick(page, 1567, cursor)
-  const parryEvents = await eventsAtTick(page, 1567)
+  await advanceToTick(page, 958, cursor)
+  const parryEvents = await eventsAtTick(page, 958)
   expect(parryEvents.some((event) => event.type === 'attack-parried')).toBe(true)
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.activeEffectIds.some((id) => id.startsWith('weapon-'))).toBe(true)
 
-  // tick 1570: the forced `technical-parry-counter` windup immediately
-  // follows the parry (started tick 1568).
-  await advanceToTick(page, 1570, cursor)
+  // tick 961: the forced `technical-parry-counter` windup immediately
+  // follows the parry (started tick 959).
+  await advanceToTick(page, 961, cursor)
   const counterWindup = await combatantState(page, 'home.nerva')
   expect(counterWindup.action).toMatchObject({ type: 'active', definitionId: 'technical-parry-counter', phase: 'windup' })
 
-  // tick 1576: the counter connects -- `damage-dealt` against away.drusus.
-  await advanceToTick(page, 1576, cursor)
-  const counterEvents = await eventsAtTick(page, 1576)
+  // tick 967: the counter connects -- `damage-dealt` against away.drusus.
+  await advanceToTick(page, 967, cursor)
+  const counterEvents = await eventsAtTick(page, 967)
   expect(counterEvents).toContainEqual(expect.objectContaining({ type: 'damage-dealt', actorId: 'home.nerva', actionId: 'technical-parry-counter' }))
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
@@ -354,61 +362,71 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
 // unrelated planning/interstitial/summary change riding along.
 // ---------------------------------------------------------------------------
 
-async function captureFrame(page: Page, name: string, options?: { maxDiffPixelRatio?: number }): Promise<void> {
+// Every capture in this file inherits `playwright.config.ts`'s
+// `maxDiffPixelRatio: 0.005` (~2,624 pixels at 1280x820). That used to be a
+// per-test override here, against a loose 0.05 global; the global is the
+// tight value now, so pose captures and the safe-frame capture are held to
+// the same bar and neither can silently drift.
+/**
+ * Seconds of simulated camera time every capture settles before shooting.
+ * `?snapshot` holds the runtime paused and a paused frame advances no camera
+ * time at all, so without this the camera would still sit exactly where the
+ * bout's opening `reset()` left it -- a wide arena shot with the fighters
+ * small and off-centre wherever they have walked to by the frozen tick. Four
+ * seconds is past five look-target time constants (0.75 s), three distance
+ * constants (1.25 s), and two and a half yaw constants (1.5 s), so every axis
+ * has settled onto the framing a player would be looking at, and the capture
+ * stays a pure function of the tick count rather than of wall-clock time.
+ */
+const CAMERA_SETTLE_SECONDS = 4
+
+async function captureFrame(page: Page, name: string): Promise<void> {
   const debugState = await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState())
   expect(debugState.paused).toBe(true)
+  await page.evaluate((seconds) => window.__GLADIATOR_TEST__.settleCameraSeconds!(seconds), CAMERA_SETTLE_SECONDS)
   await page.evaluate(() => window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha!(1))
-  await expect(page).toHaveScreenshot(name, options)
+  await expect(page).toHaveScreenshot(name)
 }
-
-// Final-review fix #8: the global `maxDiffPixelRatio: 0.05` (playwright.config.ts)
-// is ~52,480 pixels at this file's 1280x820 viewport -- roughly a 229x229
-// block, larger than a fighter silhouette. These four pose captures exist
-// precisely to catch pose regressions, so they tighten the threshold to
-// `0.005` (~2,624 pixels) instead of inheriting the global default; the
-// other screenshot tests in this suite (the planning snapshot, the safe
-// two-fighter frame) are unaffected and keep the global tolerance.
-const TIGHT_POSE_DIFF_TOLERANCE = { maxDiffPixelRatio: 0.005 }
 
 test('key pose: heavy cleave windup', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   await startBoutZeroWith(page, 'brutus')
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(253))
-  await captureFrame(page, 'heavy-cleave.png', TIGHT_POSE_DIFF_TOLERANCE)
+  await captureFrame(page, 'heavy-cleave.png')
 })
 
 test('key pose: fast burst-lunge windup', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   await startBoutZeroWith(page, 'brutus')
-  // away.drusus's `fast-burst-lunge` windup starting tick 759 (recovered and
-  // re-spaced since the previous exchange, unlike the earlier tick-670
-  // instance where both fighters were still crowded from the prior clash) --
-  // from the same bout A run Step 2 freezes above, picked for a clearer,
-  // less cluttered silhouette than the earlier instance.
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(765))
-  await captureFrame(page, 'fast-burst.png', TIGHT_POSE_DIFF_TOLERANCE)
+  // away.drusus's `fast-burst-lunge` windup starting tick 811 (recovered and
+  // re-spaced since the previous exchange, which resolved back at tick 713,
+  // rather than an instance where both fighters are still crowded from the
+  // prior clash) -- from the same bout A run Step 2 freezes above, picked for
+  // a clearer, less cluttered silhouette.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(817))
+  await captureFrame(page, 'fast-burst.png')
 })
 
 test('key pose: technical parry contact', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   await startBoutZeroWith(page, 'nerva')
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(1567))
-  await captureFrame(page, 'technical-parry.png', TIGHT_POSE_DIFF_TOLERANCE)
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(958))
+  await captureFrame(page, 'technical-parry.png')
 })
 
 test('combat outcomes: defeat', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   await startBoutZeroWith(page, 'brutus')
-  // The killing blow (tick 1910) is atomic -- home.brutus holds at 11 HP
-  // through tick 1909, then the final `fast-burst-lunge` deals 40 in one
+  // The killing blow (tick 2106) is atomic -- home.brutus holds at 10 HP
+  // through tick 2105, then the final `fast-burst-lunge` deals 27 in one
   // tick, past the point of gradual decline. By this exact tick the series
   // has already transitioned to `between-bouts` (`advanceSeriesTicks`
   // processes the finish the same tick the battle finishes), so the real
   // "combat outcome" a player sees here genuinely includes the between-
   // bouts result panel -- this is the actual, deterministic post-defeat UI,
   // not an unrelated interstitial riding along.
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(1910))
-  await captureFrame(page, 'combat-outcomes.png', TIGHT_POSE_DIFF_TOLERANCE)
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(2106))
+  await captureFrame(page, 'combat-outcomes.png')
 })
 
 test('a complete safe two-fighter frame', async ({ page }) => {

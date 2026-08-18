@@ -31,11 +31,9 @@
 import * as THREE from 'three'
 import type { AttackActionId, CombatActionPhase, CombatActionState, DefenseActionId } from '../simulation/combatActions'
 import type { FighterCombatState } from '../simulation/encounter'
-import type { Archetype } from '../simulation/fighters'
 import type { Vec2 } from '../simulation/movement'
 import {
   COMBAT_POSES,
-  STYLE_GAIT_CYCLE_DISTANCE,
   type AttackPoseSet,
   type HumanoidPoseData,
   type JointTransform,
@@ -43,6 +41,7 @@ import {
   type StyleCorePoses,
 } from './poses/combatPoses'
 import { SEMANTIC_JOINT_NAMES, type JointName, type ProceduralFighter } from './ProceduralFighter'
+import { classifyGaitPhase, computeGaitPhase } from './poses/gait'
 
 // ---------------------------------------------------------------------------
 // Public contract (brief Step 2)
@@ -121,9 +120,17 @@ const RECOGNITION_FLINCH_WINDOW_TICKS = 14
  * mid-cycle. */
 const GAIT_FULL_SPEED_REFERENCE = 0.5
 
-/** Fraction of each gait half-cycle, on either side of its boundary, treated
- * as a "both feet planted" double-support window. */
-const DOUBLE_SUPPORT_FRACTION = 0.12
+/**
+ * Point within the recovery phase where the curve stops easing toward the
+ * authored `recovery` pose and starts easing toward the authored `return`
+ * pose (the style's own guard stance). Before this existed, `return` was
+ * authored for all seven attacks and never sampled: recovery held its
+ * half-lowered pose to the last frame of the phase and the fighter snapped
+ * back to guard on the frame the action went neutral. Recovery is one of the
+ * three beats the human-review gate scores, so it ends on a settle, not a
+ * cut.
+ */
+const RECOVERY_RETURN_BLEND_START = 0.65
 
 /** Fraction of windup, counted backward from contact, during which a weapon
  * trail is active (design.md: "the final part of windup through contact"). */
@@ -281,8 +288,14 @@ function sampleActionCurveLayer(poseSet: AttackPoseSet, phase: CombatActionPhase
     }
     case 'recovery': {
       const impactJoints = blendPoseJoints(poseSet.contact.joints, poseSet.impact.joints, reducedMotion ? REDUCED_MOTION_IMPACT_WEIGHT : 1)
-      const eased = resolveEasing(poseSet.recovery.easing, phaseProgress, reducedMotion)
-      return blendPoseJoints(impactJoints, poseSet.recovery.joints, eased)
+      if (phaseProgress <= RECOVERY_RETURN_BLEND_START) {
+        const raw = RECOVERY_RETURN_BLEND_START > 0 ? clamp01(phaseProgress / RECOVERY_RETURN_BLEND_START) : 1
+        const eased = resolveEasing(poseSet.recovery.easing, raw, reducedMotion)
+        return blendPoseJoints(impactJoints, poseSet.recovery.joints, eased)
+      }
+      const raw = clamp01((phaseProgress - RECOVERY_RETURN_BLEND_START) / (1 - RECOVERY_RETURN_BLEND_START))
+      const eased = resolveEasing(poseSet.return.easing, raw, reducedMotion)
+      return blendPoseJoints(poseSet.recovery.joints, poseSet.return.joints, eased)
     }
   }
 }
@@ -377,36 +390,6 @@ function sampleReactionOverlay(
 // name is satisfied by *not* duplicating that world transform here, not by
 // adding a second copy of it as a joint delta.
 // ---------------------------------------------------------------------------
-
-function computeGaitPhase(travelledDistance: number, archetype: Archetype): number {
-  const cycleDistance = STYLE_GAIT_CYCLE_DISTANCE[archetype]
-  if (cycleDistance <= VECTOR_EPSILON) return 0
-  const wrapped = travelledDistance % cycleDistance
-  const normalized = wrapped < 0 ? wrapped + cycleDistance : wrapped
-  return normalized / cycleDistance
-}
-
-interface GaitClassification {
-  /** `'A'`: the authored `locomotion` pose applies as-is. `'B'`: mirrored
-   * left/right, alternating which leg reads as forward from the single
-   * authored snapshot (combatPoses.ts's own doc comment: "the future gait
-   * cycle mirrors/offsets this from travelled distance"). */
-  half: 'A' | 'B'
-  /** `0..1` envelope across the current half-cycle: `0` at each foot-plant
-   * boundary, `1` at the half-cycle's midpoint (peak stride extension). */
-  envelope: number
-  plantedFoot: 'left' | 'right' | 'both'
-}
-
-function classifyGaitPhase(phase: number): GaitClassification {
-  const p = ((phase % 1) + 1) % 1
-  const inFirstHalf = p < 0.5
-  const u = inFirstHalf ? p / 0.5 : (p - 0.5) / 0.5
-  const envelope = 1 - Math.abs(u * 2 - 1)
-  const nearBoundary = u <= DOUBLE_SUPPORT_FRACTION || u >= 1 - DOUBLE_SUPPORT_FRACTION
-  const plantedFoot: GaitClassification['plantedFoot'] = nearBoundary ? 'both' : inFirstHalf ? 'right' : 'left'
-  return { half: inFirstHalf ? 'A' : 'B', envelope, plantedFoot }
-}
 
 function mirrorJointName(name: JointName): JointName {
   if (name.endsWith('.L')) return (name.slice(0, -2) + '.R') as JointName
@@ -640,7 +623,13 @@ function computeWeaponTrailActive(current: Readonly<FighterCombatState>, phasePr
  * there (brief resolution #5) and that the impact hold is exactly alpha-
  * and tick-invariant (brief resolution #3) -- the only real cross-call
  * state this class keeps is the recognition-flinch window (brief
- * resolution #4), which `reset()` clears.
+ * resolution #4).
+ *
+ * There is deliberately no in-place `reset()`: a new bout does not reuse a
+ * controller. `ArenaView` disposes every rig (`disposeRig`) and builds fresh
+ * ones, each with its own controller, so "reset" is construction. A reset
+ * method with no production caller would be a second, untested-in-anger path
+ * for clearing the same window.
  */
 export class PoseController {
   private recognitionFlinchExpiresAtTick: number | null = null
@@ -695,9 +684,5 @@ export class PoseController {
     const weaponTrailActive = computeWeaponTrailActive(current, phaseProgress)
 
     return { pose, phaseProgress, plantedFoot, weaponTrailActive }
-  }
-
-  reset(): void {
-    this.recognitionFlinchExpiresAtTick = null
   }
 }

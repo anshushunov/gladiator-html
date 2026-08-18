@@ -277,16 +277,19 @@ describe('PoseController fixed layer order', () => {
     fighter.dispose()
   })
 
-  it('clears recognition-flinch bookkeeping on reset()', () => {
-    const controller = new PoseController()
+  it('carries no recognition-flinch state into a freshly constructed controller -- the only reset a new bout performs', () => {
+    // `ArenaView` rebuilds every rig (and therefore every controller) at each
+    // new bout instead of resetting one in place, so this is exactly what a
+    // bout boundary does: the flinch window must not survive it.
     const fighter = createProceduralFighter({ archetype: 'heavy' })
     const neutral = baseFighterState('heavy')
     const guardChest = COMBAT_POSES.styles.heavy.guard.joints.chest!.rotation
 
-    controller.apply(makeInput({ current: neutral, currentTick: 5, reaction: { defenseDeclinedTick: 5 } }), fighter)
-    controller.reset()
-    const after = controller.apply(makeInput({ current: neutral, currentTick: 6 }), fighter)
+    const flinched = new PoseController()
+    const duringFlinch = flinched.apply(makeInput({ current: neutral, currentTick: 5, reaction: { defenseDeclinedTick: 5 } }), fighter)
+    expect(duringFlinch.pose.chest.rotation).not.toEqual(guardChest) // the flinch really is visible on this controller
 
+    const after = new PoseController().apply(makeInput({ current: neutral, currentTick: 6 }), fighter)
     expect(after.pose.chest.rotation).toEqual(guardChest)
     fighter.dispose()
   })
@@ -338,6 +341,31 @@ describe('PoseController impact hold', () => {
     const afterHold = controller.apply(makeInput({ current: recovering, currentTick: 20, alpha: 0 }), fighter)
 
     expect(afterHold.pose).not.toEqual(held.pose)
+    fighter.dispose()
+  })
+
+  it('settles the last part of recovery onto the authored return pose instead of snapping to guard at neutral', () => {
+    // `heavy-cleave`, recovery spanning ticks 40..60. The authored `return`
+    // pose IS the style guard, so "settled" means the final recovery frame
+    // already reads as the guard the neutral frame will show.
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    const guardArm = COMBAT_POSES.styles.heavy.guard.joints['upperArm.R']!.rotation
+
+    const recovering = baseFighterState('heavy', { action: recoveryAction('heavy-cleave', 40, 20) })
+    // `computePhaseProgress` reads `currentTick - 1 + alpha`, so these are
+    // progress ~0.3 (mid follow-through) and ~1.0 (the phase's last frame).
+    const early = controller.apply(makeInput({ current: recovering, currentTick: 47, alpha: 0 }), fighter)
+    const late = controller.apply(makeInput({ current: recovering, currentTick: 60, alpha: 0.99 }), fighter)
+    const neutral = controller.apply(makeInput({ current: baseFighterState('heavy'), currentTick: 61, alpha: 0 }), fighter)
+
+    const gap = (sample: { pose: Record<string, { rotation: readonly number[] }> }) =>
+      Math.abs(sample.pose['upperArm.R'].rotation[0] - guardArm[0])
+
+    expect(gap(early)).toBeGreaterThan(0.05) // mid-recovery still visibly holds the follow-through
+    expect(gap(late)).toBeLessThan(gap(early)) // and it is on its way home by the end
+    expect(gap(late)).toBeLessThan(0.02)
+    expect(gap(neutral)).toBeCloseTo(0, 10)
     fighter.dispose()
   })
 })

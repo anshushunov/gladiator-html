@@ -73,9 +73,12 @@ describe('battle feed', () => {
     expect(formatBattleFeed(events, names)).toEqual([])
   })
 
-  it('keeps the latest eight display entries when the tail is dense with combined blocks', () => {
+  it('keeps the latest eight display entries when the tail is dense with combined blocks, dropping everything older', () => {
     const events: EncounterEvent[] = []
-    for (let attack = 0; attack < 8; attack += 1) {
+    // Twelve attacks, i.e. twelve display entries' worth of events: the feed
+    // has to actually *drop* four of them. Building exactly eight would pass
+    // against a feed with no cap at all.
+    for (let attack = 0; attack < 12; attack += 1) {
       const id = attack * 3
       const tick = 60 + attack
       const actionInstanceId = `home.brutus:${attack}`
@@ -87,6 +90,10 @@ describe('battle feed', () => {
     }
     const entries = formatBattleFeed(events, names)
     expect(entries).toHaveLength(8)
-    expect(entries.at(-1)).toMatchObject({ eventId: 22, message: 'Cassius blocks but takes 4.' })
+    // The kept window is the newest eight (attacks 4..11), oldest-first, each
+    // keyed by its block event (the combined entry's own anchor).
+    expect(entries[0]).toMatchObject({ eventId: 4 * 3 + 1, message: 'Cassius blocks but takes 4.' })
+    expect(entries.at(-1)).toMatchObject({ eventId: 11 * 3 + 1, message: 'Cassius blocks but takes 4.' })
+    expect(entries.map((entry) => entry.eventId)).toEqual([13, 16, 19, 22, 25, 28, 31, 34])
   })
 })

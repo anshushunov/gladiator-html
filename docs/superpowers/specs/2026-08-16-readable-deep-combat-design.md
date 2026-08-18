@@ -894,13 +894,58 @@ Defeat uses a style-specific controlled pose. Rotating the whole group onto its 
 - The camera look target follows the fighters' midpoint only after it leaves an 8% viewport dead zone, with a `0.75 s` damping time constant.
 - Camera distance changes only after the horizontal group extent leaves a 12% framing dead zone, uses a separate `1.25 s` damping time constant, and is clamped to `11..18` world units from the look target.
 - Framing includes each fighter's style-authored horizontal equipment radius and a 10% margin. It uses no motion lookahead.
-- Camera does not orbit, cross the combat axis, cut, or shake.
+- ~~Camera does not orbit, cross the combat axis, cut, or shake.~~ — **AMENDED on 2026-08-18**: the camera now holds a bounded, damped yaw that keeps the combat axis across frame. It still never crosses the combat axis, cuts, or shakes. See "Amendment — combat-axis yaw" below.
 - Lighting, material value, and an inexpensive geometry/rim outline keep silhouettes separate from the floor without a post-processing pipeline.
 - Weapon trails appear only during the final part of windup through contact.
 - `body`, `shield`, and `weapon` contacts use distinct effect shape/position, not color alone.
 - Contact flashes expire before the next exchange and never obscure either torso.
 - Arena reset clears pose, trails, flashes, audio voices, event cursors, and camera interpolation at each new bout and on rematch.
 - With `prefers-reduced-motion: reduce`, weapon trails and transient contact flashes are disabled and nonessential pose overshoot is reduced; simulation, key anticipations, contact holds, and results do not change.
+
+### Amendment — combat-axis yaw (approved by the plan owner on 2026-08-18, resolving issue #4)
+
+The original rule pinned the camera's *orientation* as well as its position: it framed world-X extent
+only and always looked down `-Z`. Nothing then kept the pair's own axis perpendicular to that view.
+Measured on the shipped build at seed `20260815`: the fighters start on a clean profile at
+`(-4.2, 0)`/`(4.2, 0)`, but by mid-bout the pair axis had rotated about `19°` off world X (positions
+`x 1.6/3.3` at `z 1.1/1.7`). Two consequences, both visible in the arena:
+
+1. At close-quarters range (~`1.8` units) with a `38°` FOV the two silhouettes overlap, and slightly
+   turned-away profiles read as "both fighters are facing the viewer".
+2. The zoom worked against the reader: with extent measured along world X, a pair rotating toward the
+   view axis measures *narrower* and pulls the camera in, exactly when it should not.
+
+The `z = -2.5..2.5` lateral clamp and the ordered-pair rule prevent the fighters from swapping sides,
+but neither keeps the axis square to the camera; that is a camera responsibility, so the camera takes
+it.
+
+**Amended rules** (these supersede the corresponding bullets above):
+
+- The camera holds a **yaw** around its look target so the group's spread axis stays across the frame.
+  Desired yaw is the group's own principal (unsigned) spread axis, negated; it is clamped to
+  **`±30°`** from the arena's authored home shot, moves only after the desired yaw leaves a **`5°`**
+  dead zone, and damps with a **`1.5 s`** time constant — deliberately the slowest of the three axes,
+  so yaw reads as the fight turning rather than as the camera moving.
+- Group extent (the input to the distance mapping) is measured across the camera's **screen-horizontal
+  axis at the current yaw**, not along world X.
+- The look target is the group's 2D centre (X and Z), not an X-only midpoint on the `z = 0` line. Its
+  8% dead zone is measured on the full 2D drift.
+- The camera still **does not cut or shake, and still cannot cross the combat axis**: the spread axis
+  is read as an unsigned axis (`0.5 · atan2(2·Sxz, Sxx − Szz)`, range `(-90°, 90°]`), so no ordering
+  of the targets and no clamped yaw can put the camera on the far side of the fight. A degenerate
+  group (a single target, or several exactly stacked) yaws to `0`, not to an angle read out of float
+  noise.
+
+Not changed: fixed FOV, the fixed elevation/distance ratio, the `11..18` distance clamp, the 12%
+framing dead zone, the 10% equipment margin, the absence of motion lookahead, and the hard cut of all
+camera state at each new bout and on rematch.
+
+Consequence for acceptance: the frozen pose baselines were recaptured under the amended framing.
+Because `?snapshot` holds the runtime paused and a paused frame advances no camera time at all
+(that is what makes a capture depend on tick count rather than on how long test setup took), each
+capture now first asks a dev-only hook to damp the camera by four seconds of *simulated*
+presentation time onto the frame it is showing. Without it every baseline would show the bout's
+opening wide shot no matter which tick it froze.
 
 ## Combat audio
 

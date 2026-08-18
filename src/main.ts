@@ -53,6 +53,8 @@ interface GladiatorTestApi {
   getRenderDebugState(): Readonly<RenderDebugState>
   /** Dev-only (`import.meta.env.DEV`); absent from production builds -- see `ArenaView.renderActiveBattleAtAlpha`. */
   renderActiveBattleAtAlpha?(alpha: number): void
+  /** Dev-only (`import.meta.env.DEV`); absent from production builds -- see `ArenaView.settleCameraSeconds`. */
+  settleCameraSeconds?(seconds: number): void
   /** Dev-only (`import.meta.env.DEV`); absent from production builds -- final-review fix #1's fault-injection test hook, see `forcePresentationThrowOnce`'s own doc comment in the module body. */
   forcePresentationThrowOnce?(): void
   /** Dev-only (`import.meta.env.DEV`); absent from production builds -- see `ArenaView.getDebugSnapshot`. */
@@ -439,7 +441,13 @@ function resolveSeriesSeed(target: URL): number {
   return value
 }
 
-window.addEventListener('pagehide', () => arenaView.dispose())
+window.addEventListener('pagehide', () => {
+  arenaView.dispose()
+  // Releases the WebGL context's audio counterpart: without this the
+  // `AudioContext` `CombatAudio`'s browser backend created stayed open past
+  // the page's own teardown.
+  combatAudio.dispose()
+})
 
 renderDom()
 requestAnimationFrame(frame)
@@ -501,6 +509,7 @@ if (import.meta.env.DEV) {
   }
 
   window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha = (alpha) => arenaView.renderActiveBattleAtAlpha?.(alpha)
+  window.__GLADIATOR_TEST__.settleCameraSeconds = (seconds) => arenaView.settleCameraSeconds?.(seconds)
   window.__GLADIATOR_TEST__.getArenaDebugSnapshot = () => arenaView.getDebugSnapshot?.() ?? null
   window.__GLADIATOR_TEST__.getAudioEventCursor = () => combatAudio.getDebugEventCursor?.() ?? null
   // Final-review fix #1's own test hook -- see `forcePresentationThrowOnce`'s doc comment above.
@@ -525,6 +534,30 @@ if (import.meta.env.DEV) {
  * instrumented/fake backend -- can hear or assert every cue in isolation
  * without ever starting a bout. */
 function buildAudioDebugPanel(): void {
+  // The panel's own styling ships with the panel, not with `style.css`: this
+  // whole function is dev/test-only and is dropped from a production bundle,
+  // so keeping the rules here means production CSS carries no rules for UI it
+  // can never render.
+  const style = document.createElement('style')
+  style.textContent = `
+    .audio-debug {
+      position: fixed;
+      z-index: 10;
+      right: 12px;
+      bottom: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      max-width: 320px;
+      padding: 10px;
+      border: 1px solid #3b342f;
+      border-radius: 4px;
+      background: rgba(13, 13, 18, 0.92);
+    }
+    .audio-debug__button { padding: 6px 9px; font-size: 10px; }
+  `
+  document.head.append(style)
+
   const panel = document.createElement('div')
   panel.className = 'audio-debug'
   panel.dataset.testid = 'audio-debug'

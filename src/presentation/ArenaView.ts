@@ -76,6 +76,9 @@ const CAMERA_FAR = 100
 /** Clamp applied to real wall-clock elapsed time between `sync()` calls, so a backgrounded tab or a long test-driven `advanceTicks` burst can never hand the camera one huge damping step. */
 const MAX_FRAME_DELTA_SECONDS = 0.1
 
+/** Substep rate for `settleCameraSeconds` (dev-only): the simulation's own tick rate, so a settle of `n` seconds damps exactly like `n` seconds of `×1` playback rather than as one oversized step. */
+const SETTLE_STEPS_PER_SECOND = 60
+
 const TRAIL_MAX_POINTS = 6
 const TRAIL_COLOR = 0xf4ead7
 
@@ -295,6 +298,21 @@ export class ArenaView {
    * bundle for these names (see the task report).
    */
   declare renderActiveBattleAtAlpha?: (alpha: number) => void
+  /**
+   * Dev-only test surface (see `renderActiveBattleAtAlpha`): damps the camera
+   * toward the frame it is currently showing, by `seconds` of *simulated*
+   * presentation time, in fixed 1/60 s steps.
+   *
+   * `?snapshot` mode holds the runtime paused, and a paused frame deliberately
+   * advances no camera time at all (that is what makes a capture depend on
+   * tick count rather than on how long test setup happened to take). The
+   * consequence is that a fixture which steps 253 ticks and captures still
+   * sees the camera exactly where the bout's opening `reset()` put it -- a
+   * wide arena shot, with the fighters small and off-centre wherever they
+   * have since walked to. This lets a capture ask for the framing a player
+   * would actually be looking at by then, without reintroducing a wall clock.
+   */
+  declare settleCameraSeconds?: (seconds: number) => void
   /** Dev-only test surface (brief resolution #9); see `renderActiveBattleAtAlpha`. */
   declare getDebugSnapshot?: () => ArenaDebugSnapshot
 
@@ -339,6 +357,16 @@ export class ArenaView {
       this.renderActiveBattleAtAlpha = (alpha: number): void => {
         if (!this.lastFrame) return
         this.applyFrame({ ...this.lastFrame, alpha: clamp01(alpha) }, { advanceCameraTime: false })
+      }
+      this.settleCameraSeconds = (seconds: number): void => {
+        if (!this.lastFrame || this.contextLost) return
+        const { encounter } = this.lastFrame.current
+        const targets = this.framingTargets(encounter.combatantIds, encounter.combatants)
+        const steps = Math.max(0, Math.round(seconds * SETTLE_STEPS_PER_SECOND))
+        for (let step = 0; step < steps; step += 1) {
+          this.applyCameraTransform(this.arenaCamera.update(targets, 1 / SETTLE_STEPS_PER_SECOND))
+        }
+        this.renderer!.render(this.scene, this.perspectiveCamera)
       }
       this.getDebugSnapshot = (): ArenaDebugSnapshot => buildArenaDebugSnapshot(this.rigs, this.flashes, this.arenaCamera.state, this.eventCursor)
     }
@@ -488,7 +516,7 @@ export class ArenaView {
 
       this.updateWeaponTrail(rig, sample.weaponTrailActive && !reducedMotion)
 
-      framingTargets.push({ id, centerX: position.x, radius: rig.fighter.horizontalEquipmentRadius })
+      framingTargets.push({ id, centerX: position.x, centerZ: position.z, radius: rig.fighter.horizontalEquipmentRadius })
     }
 
     const elapsedSeconds = this.consumeCameraDelta(nowMs, options.advanceCameraTime)
@@ -631,7 +659,12 @@ export class ArenaView {
     for (const id of ids) {
       const rig = this.rigs.get(id)
       if (!rig) continue
-      targets.push({ id, centerX: combatants[id].position.x, radius: rig.fighter.horizontalEquipmentRadius })
+      targets.push({
+        id,
+        centerX: combatants[id].position.x,
+        centerZ: combatants[id].position.z,
+        radius: rig.fighter.horizontalEquipmentRadius,
+      })
     }
     return targets
   }
@@ -647,10 +680,23 @@ export class ArenaView {
     return elapsed
   }
 
+  /**
+   * `state.distance` stays the *horizontal* distance from the look target,
+   * with the elevation added on top of it (so the true 3D distance is
+   * `hypot(distance, height)`) -- the same relation the fixed-position
+   * camera had before framing became dynamic. `state.yaw` swings that
+   * horizontal offset around the look target, keeping the combat axis across
+   * the frame (design.md's 2026-08-18 amendment); `yaw === 0` reproduces the
+   * arena's authored home shot exactly.
+   */
   private applyCameraTransform(state: ArenaCameraState): void {
     const height = state.distance * CAMERA_ELEVATION_RATIO
-    this.perspectiveCamera.position.set(state.lookTargetX, height, state.distance)
-    this.perspectiveCamera.lookAt(state.lookTargetX, 0, 0)
+    this.perspectiveCamera.position.set(
+      state.lookTargetX + Math.sin(state.yaw) * state.distance,
+      height,
+      state.lookTargetZ + Math.cos(state.yaw) * state.distance,
+    )
+    this.perspectiveCamera.lookAt(state.lookTargetX, 0, state.lookTargetZ)
   }
 
   // -- Rig lifecycle ----------------------------------------------------

@@ -21,7 +21,6 @@ import { COMBAT_STYLES } from '../content/combatStyles'
 import type { AttackActionDefinition, AttackActionId } from '../simulation/combatActions'
 import type { CombatantId, EncounterEvent } from '../simulation/encounter'
 import type { Archetype } from '../simulation/fighters'
-import { STYLE_GAIT_CYCLE_DISTANCE } from './poses/combatPoses'
 
 // ---------------------------------------------------------------------------
 // Public cue vocabulary and backend contract (brief Step 2)
@@ -69,12 +68,16 @@ export interface AudioBackend {
    * mute, bout change/rematch, and dispose. */
   stopAll(): void
   activeVoiceCount(): number
+  /** Releases whatever the backend owns beyond its voices -- for the browser
+   * backend, the `AudioContext` itself. Optional: a fake/test backend owns
+   * nothing to release. Called once, from `CombatAudio.dispose()`, after
+   * `stopAll()`. */
+  close?(): void
 }
 
-/** One combatant's footstep threshold for this render batch: the moment
- * `PoseController`'s own gait math (mirrored here in `classifyPlantedFoot`,
- * since `PoseController.ts` is not one of this task's owned files and stays
- * untouched) crosses into a new single-foot plant. `id` is a small
+/** One combatant's footstep threshold for this render batch: the moment the
+ * shared gait math (`poses/gait.ts`, the same module `PoseController` poses
+ * legs from) crosses into a new single-foot plant. `id` is a small
  * presentation-only counter `main.ts` mints per bout (never a simulation
  * event id, and never simulation randomness) -- `CombatAudio` dedupes it
  * with its own cursor, exactly like `EncounterEvent.id`. */
@@ -96,36 +99,15 @@ export interface CombatAudioFrame {
 // ---------------------------------------------------------------------------
 // Pure helper: footstep threshold classification
 //
-// Deliberately duplicates the small slice of `PoseController`'s private
-// `computeGaitPhase`/`classifyGaitPhase` math it needs (travelled-distance
-// modulo the style's own gait cycle distance, then which half/how close to
-// a double-support boundary) rather than importing anything from
-// `PoseController.ts` or `ArenaView.ts` -- neither file is in this task's
-// owned set, and `PoseController` exposes no public seam for this anyway
-// (its gait phase helpers are module-private, folded into `apply()`'s
-// single per-fighter pose sample). Both copies are driven by the same
-// authored `STYLE_GAIT_CYCLE_DISTANCE` table, so they can never disagree on
-// *when* a foot plants, only whether that moment gets a cosmetic joint pose
-// (`PoseController`) or a cue (`CombatAudio`).
+// The gait math itself lives in `poses/gait.ts`, shared with
+// `PoseController`: the two used to carry independent copies of it, agreeing
+// on *when* a foot plants only because both read the same authored
+// `STYLE_GAIT_CYCLE_DISTANCE` table. Re-exported here because
+// `footstepThresholds.ts`, `main.ts`, and this module's own tests already
+// know it under this name, and because a footstep cue is what it means here.
 // ---------------------------------------------------------------------------
 
-/** Fraction of each gait half-cycle, on either side of its boundary, treated
- * as a "both feet planted" double-support window -- matches
- * `PoseController.ts`'s own `DOUBLE_SUPPORT_FRACTION` exactly. */
-const DOUBLE_SUPPORT_FRACTION = 0.12
-
-export function classifyPlantedFoot(travelledDistance: number, archetype: Archetype): 'left' | 'right' | 'both' {
-  const cycleDistance = STYLE_GAIT_CYCLE_DISTANCE[archetype]
-  if (!(cycleDistance > 0)) return 'both'
-  const wrapped = travelledDistance % cycleDistance
-  const normalized = wrapped < 0 ? wrapped + cycleDistance : wrapped
-  const phase = normalized / cycleDistance
-  const inFirstHalf = phase < 0.5
-  const u = inFirstHalf ? phase / 0.5 : (phase - 0.5) / 0.5
-  const nearBoundary = u <= DOUBLE_SUPPORT_FRACTION || u >= 1 - DOUBLE_SUPPORT_FRACTION
-  if (nearBoundary) return 'both'
-  return inFirstHalf ? 'right' : 'left'
-}
+export { classifyPlantedFoot } from './poses/gait'
 
 function footstepCueForArchetype(archetype: Archetype): CombatCue {
   return archetype === 'heavy' ? 'footstep-heavy' : 'footstep-light'
@@ -344,6 +326,7 @@ export class CombatAudio {
     if (this.disposed) return
     this.disposed = true
     this.backend?.stopAll()
+    this.backend?.close?.()
   }
 
   // -- Internal -----------------------------------------------------------
@@ -527,6 +510,24 @@ export class BrowserAudioBackend implements AudioBackend {
 
   activeVoiceCount(): number {
     return this.activeVoices.size
+  }
+
+  /**
+   * Closes the `AudioContext` this backend created, releasing the audio
+   * hardware/thread the browser keeps alive for it. Without this the context
+   * outlived the page's own teardown (`pagehide`), which is exactly when a
+   * browser is most likely to hold the tab in a back/forward cache with a
+   * live audio graph attached. `close()` returns a promise that is
+   * deliberately not awaited -- teardown must not block -- and its rejection
+   * is swallowed for the same reason `enable()` never throws: audio failing
+   * to shut down cleanly must not break anything else on the page.
+   */
+  close(): void {
+    const context = this.context
+    this.context = undefined
+    this.noiseBuffer = undefined
+    if (!context || context.state === 'closed') return
+    void context.close().catch(() => undefined)
   }
 
   private playVoice(context: AudioContext, cue: CombatCue, variation: Readonly<{ pitch: number; durationScale: number }>): void {
