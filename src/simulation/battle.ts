@@ -36,7 +36,8 @@ import type { FighterDefinition, FighterSide } from './fighters'
 import type { CombatArenaDefinition, Vec2 } from './movement'
 import { derivedUnitValue, foldTraceHash } from './random'
 
-export const TICKS_PER_SECOND = 60
+/** Re-exported, not redefined: `movement.ts` owns the tick rate (everything that turns an authored per-second speed into per-tick motion is there or downstream of it), and this is the duel adapter's public surface for it. */
+export { TICKS_PER_SECOND } from './movement'
 export const MAX_BOUT_TICKS = 3600
 
 const DUEL_RADIUS = 6.5

@@ -155,7 +155,7 @@ export function createHundredCombatantFfa(seed = 20260815): EncounterConfig {
 // hash. This helper's own output was not yet frozen when this comment was
 // written (Task 12, before Task 13's balance pass) -- it now backs several
 // frozen literals: `encounter.test.ts`'s `FROZEN_DUEL_TRACES` (Task 13 Step
-// 6) and `encounterCapacity.test.ts`'s own `44a08b74`, both asserted via
+// 6) and `encounterCapacity.test.ts`'s own `dbe77c5e`, both asserted via
 // this exact function.
 // ---------------------------------------------------------------------------
 

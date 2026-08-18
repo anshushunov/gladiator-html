@@ -229,7 +229,10 @@ it('makes stats matter more than blindly taking all counters', () => {
 // a failure names the bout that moved instead of just saying the series changed.
 // Each was read from a probe that printed the hash beside its trace, never
 // copied from a failing diff. The reviewed run:
-//   bout 0  aquila vs drusus   away wins by defeat in 1886 ticks -> 62438b1f
+// Bout 0 was re-frozen on 2026-08-18 (Fast's forced disengage went live and
+// `fast-burst-lunge` was recalibrated with it); bouts 1 and 2 have no Fast
+// fighter in them and came through byte-identical.
+//   bout 0  aquila vs drusus   away wins by defeat in 1721 ticks -> 3600fb53
 //   bout 1  nerva  vs cassius  home wins by defeat in 2183 ticks -> dee79f52
 //   bout 2  brutus vs magnus   home wins by defeat in 1202 ticks -> 563432bd
 // Score 2-1, every bout decided by defeat rather than the tick cap, and all
@@ -260,10 +263,10 @@ it('matches the frozen canonical trace hashes for the Aquila/Nerva/Brutus lineup
   // cannot coincidentally satisfy the literals.
   expect(state.score).toEqual({ home: 2, away: 1 })
   expect(state.results.map((result) => result.endedBy)).toEqual(['defeat', 'defeat', 'defeat'])
-  expect(state.results.map((result) => result.durationTicks)).toEqual([1886, 2183, 1202])
+  expect(state.results.map((result) => result.durationTicks)).toEqual([1721, 2183, 1202])
 
   for (const hash of boutHashes) expect(hash).toMatch(/^[0-9a-f]{8}$/)
-  expect(boutHashes).toEqual(['62438b1f', 'dee79f52', '563432bd'])
+  expect(boutHashes).toEqual(['3600fb53', 'dee79f52', '563432bd'])
 })
 
 // AMENDED CRITERION. The design originally required "at least three distinct

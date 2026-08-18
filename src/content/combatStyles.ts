@@ -137,8 +137,23 @@ export const COMBAT_STYLES = {
       minimumFacingDot: 0.8192, // ~35°
       windupTicks: 18,
       impactTicks: 3,
-      recoveryTicks: 24,
-      damageMultiplier: 1.4,
+      // Recalibrated on 2026-08-18, when `hasFastForcedDisengageEnded`'s
+      // inverted range test was fixed (the forced disengage used to end on
+      // the tick it started, so Fast never actually paid for -- or benefited
+      // from -- backing out after a lunge). With the mechanic live, Fast
+      // retreats to 2.4 units, which is the middle of Technical's own thrust
+      // envelope (1.2..3.1), and the equal-stat cohort measured `fast vs
+      // technical` at 40.4% against the design's 55..75% band. Shortening
+      // the recovery (less time parked next to the target before the retreat
+      // begins) and paying the lunge slightly better restores the triangle:
+      // measured 57.2% `fast vs technical`, 58.6% `heavy vs fast`, 58.0%
+      // `technical vs heavy`, mirrors 49.8/52.0/50.4. Both fields are inside
+      // design.md's "implementation may tune ... action damageMultiplier /
+      // recoveryTicks" allowance, and the qualitative orderings it pins are
+      // unchanged (the probe stays quicker and cheaper, Heavy's cleave stays
+      // the slowest commitment, Technical keeps the longest reach).
+      recoveryTicks: 20,
+      damageMultiplier: 1.45,
       accuracyModifier: 0,
       rootTravel: 1.40,
       pushDistance: 0.35,

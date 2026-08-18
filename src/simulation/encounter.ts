@@ -69,7 +69,7 @@ import {
 import type { FighterDefinition } from './fighters'
 import { compareArchetypes, comparisonDamageMultiplier, validateFighterDefinition } from './fighters'
 import type { CombatArenaDefinition, LocomotionIntent, MovementRequest, TurnStep, Vec2 } from './movement'
-import { intentDisplacement, normalizeVec2, resolveSimultaneousMovement, turnFacing } from './movement'
+import { distanceBetween, intentDisplacement, normalizeVec2, resolveSimultaneousMovement, TICKS_PER_SECOND, turnFacing } from './movement'
 import type { CombatantRandomState } from './random'
 import { createCombatantRandomState, derivedUnitValue, drawPair } from './random'
 import { buildSpatialHash, queryRadius, type SpatialHash } from './spatialHash'
@@ -122,7 +122,7 @@ function findRelationRow(
  * same-faction entry defaults to `allied`, a missing cross-faction entry
  * defaults to `neutral`.
  */
-function resolveFactionRelation(hostility: HostilityDefinition, factionA: FactionId, factionB: FactionId): HostilityRelation {
+export function resolveFactionRelation(hostility: HostilityDefinition, factionA: FactionId, factionB: FactionId): HostilityRelation {
   switch (hostility.mode) {
     case 'free-for-all':
       return 'hostile'
@@ -679,8 +679,6 @@ export function finishEncounter(state: EncounterState, result: EncounterResult):
 // `previous` or anything reachable from it.
 // ---------------------------------------------------------------------------
 
-const TICKS_PER_SECOND = 60
-
 /** One action about to start, whether from an ordinary phase-4 decision or a forced behavior (Technical's parry-counter) that bypasses it -- shared so phase 5 (`startSelectedActions`) treats both sources identically. */
 interface PendingActionStart {
   actorId: CombatantId
@@ -706,12 +704,6 @@ function resolveActionPhaseDefinition(
  */
 function isDecisionReady(combatant: Readonly<FighterCombatState>, tick: number): boolean {
   return combatant.status === 'active' && combatant.action.type === 'neutral' && combatant.staggerUntilTick <= tick && tick >= combatant.nextDecisionTick
-}
-
-function distanceBetween(a: Readonly<Vec2>, b: Readonly<Vec2>): number {
-  const dx = a.x - b.x
-  const dz = a.z - b.z
-  return Math.sqrt(dx * dx + dz * dz)
 }
 
 // --- Phase 1: increment tick and transition expired phases -----------------
@@ -879,9 +871,10 @@ function forceLocomotionIntent(
  * (Task 7's existing threshold helper, not reimplemented here) is checked
  * against the live distance to target and ticks elapsed; once true the field
  * clears and `nextDecisionTick` is pulled to the current tick so ordinary
- * weighted selection resumes immediately, matching "re-enters ordinary
- * weighted choice once inside the lunge's start range" (or the 30-tick
- * timeout, whichever comes first). While forced, phase 4 (`makeCombatDecisions`)
+ * weighted selection resumes immediately, matching "forced into `disengage`
+ * after a burst-lunge recovery until reaching 2.4 units or spending 30
+ * ticks" -- i.e. until the fighter has backed the range *out* to 2.4 (or the
+ * timeout fires). While forced, phase 4 (`makeCombatDecisions`)
  * skips this combatant entirely -- forced behavior bypasses weighted
  * selection and consumes no decision-stream draw.
  */

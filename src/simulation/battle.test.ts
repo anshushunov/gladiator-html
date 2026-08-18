@@ -291,10 +291,13 @@ describe('battle duel adapter', () => {
   // Read from a probe that printed the hash beside its trace, not copied from a
   // diff. `brutus`/`drusus` here are this file's own local fixtures (100 HP,
   // power 10), deliberately not the roster rows, so the literal is insulated
-  // from roster retuning. The reviewed run: a complete, decisive duel -- 1227
-  // ticks, home wins by `defeat` with 17 HP against 0, 148 events comprising 32
-  // action-starts, 20 damage-dealt, 4 misses, 2 blocks, 20 staggers, 13
-  // interruptions, one `fighter-defeated` and one `encounter-finished`.
+  // from roster retuning. Re-frozen on 2026-08-18, when Fast's forced
+  // disengage started actually running (`hasFastForcedDisengageEnded`'s range
+  // test was inverted) and `fast-burst-lunge` was recalibrated around it. The
+  // reviewed run: a complete, decisive duel -- 1785 ticks, away (the Fast
+  // fixture) wins by `defeat` with 36 HP against 0, 166 events comprising 31
+  // action-starts, 15 damage-dealt, 8 misses, 4 blocks, 2 evades, 15 staggers,
+  // 7 interruptions, one `fighter-defeated` and one `encounter-finished`.
   //
   // The trace's shape is pinned beside the hash so a differently-shaped bout
   // cannot coincidentally satisfy the literal, and a failure says what changed
@@ -306,15 +309,15 @@ describe('battle duel adapter', () => {
 
     expect(first.traceHash).toBe(second.traceHash)
     expect(first.finishReason).toBe('defeat')
-    expect(first.winnerSide).toBe('home')
-    expect(first.encounter.tick).toBe(1227)
-    expect(first.events).toHaveLength(148)
+    expect(first.winnerSide).toBe('away')
+    expect(first.encounter.tick).toBe(1785)
+    expect(first.events).toHaveLength(166)
     expect(first.events.filter((event) => event.type === 'fighter-defeated')).toHaveLength(1)
     expect(first.events.filter((event) => event.type === 'encounter-finished')).toHaveLength(1)
 
     const hash = formatTraceHash(first.traceHash)
     expect(hash).toMatch(/^[0-9a-f]{8}$/)
-    expect(hash).toBe('828ad7cb')
+    expect(hash).toBe('dc635911')
   })
 
   it('does not shift the away encounter beyond one tick when only advanceBattleTick is called', () => {

@@ -918,8 +918,61 @@ describe("advanceEncounterTick: Fast's forced disengage (design.md; Task 7's has
     })
   })
 
-  it('ends the forced disengage once distance to target falls to at most 2.4 units, and immediately re-enters ordinary weighted choice', () => {
-    const base = fastDisengageFixture({ x: 2.3, z: 0 }) // within FAST_FORCED_DISENGAGE_END_RANGE (2.4)
+  it('holds the forced disengage across many ticks after a real burst-lunge recovery, ending on the opened range rather than on the timeout', () => {
+    // The end-to-end shape of the mechanic, not just its threshold helper: a
+    // lunge lands inside its own contactRange (0.9..1.45), so the fighter
+    // starts the forcing far *inside* the 2.4-unit end range and has to
+    // actually travel to get out of it. An exit test pointing the wrong way
+    // would clear the field on the very next tick and this would fail on
+    // `forcedTicks`.
+    const base = fastDisengageFixture({ x: 1.2, z: 0 })
+    const state = patchCombatant(base, 'self', {
+      targetId: 'other',
+      nextDecisionTick: 999_999,
+      locomotionIntent: 'advance',
+      action: {
+        type: 'active',
+        instanceId: 'self:0',
+        definitionId: 'fast-burst-lunge',
+        phase: 'recovery',
+        phaseStartedTick: 0,
+        phaseEndsAtTick: 6,
+        targetId: 'other',
+        attackRolls: { accuracy: 0.5, critical: 0.5 },
+      },
+    })
+
+    let current: EncounterState = { ...state, tick: 5 }
+    let forcedTicks = 0
+    let endedAtTick: number | undefined
+    let endedAtDistance = 0
+    for (let step = 0; step < 60; step += 1) {
+      current = advanceEncounterTick(current).state
+      const self = current.combatants.self
+      const other = current.combatants.other
+      const distance = Math.hypot(self.position.x - other.position.x, self.position.z - other.position.z)
+      if (self.forcedDisengageStartTick !== undefined) {
+        forcedTicks += 1
+        expect(self.locomotionIntent).toBe('disengage')
+        // No distance assertion here: the exit test reads the distance at
+        // the top of the tick, before this tick's own movement, so the very
+        // last forced tick can already end past 2.4.
+        continue
+      }
+      endedAtTick = current.tick
+      endedAtDistance = distance
+      break
+    }
+
+    expect(forcedTicks).toBeGreaterThan(1)
+    expect(endedAtTick).toBeDefined()
+    expect(endedAtDistance).toBeGreaterThanOrEqual(2.4)
+    // Ended on the range, with the 30-tick timeout still unspent.
+    expect(endedAtTick! - 6).toBeLessThan(30)
+  })
+
+  it('ends the forced disengage once the range has been opened back out to 2.4 units, and immediately re-enters ordinary weighted choice', () => {
+    const base = fastDisengageFixture({ x: 2.5, z: 0 }) // past FAST_FORCED_DISENGAGE_END_RANGE (2.4): the retreat is done
     const state = patchCombatant(base, 'self', {
       targetId: 'other',
       nextDecisionTick: 999_999,
@@ -943,7 +996,7 @@ describe("advanceEncounterTick: Fast's forced disengage (design.md; Task 7's has
   })
 
   it('ends the forced disengage after 30 ticks regardless of distance', () => {
-    const base = fastDisengageFixture({ x: 10, z: 0 }) // far outside the 2.4-unit range
+    const base = fastDisengageFixture({ x: 1.2, z: 0 }) // still pinned inside the 2.4-unit range, so only the timeout can end it
     const state = patchCombatant(base, 'self', {
       targetId: 'other',
       nextDecisionTick: 999_999,
@@ -961,7 +1014,7 @@ describe("advanceEncounterTick: Fast's forced disengage (design.md; Task 7's has
   })
 
   it('keeps forcing disengage -- no ordinary decision, no decision-stream draw -- while neither exit condition is met', () => {
-    const base = fastDisengageFixture({ x: 10, z: 0 })
+    const base = fastDisengageFixture({ x: 1.2, z: 0 })
     const state = patchCombatant(base, 'self', {
       targetId: 'other',
       nextDecisionTick: 1, // would otherwise already be decision-ready
@@ -969,7 +1022,7 @@ describe("advanceEncounterTick: Fast's forced disengage (design.md; Task 7's has
       forcedDisengageStartTick: 0,
       action: { type: 'neutral' },
     })
-    const withTick: EncounterState = { ...state, tick: 4 } // ticksSinceForced 5, distance 10 -- neither exit condition holds
+    const withTick: EncounterState = { ...state, tick: 4 } // ticksSinceForced 5, distance 1.2 -- neither exit condition holds
     const decisionStreamBefore = withTick.randomByCombatant.self.decision
 
     const { state: next, events } = advanceEncounterTick(withTick)
@@ -3028,7 +3081,7 @@ describe("advanceEncounterTick: Fast's forced disengage measures its 30-tick tim
       seed: 1,
       combatants: [
         combatant('self', 'home', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
-        combatant('other', 'away', { archetype: 'fast', startPosition: { x: 10, z: 0 } }), // far outside the 2.4-unit end range throughout
+        combatant('other', 'away', { archetype: 'fast', startPosition: { x: 0.9, z: 0 } }), // pinned inside the 2.4-unit end range throughout, so only the timeout can end it
       ],
       arena: freeArena,
       hostility: { mode: 'different-factions' },
@@ -3106,11 +3159,14 @@ describe('canonical trace hash (Task 10 Step 3, test-only diagnostic helper)', (
   // failing assertion's diff. Reviewed at 150 ticks, from this file's own
   // 100-HP/20-power fixture combatants (NOT the roster rows) starting 4.4 apart:
   //
+  // Re-frozen on 2026-08-18 (Fast's forced disengage went live and
+  // `fast-burst-lunge` was recalibrated with it):
+  //
   //   seed 3  -> hp 88/81, separation 0.96, 18 events
   //              (3 actions, 2 damage-dealt, 1 miss, 2 staggers)
-  //   seed 11 -> hp 75/100, separation 1.28, 12 events
+  //   seed 11 -> hp 74/100, separation 1.28, 12 events
   //              (2 actions, 1 damage-dealt, 1 stagger)
-  //   seed 42 -> hp 75/81, separation 1.36, 17 events
+  //   seed 42 -> hp 74/81, separation 1.67, 16 events
   //              (2 actions, 2 damage-dealt, 2 staggers)
   //
   // The reviewed properties are ASSERTED below rather than left in this comment.
@@ -3119,9 +3175,9 @@ describe('canonical trace hash (Task 10 Step 3, test-only diagnostic helper)', (
   // per-seed expectations pin that the pair actually closed and actually traded
   // contacts, so an inert or non-engaging run cannot be silently re-frozen.
   const FROZEN_DUEL_TRACES: Readonly<Record<number, { hash: string; separation: number; homeHp: number; awayHp: number; events: number }>> = {
-    3: { hash: '8516f730', separation: 0.96, homeHp: 88, awayHp: 81, events: 18 },
-    11: { hash: 'b9364a7e', separation: 1.28, homeHp: 75, awayHp: 100, events: 12 },
-    42: { hash: 'a870f961', separation: 1.36, homeHp: 75, awayHp: 81, events: 17 },
+    3: { hash: '36b5a5dc', separation: 0.96, homeHp: 88, awayHp: 81, events: 18 },
+    11: { hash: 'e6229886', separation: 1.28, homeHp: 74, awayHp: 100, events: 12 },
+    42: { hash: '1968d282', separation: 1.67, homeHp: 74, awayHp: 81, events: 16 },
   }
 
   it.each(seeds)('seed %i: matches its frozen canonical trace hash and the trace it folds', (seed) => {

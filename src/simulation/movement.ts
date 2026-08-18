@@ -66,6 +66,16 @@ export interface MovementResolution {
   candidateChecksByPass: readonly number[]
 }
 
+/**
+ * The simulation's fixed tick rate, and the one definition of it. It lives
+ * in this module rather than in the duel adapter because everything that
+ * converts an authored per-second speed into a per-tick displacement lives
+ * here or downstream of here (`intentDisplacement`, `encounter.ts`'s
+ * movement phase, `combatDecision.ts`'s one-tick lookahead). `battle.ts`
+ * re-exports it as the duel adapter's public constant.
+ */
+export const TICKS_PER_SECOND = 60
+
 const SEPARATION_PASSES = 3 as const
 
 // Below this length a vector is treated as the zero vector: normalizing it
@@ -92,6 +102,19 @@ function subtractVec2(a: Readonly<Vec2>, b: Readonly<Vec2>): Vec2 {
 
 function dotVec2(a: Readonly<Vec2>, b: Readonly<Vec2>): number {
   return a.x * b.x + a.z * b.z
+}
+
+/**
+ * Plain Euclidean distance between two horizontal positions. Shared by
+ * `encounter.ts` and `combatDecision.ts`, which each used to carry their own
+ * private copy (with the operands subtracted in opposite orders -- bit-for-bit
+ * identical, since squaring erases the sign, but two copies of one formula
+ * all the same).
+ */
+export function distanceBetween(a: Readonly<Vec2>, b: Readonly<Vec2>): number {
+  const dx = a.x - b.x
+  const dz = a.z - b.z
+  return Math.sqrt(dx * dx + dz * dz)
 }
 
 /** Normalizes `vector` to unit length, using `Math.sqrt` (allowed) but never
@@ -313,6 +336,15 @@ function enforceArenaThenPolicy(positions: Record<string, Vec2>, arena: Readonly
  * — pinned at the radius or lateral limit); in that case the shortfall is
  * added to the other, unconstrained side so the pair still reaches
  * `minimumSeparation` whenever the arena has room for it.
+ *
+ * When *both* sides are boundary-constrained there is no unconstrained side
+ * left to absorb either shortfall, and the pair ends this call closer than
+ * `minimumSeparation`. That is the documented degradation order at work
+ * (bounds first, ordering second, separation last, best-effort) rather than
+ * a missed case: the alternative would be pushing a fighter out of the
+ * arena, which `assertEncounterInvariants` never permits. `movement.test.ts`
+ * pins this in "leaves a pair short of minimumSeparation when both sides are
+ * pinned to the arena boundary".
  */
 function resolvePairSeparation(
   positions: Record<string, Vec2>,
@@ -372,6 +404,14 @@ export function resolveSimultaneousMovement(
 ): MovementResolution {
   const positions: Record<string, Vec2> = {}
   for (const request of requests) {
+    // A duplicate id used to be accepted silently, last request winning --
+    // and then the first pass's own `buildSpatialHash` threw on the very
+    // same duplicate anyway, one step later and from a module that reads
+    // like an implementation detail from here. Rejecting it at the entry
+    // point makes the caller's mistake say what it is.
+    if (request.id in positions) {
+      throw new Error(`resolveSimultaneousMovement: duplicate request id "${request.id}"`)
+    }
     positions[request.id] = addVec2(request.position, request.desiredDisplacement)
   }
 

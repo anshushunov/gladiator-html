@@ -1122,15 +1122,19 @@ describe('decisionIntervalTicks', () => {
 })
 
 describe('forced behavior thresholds', () => {
-  it('Fast forced disengage ends at 2.4 units', () => {
+  it('Fast forced disengage ends once the range has been opened back out to 2.4 units, and not before', () => {
     expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE, 10)).toBe(true)
-    expect(hasFastForcedDisengageEnded(2.39, 10)).toBe(true)
-    expect(hasFastForcedDisengageEnded(2.41, 10)).toBe(false)
+    expect(hasFastForcedDisengageEnded(2.41, 10)).toBe(true)
+    expect(hasFastForcedDisengageEnded(2.39, 10)).toBe(false)
+    // The range a burst-lunge actually lands at (contactRange 0.9..1.45):
+    // the forcing has to survive it, or Fast never disengages at all.
+    expect(hasFastForcedDisengageEnded(1.45, 1)).toBe(false)
+    expect(hasFastForcedDisengageEnded(0.9, 1)).toBe(false)
   })
 
-  it('Fast forced disengage ends at 30 ticks regardless of distance', () => {
-    expect(hasFastForcedDisengageEnded(3.0, FAST_FORCED_DISENGAGE_MAX_TICKS)).toBe(true)
-    expect(hasFastForcedDisengageEnded(3.0, 29)).toBe(false)
+  it('Fast forced disengage ends at 30 ticks even when the range never opened', () => {
+    expect(hasFastForcedDisengageEnded(1.2, FAST_FORCED_DISENGAGE_MAX_TICKS)).toBe(true)
+    expect(hasFastForcedDisengageEnded(1.2, 29)).toBe(false)
   })
 
   it('Technical forced parry counter starts only within 2.3 units, otherwise clears', () => {

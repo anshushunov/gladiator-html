@@ -299,6 +299,33 @@ describe('resolveSimultaneousMovement', () => {
     expect(positions.a.z).toBeLessThanOrEqual(arena.lateralLimit + 1e-9)
   })
 
+  it('leaves a pair short of minimumSeparation when both sides are pinned to the arena boundary -- bounds win, separation is best-effort', () => {
+    // An arena narrower (in z) than the separation it asks for, with both
+    // fighters shoved into opposite lateral walls: neither side has anywhere
+    // legal left to absorb the other's shortfall, so the documented
+    // degradation order applies and the pair stays overlapping rather than
+    // one of them leaving the arena.
+    const arena: CombatArenaDefinition = { radius: 50, lateralLimit: 0.3, minimumSeparation: 2, movementPolicy: 'free' }
+    const requests: MovementRequest[] = [
+      { id: 'a', position: { x: 0, z: 0.2 }, desiredDisplacement: { x: 0, z: 5 } },
+      { id: 'b', position: { x: 0, z: -0.2 }, desiredDisplacement: { x: 0, z: -5 } },
+    ]
+
+    const { positions } = resolveSimultaneousMovement(requests, arena)
+
+    expect(positions.a.z).toBeCloseTo(0.3, 9)
+    expect(positions.b.z).toBeCloseTo(-0.3, 9)
+    expect(distance(positions.a, positions.b)).toBeLessThan(arena.minimumSeparation)
+  })
+
+  it('rejects a duplicate request id instead of silently keeping the last one', () => {
+    const requests: MovementRequest[] = [
+      { id: 'a', position: { x: 0, z: 0 }, desiredDisplacement: { x: 1, z: 0 } },
+      { id: 'a', position: { x: 5, z: 0 }, desiredDisplacement: { x: -1, z: 0 } },
+    ]
+    expect(() => resolveSimultaneousMovement(requests, openArena)).toThrow('duplicate request id "a"')
+  })
+
   it('is independent of request input order', () => {
     const requests: MovementRequest[] = [
       { id: 'a', position: { x: 0, z: 0 }, desiredDisplacement: { x: 0.1, z: 0 } },

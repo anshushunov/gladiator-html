@@ -26,7 +26,7 @@ import type {
   FighterCombatState,
   HostilityDefinition,
 } from './encounter'
-import { areHostile } from './encounter'
+import { areHostile, resolveFactionRelation } from './encounter'
 import {
   startDefenseAction,
   type AttackActionDefinition,
@@ -36,7 +36,7 @@ import {
   type DefenseActionDefinition,
   type ReactionRecord,
 } from './combatActions'
-import { clampToArena, intentDisplacement } from './movement'
+import { clampToArena, distanceBetween, intentDisplacement, TICKS_PER_SECOND } from './movement'
 import type { CombatArenaDefinition, LocomotionIntent, Vec2 } from './movement'
 import type { Archetype, MatchupComparison } from './fighters'
 import { compareArchetypes } from './fighters'
@@ -49,12 +49,6 @@ import { queryRadius, type SpatialHash } from './spatialHash'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
-}
-
-function distanceBetween(a: Readonly<Vec2>, b: Readonly<Vec2>): number {
-  const dx = b.x - a.x
-  const dz = b.z - a.z
-  return Math.sqrt(dx * dx + dz * dz)
 }
 
 function squaredDistanceBetween(a: Readonly<Vec2>, b: Readonly<Vec2>): number {
@@ -209,18 +203,15 @@ export interface BuildCombatDecisionContextInput {
  * combatant) as allied/neutral/hostile relative to `selfId`, sorted
  * lexicographically within each bucket.
  *
- * KNOWN APPROXIMATION: `encounter.ts`'s full three-way relation resolver
- * (`resolveFactionRelation`) is private and this task's file list does not
- * include `encounter.ts`, so this reconstructs the classification from the
- * single exported `areHostile` boolean plus same-faction comparison:
- * hostile (via `areHostile`) takes priority, then same-faction -> allied,
- * else -> neutral. This exactly matches `free-for-all` and
- * `different-factions` in every case, and matches `relation-table`'s
- * *default* rows exactly. It under-classifies only one relation-table edge
- * case this slice never authors: an explicit cross-faction row set to
- * `allied` reads back as `neutral` here (since only the hostile/not-hostile
- * boundary is externally visible). This bucketing is informational only --
- * design.md is explicit that "current 1x1 style weights ignore" it.
+ * Delegates to `encounter.ts`'s own three-way relation resolver rather than
+ * reconstructing the three buckets from the `areHostile` boolean plus a
+ * same-faction comparison, as it used to: that reconstruction agreed with
+ * the resolver for `free-for-all`, `different-factions`, and every default
+ * `relation-table` row, but misread both kinds of explicit row it could not
+ * see through the boolean -- a cross-faction row set to `allied` read back
+ * as `neutral`, and a same-faction row set to `neutral` read back as
+ * `allied`. Neither is authored in this slice; the resolver simply removes
+ * the class of error instead of documenting it.
  */
 function classifyNearbyCombatants(
   selfId: CombatantId,
@@ -237,8 +228,13 @@ function classifyNearbyCombatants(
     if (id === selfId) continue
     const other = combatants[id]
     if (!other || other.status !== 'active') continue
-    if (areHostile({ hostility, combatants }, selfId, id)) hostile.push(id)
-    else if (self && other.factionId === self.factionId) allied.push(id)
+    if (!self) {
+      neutral.push(id)
+      continue
+    }
+    const relation = resolveFactionRelation(hostility, self.factionId, other.factionId)
+    if (relation === 'hostile') hostile.push(id)
+    else if (relation === 'allied') allied.push(id)
     else neutral.push(id)
   }
 
@@ -333,7 +329,7 @@ const BACKSTEP_MAX_RANGE = 1.2
  * silently acquire the ability to circle faster than it can look.
  */
 function canFaceWhileCircling(style: CombatStyleDefinition, distance: number): boolean {
-  const lateralPerTick = style.locomotion.lateralUnitsPerSecond / LOOKAHEAD_TICKS_PER_SECOND
+  const lateralPerTick = style.locomotion.lateralUnitsPerSecond / TICKS_PER_SECOND
   return lateralPerTick <= distance * style.locomotion.turnSinPerTick
 }
 
@@ -424,9 +420,6 @@ function ordinaryLocomotionCandidates(
 //      makes no action legal, and closing (never suppressed) remains its only
 //      option.
 // ---------------------------------------------------------------------------
-
-/** Ticks per second. Declared locally, matching `encounter.ts`'s own private copy, so this module stays independent of the duel adapter that also publishes it. */
-const LOOKAHEAD_TICKS_PER_SECOND = 60
 
 /** One tick: the unit in which a displacement either executes or does not (see `hasArenaPath`). */
 const PATH_PROBE_TICKS = 1
@@ -521,7 +514,7 @@ function projectedPosition(
   intent: LocomotionIntent,
   ticks: number,
 ): Vec2 {
-  const step = intentDisplacement(intent, style.locomotion, context.self.facing, LOOKAHEAD_TICKS_PER_SECOND)
+  const step = intentDisplacement(intent, style.locomotion, context.self.facing, TICKS_PER_SECOND)
   const arena = context.arena
   const moved = clampToArena({ x: context.self.position.x + step.x * ticks, z: context.self.position.z + step.z * ticks }, arena)
 
@@ -962,13 +955,22 @@ export function decisionIntervalTicks(archetype: Archetype, intervalRoll: number
 // distance/tick-elapsed values.
 // ---------------------------------------------------------------------------
 
-/** Fast's forced disengage (after a burst-lunge recovery) ends at this range... */
+/** Fast's forced disengage (after a burst-lunge recovery) ends once the fighter has *opened* the range back out to this distance... */
 export const FAST_FORCED_DISENGAGE_END_RANGE = 2.4
 /** ...or after this many ticks, whichever comes first. */
 export const FAST_FORCED_DISENGAGE_MAX_TICKS = 30
 
+/**
+ * design.md: Fast "is forced into `disengage` after a burst-lunge recovery
+ * until reaching 2.4 units or spending 30 ticks". `disengage` moves *away*
+ * from the target, so "reaching 2.4 units" is a range the fighter opens up
+ * to -- the exit test is `>=`, not `<=`. A lunge lands inside its own
+ * `contactRange` (0.9..1.45), so a `<=` test would be satisfied on the very
+ * tick the forcing starts and the whole mechanic -- Fast's signature
+ * "disengage before retaliation" -- would never run for more than one tick.
+ */
 export function hasFastForcedDisengageEnded(distanceToTarget: number, ticksSinceForced: number): boolean {
-  return distanceToTarget <= FAST_FORCED_DISENGAGE_END_RANGE || ticksSinceForced >= FAST_FORCED_DISENGAGE_MAX_TICKS
+  return distanceToTarget >= FAST_FORCED_DISENGAGE_END_RANGE || ticksSinceForced >= FAST_FORCED_DISENGAGE_MAX_TICKS
 }
 
 /** Technical's forced parry-counter begins on the next tick only within this range. */

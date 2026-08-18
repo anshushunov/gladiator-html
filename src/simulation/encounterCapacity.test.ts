@@ -179,16 +179,17 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
   // emitted event across the design's fixed 600-tick window.
   //
   // Read from a probe that printed the hash beside the trace it folds, not
-  // copied from a diff. The reviewed run: 600 ticks, all 100 combatants still
-  // present, 63 of them damaged, 2327 events -- 375 action-starts, 186
-  // damage-dealt, 129 misses, 12 evades, 2 blocks, 1 parry, 6 criticals, 187
-  // staggers, 68 interruptions, 1105 movement-intent changes. That census is the
-  // same one the anti-inertness thresholds above derive from, so the two are
-  // consistent by construction.
+  // copied from a diff. Re-frozen on 2026-08-18 (Fast's forced disengage went
+  // live and `fast-burst-lunge` was recalibrated with it). The reviewed run:
+  // 600 ticks, all 100 combatants still present, 68 of them damaged, 2361
+  // events -- 388 action-starts, 201 damage-dealt, 124 misses, 14 evades, 3
+  // blocks, 9 criticals, 201 staggers, 71 interruptions, 1075 movement-intent
+  // changes. That census is the same one the anti-inertness thresholds above
+  // derive from, so the two are consistent by construction.
   it('matches its frozen canonical trace hash', () => {
     const hash = traceHash(createEncounter(createHundredCombatantFfa()), CAPACITY_TICKS)
     expect(hash).toMatch(/^[0-9a-f]{8}$/)
-    expect(hash).toBe('44a08b74')
+    expect(hash).toBe('dbe77c5e')
   }, CAPACITY_TIMEOUT_MS)
 
   it('is invariant to input combatant order: a fixed (non-random) shuffle produces identical sorted ids, state, events, and trace hash', () => {

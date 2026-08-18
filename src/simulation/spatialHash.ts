@@ -29,8 +29,11 @@ export const DEFAULT_CELL_SIZE = 3.2
  * coordinate, so no two distinct cells ever share a key.
  */
 export function spatialCellKey(position: Readonly<Vec2>, cellSize: number): string {
-  const cellX = Math.floor(position.x / cellSize)
-  const cellZ = Math.floor(position.z / cellSize)
+  return cellKey(Math.floor(position.x / cellSize), Math.floor(position.z / cellSize))
+}
+
+/** The single place the `"<cellX>,<cellZ>"` key format is spelled out: every writer and every reader of `SpatialHash.cells` goes through here, so the format cannot drift between them. */
+function cellKey(cellX: number, cellZ: number): string {
   return `${cellX},${cellZ}`
 }
 
@@ -84,7 +87,7 @@ export function queryRadius(index: SpatialHash, center: Readonly<Vec2>, radius: 
   const found: string[] = []
   for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
     for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
-      const bucket = cells[`${cellX},${cellZ}`]
+      const bucket = cells[cellKey(cellX, cellZ)]
       if (!bucket) continue
       for (const entry of bucket) {
         const dx = entry.position.x - center.x

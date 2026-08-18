@@ -275,7 +275,7 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
     const battle = window.__GLADIATOR_TEST__.getState().activeBattle!
     return { brutus: battle.encounter.combatants['home.brutus'], drusus: battle.encounter.combatants['away.drusus'] }
   })
-  expect(reducedCombatants.brutus.hp).toBe(298)
+  expect(reducedCombatants.brutus.hp).toBe(297)
   expect(reducedCombatants.drusus.hp).toBe(302)
   expect(reducedCombatants.brutus.staggerUntilTick).toBeGreaterThan(256)
   expect(reducedCombatants.drusus.staggerUntilTick).toBeGreaterThan(256)

@@ -19,6 +19,7 @@
 
 import type { Archetype } from './fighters'
 import type { CombatArenaDefinition, LocomotionIntent, LocomotionProfile, Vec2 } from './movement'
+import { clampToArena } from './movement'
 
 export type AttackActionId =
   | 'heavy-shield-jab'
@@ -474,15 +475,15 @@ export function evadeDirectionVector(intent: EvadeDirection, facing: Readonly<Ve
 /**
  * `true` when `position` already satisfies the arena's walkable bounds (the
  * lateral band `z ∈ [-lateralLimit, lateralLimit]` and the `radius` disk
- * around the origin) with no correction needed -- i.e. `movement.ts`'s
- * private `clampToArena` would return it unchanged. Duplicated here (like
- * `evadeDirectionVector`'s perpendiculars, above) since `movement.ts` exports
- * neither `clampToArena` nor an arena-membership check and this file cannot
- * reach a private function across the module boundary.
+ * around the origin) with no correction needed. Asked of `clampToArena`
+ * itself rather than re-derived from `arena`'s fields: "inside the bounds"
+ * is by definition "the clamp real movement applies would leave this
+ * untouched", and a second copy of the bounds test here would be free to
+ * drift out of agreement with the clamp that actually runs.
  */
 function isInsideArenaBounds(position: Readonly<Vec2>, arena: Readonly<CombatArenaDefinition>): boolean {
-  if (position.z < -arena.lateralLimit || position.z > arena.lateralLimit) return false
-  return Math.sqrt(position.x * position.x + position.z * position.z) <= arena.radius
+  const clamped = clampToArena(position, arena)
+  return clamped.x === position.x && clamped.z === position.z
 }
 
 /**
