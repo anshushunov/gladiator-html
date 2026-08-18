@@ -416,8 +416,28 @@ export class ArenaView {
 
   // -- Per-frame sync -----------------------------------------------------
 
-  sync(frame: BattleRenderFrame): void {
-    this.applyFrame(frame, { advanceCameraTime: true })
+  /**
+   * `advanceCameraTime` (default `true`) lets the caller freeze the camera's
+   * own wall-clock damping for this call -- final-review follow-up fix:
+   * `main.ts`'s `frame()` calls `syncArena()` (and therefore this method) on
+   * every real `requestAnimationFrame` tick regardless of `runtime.paused`
+   * (pause only gates simulation tick-stepping), so without this, the
+   * camera kept damping toward its target purely from real elapsed
+   * wall-clock time while paused -- with nothing else in the frame actually
+   * changing. That made every paused capture (screenshots, the dev-only
+   * `renderActiveBattleAtAlpha`, which already independently passed
+   * `advanceCameraTime: false` for its own single call -- the flag existing
+   * there at all was the hint this path had the same gap) depend on how
+   * much real time happened to elapse during test setup, not on simulated
+   * tick count -- confirmed empirically: two captures of the identical
+   * frozen tick, one immediate and one after a 1.5s real delay, previously
+   * produced different `camera.lookTargetX`/`camera.distance` values purely
+   * from that elapsed wall-clock time. `main.ts` passes
+   * `advanceCameraTime: !runtime.paused`, so an *unpaused* real frame still
+   * damps the camera normally every tick, exactly as before.
+   */
+  sync(frame: BattleRenderFrame, options?: { advanceCameraTime?: boolean }): void {
+    this.applyFrame(frame, { advanceCameraTime: options?.advanceCameraTime ?? true })
   }
 
   private applyFrame(frame: BattleRenderFrame, options: { advanceCameraTime: boolean }): void {

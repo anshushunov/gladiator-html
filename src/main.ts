@@ -354,10 +354,22 @@ function handleArenaPhaseChange(): void {
  * of `syncArena` (final-review fix #3) so `renderDom`'s series-ending-bout
  * flush can reuse the exact same forwarding logic instead of duplicating it
  * with a broadened phase gate.
+ *
+ * `advanceCameraTime: !runtime.paused` (final-review follow-up fix): this
+ * runs from `syncArena()` on every real animation frame regardless of pause
+ * (pause only gates simulation tick-stepping in `frame()`, above) --
+ * without gating the camera's own wall-clock damping on the same flag, a
+ * paused frame (nothing in `renderFrame` changing at all) still nudged
+ * `ArenaCamera` toward its target purely from elapsed real time, making any
+ * paused capture -- most importantly the pose-baseline screenshots, all
+ * taken via `?snapshot` -- depend on how much wall-clock time happened to
+ * elapse during test setup rather than on simulated tick count. Confirmed
+ * empirically: two captures of the identical frozen tick, one immediate and
+ * one after a real delay, previously produced different camera state.
  */
 function flushRenderBatch(alpha: number): void {
   if (!renderFrame) return
-  arenaView.sync({ ...renderFrame, alpha })
+  arenaView.sync({ ...renderFrame, alpha }, { advanceCameraTime: !runtime.paused })
   combatAudio.consume({
     events: pendingEvents,
     footsteps: pendingFootsteps,
