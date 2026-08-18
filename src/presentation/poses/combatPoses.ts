@@ -465,6 +465,32 @@ const DEFENSE_POSES: Readonly<Record<DefenseActionId, HumanoidPoseData>> = {
 }
 
 // ---------------------------------------------------------------------------
+// Gait cycle data (Task 16)
+// ---------------------------------------------------------------------------
+
+/**
+ * Authored travelled-distance (arena units) for one complete left/right gait
+ * cycle, per archetype. `PoseController` derives a deterministic `0..1` gait
+ * phase from a fighter's own `travelledDistance` (never wall-clock time) by
+ * taking `travelledDistance % STYLE_GAIT_CYCLE_DISTANCE[archetype]`, then
+ * mirrors/offsets the style's single authored `locomotion` snapshot across
+ * that phase to alternate which leg reads as forward -- this is the "future
+ * gait cycle" this file's own `STYLE_CORE_POSE_KEYS` doc comment already
+ * promises. A plain positive number per archetype, not a pose: it stays here
+ * because it is authored per-style content, not sampling logic.
+ *
+ * Heavy strides less often (a longer cycle distance) to read as ponderous;
+ * Fast paces quickest (the shortest cycle distance); Technical sits between
+ * the two, matching each style's authored locomotion speed profile in
+ * `combatStyles.ts`.
+ */
+export const STYLE_GAIT_CYCLE_DISTANCE: Readonly<Record<Archetype, number>> = {
+  heavy: 1.4,
+  fast: 0.95,
+  technical: 1.15,
+}
+
+// ---------------------------------------------------------------------------
 // Public catalog
 // ---------------------------------------------------------------------------
 

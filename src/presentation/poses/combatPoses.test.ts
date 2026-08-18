@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { COMBAT_STYLES } from '../../content/combatStyles'
 import type { Archetype } from '../../simulation/fighters'
 import { SEMANTIC_JOINT_NAMES, type JointName } from '../ProceduralFighter'
-import { ATTACK_POSE_PHASES, COMBAT_POSES, STYLE_CORE_POSE_KEYS, type HumanoidPoseData } from './combatPoses'
+import { ATTACK_POSE_PHASES, COMBAT_POSES, STYLE_CORE_POSE_KEYS, STYLE_GAIT_CYCLE_DISTANCE, type HumanoidPoseData } from './combatPoses'
 
 const EASINGS = new Set(['linear', 'ease-in', 'ease-out', 'overshoot'])
 const JOINT_NAME_SET = new Set<JointName>(SEMANTIC_JOINT_NAMES)
@@ -104,6 +104,14 @@ describe('COMBAT_POSES content completeness', () => {
       const guard = COMBAT_POSES.styles[archetype].guard
       const flinch = COMBAT_POSES.styles[archetype].recognitionFlinch
       expect(flinch.joints).not.toEqual(guard.joints)
+    }
+  })
+
+  it('gives every archetype a positive finite gait-cycle distance (Task 16 mirrors/offsets the locomotion snapshot across it)', () => {
+    expect(Object.keys(STYLE_GAIT_CYCLE_DISTANCE).sort()).toEqual(requiredArchetypes.sort())
+    for (const archetype of requiredArchetypes) {
+      expect(Number.isFinite(STYLE_GAIT_CYCLE_DISTANCE[archetype])).toBe(true)
+      expect(STYLE_GAIT_CYCLE_DISTANCE[archetype]).toBeGreaterThan(0)
     }
   })
 })
