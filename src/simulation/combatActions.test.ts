@@ -187,6 +187,19 @@ describe('transitionActionPhase', () => {
   it('throws for an already-neutral action', () => {
     expect(() => transitionActionPhase({ type: 'neutral' }, 30)).toThrow()
   })
+
+  // Every branch rebuilds the phase window from `tick`, so a caller that is
+  // one tick early or late does not fail loudly -- it mints a skewed action.
+  it.each([29, 31])('throws when called on tick %i rather than the action\'s own phaseEndsAtTick', (tick) => {
+    expect(() => transitionActionPhase(windup, tick)).toThrow(/phaseEndsAtTick \(30\), not /)
+  })
+
+  it('throws for a late recovery too, where the result would otherwise be an indistinguishable neutral', () => {
+    const contact = transitionActionPhase(windup, 30)
+    const impact = transitionActionPhase(contact, 31, fastSlash)
+    const recovery = transitionActionPhase(impact, 33, fastSlash)
+    expect(() => transitionActionPhase(recovery, 49)).toThrow(/phaseEndsAtTick \(48\), not 49/)
+  })
 })
 
 describe('actionContactTick', () => {
@@ -531,5 +544,27 @@ describe('selectEvadeDirection', () => {
     const first = selectEvadeDirection(0.42, { x: 0, z: 1 }, { x: 2, z: -3 }, 1.05, generousArena)
     const second = selectEvadeDirection(0.42, { x: 0, z: 1 }, { x: 2, z: -3 }, 1.05, generousArena)
     expect(first).toBe(second)
+  })
+
+  // Position-sensitivity is the whole point of re-evaluating every tick, and
+  // it is also why `resolveEvadeIntentLabel` (encounter.ts) cannot recover the
+  // direction a dash actually took: one dash step of separation is enough to
+  // change the answer, and the label is computed a step later than the last
+  // dash. Pinned here so that discrepancy is a measured property rather than a
+  // remark in a comment -- see `resolveEvadeIntentLabel`'s own doc comment for
+  // why the label is left reporting the later answer.
+  it('can resolve differently from two positions one dash step apart, which is what makes the resolution-time label not the dashed direction', () => {
+    const narrowArena: CombatArenaDefinition = { radius: 30, lateralLimit: 5, minimumSeparation: 0.9, movementPolicy: 'free' }
+    const total = 0.93
+    const perTick = total / 8 // an eight-tick defense windup
+
+    // Roll 0.1 ranks circle-left (+z) first, so a defender dashing it walks
+    // its own way out of the room the check needs: from z = 4.0 the full
+    // 0.93 still fits under lateralLimit 5, one step later it does not.
+    const beforeLastStep = { x: 0, z: 4.0 }
+    const afterLastStep = { x: 0, z: 4.0 + perTick }
+
+    expect(selectEvadeDirection(0.1, facing, beforeLastStep, total, narrowArena)).toBe('circle-left')
+    expect(selectEvadeDirection(0.1, facing, afterLastStep, total, narrowArena)).toBe('circle-right')
   })
 })

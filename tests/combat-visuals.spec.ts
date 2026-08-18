@@ -363,10 +363,11 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
 // ---------------------------------------------------------------------------
 
 // Every capture in this file inherits `playwright.config.ts`'s
-// `maxDiffPixelRatio: 0.005` (~2,624 pixels at 1280x820). That used to be a
-// per-test override here, against a loose 0.05 global; the global is the
-// tight value now, so pose captures and the safe-frame capture are held to
-// the same bar and neither can silently drift.
+// `maxDiffPixelRatio`. That used to be a per-test override here, tighter than
+// a loose 0.05 global; the global is now the single measured value for the
+// whole suite (0.04, set between a 9.0% frame swap and 2.5% of cross-machine
+// WebGL shading -- see the config's own comment), so pose captures and the
+// safe-frame capture are held to the same bar and neither can silently drift.
 /**
  * Seconds of simulated camera time every capture settles before shooting.
  * `?snapshot` holds the runtime paused and a paused frame advances no camera

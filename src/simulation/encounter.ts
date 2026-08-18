@@ -1678,6 +1678,27 @@ interface ContactIntentResolution {
  * determination, which is decided purely by `geometryOk` above -- in the
  * edge case where the arena boundary blocks all three directions from the
  * defender's own final resting position.
+ *
+ * Read it precisely: this is "which ranked direction is open from where the
+ * defender ended up", not "which direction the dash took". Those can differ,
+ * and the review that raised it (issue #7) is right that they can. The dash
+ * re-picks its direction every windup tick from that tick's *starting*
+ * position, and by the time an attack resolves the defence is already in its
+ * one-tick `contact` phase -- which freezes root motion -- so the snapshot
+ * this reads is one dash step past the position the final dash actually
+ * chose from. One step is enough to change the answer near a boundary;
+ * `combatActions.test.ts` pins a case where it does.
+ *
+ * It is left reporting the later answer deliberately. There is no single
+ * dashed direction to report in the first place (the fall-through may have
+ * picked a different one on each windup tick), recovering the final tick's
+ * choice would mean persisting it on `CombatActionState`, and that would
+ * change `JSON.stringify(combatant.action)` -- re-freezing every canonical
+ * trace hash in the suite, plus the cross-runtime literal, to correct a field
+ * that no production code reads: `evadeIntent` has no consumer outside this
+ * event's own type. If a renderer ever does animate from it, the honest fix
+ * is not this re-evaluation but the defender's actual travel over the
+ * defence's windup, and it should be paid for with that re-freeze.
  */
 function resolveEvadeIntentLabel(
   boundDefense: Extract<CombatActionState, { type: 'active' }>,
