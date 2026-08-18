@@ -179,6 +179,29 @@ describe('createEncounter', () => {
       ).toThrow(/conflicting/)
     })
 
+    // The positive half of the rule above. `requireNoConflictingRelations`
+    // rejects *conflicting* rows, not repeated ones, so an authored table that
+    // states the same pair twice -- in either order, which the canonical pair
+    // key makes the same row -- has to be accepted and to resolve normally.
+    // Without this, tightening the check to "no duplicate rows at all" would
+    // look like a harmless clean-up and pass the whole suite.
+    it('accepts an identical duplicate relation-table row and resolves it normally', () => {
+      const transition = createEncounter(
+        baseConfig({
+          combatants: [combatant('a', 'red'), combatant('b', 'blue')],
+          hostility: {
+            mode: 'relation-table',
+            relations: [
+              { first: 'red', second: 'blue', relation: 'hostile' },
+              { first: 'blue', second: 'red', relation: 'hostile' },
+            ],
+          },
+        }),
+      )
+      expect(areHostile(transition.state, 'a', 'b')).toBe(true)
+      expect(() => assertEncounterInvariants(transition.state)).not.toThrow()
+    })
+
     it('only hostile relations count as hostile, not allied or neutral', () => {
       const transition = createEncounter(
         baseConfig({
@@ -367,11 +390,20 @@ describe('assertEncounterInvariants', () => {
   // ---------------------------------------------------------------------
   // This runs on every production tick (`advanceEncounterTick` -- see the
   // Task 8/9/10 report notes) and is the branch's main structural safety
-  // net; the four cases above cover only 3 of roughly ten distinct
-  // invariant families the function actually checks. The out-of-bounds
-  // position branch caught a real bug during Task 10 while still untested
-  // itself. This table covers the rest, each isolated to exactly one broken
-  // field so the thrown message can be pinned to that field alone.
+  // net; the three cases above cover only 3 of the distinct invariant
+  // families the function actually checks. The out-of-bounds position branch
+  // caught a real bug during Task 10 while still untested itself. This table
+  // covers the rest, each isolated to exactly one broken field so the thrown
+  // message can be pinned to that field alone.
+  //
+  // Every `throw` site in `assertEncounterInvariants` and the helpers it
+  // calls is reached from here or from the three cases above. Where one
+  // helper guards several fields of the same kind (the five non-negative
+  // integer clocks/serials, the two `requireFinite` position components) the
+  // table exercises the helper rather than each field, but the two *branches*
+  // of a two-branch check are always separated: out-of-bounds by radius vs.
+  // by lateral limit, non-finite facing vs. merely unnormalized, `active`
+  // with no HP vs. `defeated` with HP left.
   // ---------------------------------------------------------------------
   const invariantViolations: readonly { name: string; break: (state: EncounterState) => EncounterState; expectedFragment: RegExp }[] = [
     {
@@ -393,12 +425,65 @@ describe('assertEncounterInvariants', () => {
       expectedFragment: /randomByCombatant/,
     },
     {
-      name: 'out-of-bounds position',
+      name: 'combatantIds vs combatants key-set mismatch',
+      break: (state) => {
+        const { b: _dropped, ...rest } = state.combatants
+        return { ...state, combatants: rest }
+      },
+      expectedFragment: /combatants must have exactly one entry/,
+    },
+    {
+      // `assertEncounterInvariants` re-runs the config-time relation check on
+      // every tick, so a state whose hostility table was replaced (or whose
+      // config-time check was somehow bypassed) is caught here too.
+      name: 'conflicting relation-table rows for the same faction pair',
+      break: (state) => ({
+        ...state,
+        hostility: {
+          mode: 'relation-table',
+          relations: [
+            { first: 'red', second: 'blue', relation: 'hostile' },
+            { first: 'blue', second: 'red', relation: 'allied' },
+          ],
+        },
+      }),
+      expectedFragment: /conflicting rows/,
+    },
+    {
+      name: 'out-of-bounds position (radius)',
       break: (state) => ({
         ...state,
         combatants: { ...state.combatants, a: { ...state.combatants.a, position: { x: 10_000, z: 0 } } },
       }),
-      expectedFragment: /position/,
+      expectedFragment: /position must be within arena\.radius/,
+    },
+    {
+      // Inside `freeArena`'s radius of 30, outside its lateral limit of 20 --
+      // the branch the radius case above can never reach.
+      name: 'out-of-bounds position (lateral limit)',
+      break: (state) => ({
+        ...state,
+        combatants: { ...state.combatants, a: { ...state.combatants.a, position: { x: 0, z: 25 } } },
+      }),
+      expectedFragment: /position must be within arena\.lateralLimit/,
+    },
+    {
+      name: 'non-finite position component',
+      break: (state) => ({
+        ...state,
+        combatants: { ...state.combatants, a: { ...state.combatants.a, position: { x: Number.NaN, z: 0 } } },
+      }),
+      expectedFragment: /position\.x must be a finite number/,
+    },
+    {
+      // Distinct from the unnormalized case above: `NaN` fails `requireFinite`
+      // before the unit-length comparison, which `NaN` would pass vacuously.
+      name: 'non-finite facing component',
+      break: (state) => ({
+        ...state,
+        combatants: { ...state.combatants, a: { ...state.combatants.a, facing: { x: Number.NaN, z: 0 } } },
+      }),
+      expectedFragment: /facing\.x must be a finite number/,
     },
     {
       name: 'hp above maxHp',
@@ -407,6 +492,68 @@ describe('assertEncounterInvariants', () => {
         combatants: { ...state.combatants, a: { ...state.combatants.a, hp: state.combatants.a.definition.maxHp + 1 } },
       }),
       expectedFragment: /hp/,
+    },
+    {
+      // The mirror of the `active` case above: HP and status disagreeing the
+      // other way round.
+      name: 'defeated combatant with hp left',
+      break: (state) => ({
+        ...state,
+        combatants: { ...state.combatants, a: { ...state.combatants.a, status: 'defeated' } },
+      }),
+      expectedFragment: /must not be 'defeated' with positive hp/,
+    },
+    {
+      name: 'negative travelledDistance',
+      break: (state) => ({
+        ...state,
+        combatants: { ...state.combatants, a: { ...state.combatants.a, travelledDistance: -1 } },
+      }),
+      expectedFragment: /travelledDistance must be non-negative/,
+    },
+    {
+      name: 'non-finite travelledDistance',
+      break: (state) => ({
+        ...state,
+        combatants: { ...state.combatants, a: { ...state.combatants.a, travelledDistance: Number.NaN } },
+      }),
+      expectedFragment: /travelledDistance must be a finite number/,
+    },
+    {
+      name: 'reactionLedger that is not an array',
+      break: (state) => ({
+        ...state,
+        combatants: {
+          ...state.combatants,
+          a: { ...state.combatants.a, reactionLedger: undefined as unknown as FighterCombatState['reactionLedger'] },
+        },
+      }),
+      expectedFragment: /reactionLedger must be an array/,
+    },
+    {
+      // The optional clock: only checked when present, so absent must stay
+      // legal (the freshly-created state above proves that) and present-but-
+      // negative must not.
+      name: 'negative forcedDisengageStartTick',
+      break: (state) => ({
+        ...state,
+        combatants: { ...state.combatants, a: { ...state.combatants.a, forcedDisengageStartTick: -1 } },
+      }),
+      expectedFragment: /forcedDisengageStartTick/,
+    },
+    {
+      // `assertRandomStateInvariants`: the streams are `>>> 0` integers, and a
+      // fractional one means something drew without folding back through
+      // `random.ts`.
+      name: 'non-integer combatant RNG stream value',
+      break: (state) => ({
+        ...state,
+        randomByCombatant: {
+          ...state.randomByCombatant,
+          a: { ...state.randomByCombatant.a, contact: { value: 0.5 } },
+        },
+      }),
+      expectedFragment: /randomByCombatant\.a\.contact\.value/,
     },
     {
       name: 'negative clock (lastContactTick)',

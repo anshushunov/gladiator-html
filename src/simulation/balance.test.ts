@@ -52,6 +52,10 @@ interface PairingMetrics {
   p95Ticks: number
   timeoutRate: number
   resolutionGapP95Ticks: number
+  /** p95 of the opening approach: ticks from the start of the bout to its first local resolution. See `runBout`. */
+  approachP95Ticks: number
+  /** Bouts that never resolved anything at all, so they had no "after initial approach" window to measure. */
+  unresolvedBouts: number
 }
 
 interface BoutOutcome {
@@ -60,6 +64,10 @@ interface BoutOutcome {
   reachedTickLimit: boolean
   /** Longest run of ticks with no local resolution, measured after the first one (see `runBout`). */
   maxResolutionGapTicks: number
+  /** Tick of the bout's first local resolution, or the whole bout's duration if it never had one (see `runBout`). */
+  firstResolutionTick: number
+  /** False when the bout ended without a single resolution -- there was no window to measure, and `firstResolutionTick` above is a floor, not a measurement. */
+  resolved: boolean
 }
 
 /**
@@ -75,6 +83,14 @@ interface BoutOutcome {
  * A bout in which nothing ever resolves has no "after initial approach" window
  * at all; it is reported as a gap equal to the whole bout so it can never look
  * better than a bout that merely stalled for a while.
+ *
+ * The approach the gap metric excludes is measured in its own right and
+ * returned as `firstResolutionTick`. design.md bounds the gap "after initial
+ * approach" and says nothing about the approach itself, which leaves the one
+ * window the pacing check refuses to look at unbounded: a bout that circled
+ * for two thousand ticks before its first exchange and then traded cleanly
+ * scores exactly as well as one that engaged immediately. `resolved` marks
+ * the degenerate case where there was no approach to measure either.
  */
 function runBout(home: FighterDefinition, away: FighterDefinition, seed: number): BoutOutcome {
   let battle = createBattle({ home, away, seed, combatStyles: COMBAT_STYLES })
@@ -94,12 +110,15 @@ function runBout(home: FighterDefinition, away: FighterDefinition, seed: number)
     durationTicks: battle.encounter.tick,
     reachedTickLimit: battle.finishReason === 'time-limit',
     maxResolutionGapTicks: firstResolutionTick < 0 ? battle.encounter.tick : maxGap,
+    firstResolutionTick: firstResolutionTick < 0 ? battle.encounter.tick : firstResolutionTick,
+    resolved: firstResolutionTick >= 0,
   }
 }
 
 function measure(outcomes: readonly BoutOutcome[]): PairingMetrics {
   const durations = outcomes.map((o) => o.durationTicks).sort((a, b) => a - b)
   const gaps = outcomes.map((o) => o.maxResolutionGapTicks).sort((a, b) => a - b)
+  const approaches = outcomes.map((o) => o.firstResolutionTick).sort((a, b) => a - b)
   return {
     homeWinRate: outcomes.filter((o) => o.homeWon).length / outcomes.length,
     medianTicks: percentile(durations, 0.5),
@@ -107,8 +126,28 @@ function measure(outcomes: readonly BoutOutcome[]): PairingMetrics {
     p95Ticks: percentile(durations, 0.95),
     timeoutRate: outcomes.filter((o) => o.reachedTickLimit).length / outcomes.length,
     resolutionGapP95Ticks: percentile(gaps, 0.95),
+    approachP95Ticks: percentile(approaches, 0.95),
+    unresolvedBouts: outcomes.filter((o) => !o.resolved).length,
   }
 }
+
+/**
+ * The band on the opening approach, in ticks.
+ *
+ * design.md authors one pacing constant of this kind -- the anti-stall clock's
+ * `300` ticks without a local resolution -- and applies it only *after* the
+ * first exchange. Two full stall windows before the first exchange is the same
+ * statement applied to the window the gap metric excludes: a bout that has not
+ * traded anything by then is stalling, whatever it does afterwards.
+ *
+ * Measured, all 6300 cohort bouts resolve, with a worst cohort p95 of 414
+ * ticks (fast vs. fast, the slowest approach by a wide margin -- both sides
+ * want distance) and a worst single bout of 447. So this bands the approach at
+ * roughly 1.5x the slowest measured cohort rather than snapshotting it, and
+ * the fixed 600 comes from the design's own constant, not from the
+ * distribution.
+ */
+const APPROACH_P95_LIMIT_TICKS = 2 * 300
 
 /** `seedIndex` 0..n-1 maps to 200 (or 500) CONSECUTIVE seeds beginning at the design's fixed 20260815. */
 const cohortSeed = (seedIndex: number): number => BASELINE_TEST_SEED + seedIndex
@@ -178,16 +217,21 @@ describe('fixed roster balance cohorts (nine pairings x 200 consecutive seeds fr
     check(combined.p95Ticks < 3200, `duration p95 ${combined.p95Ticks} not below 3200`)
     check(combined.timeoutRate < 0.02, `timeout rate ${pct(combined.timeoutRate)} not below 2%`)
     check(combined.resolutionGapP95Ticks <= 300, `resolution-gap p95 ${combined.resolutionGapP95Ticks} above 300`)
+    // The window the gap metric excludes, bounded so it cannot absorb a stall.
+    check(combined.unresolvedBouts === 0, `${combined.unresolvedBouts} bouts never resolved anything, so their resolution gap is a fallback, not a measurement`)
+    check(combined.approachP95Ticks <= APPROACH_P95_LIMIT_TICKS, `approach p95 ${combined.approachP95Ticks} above ${APPROACH_P95_LIMIT_TICKS}`)
 
     if (failures.length > 0) {
       reportTable('roster cohorts', [
-        ['pairing', 'win%', 'median', 'p10', 'p95', 'timeout%', 'gapP95'],
+        ['pairing', 'win%', 'median', 'p10', 'p95', 'timeout%', 'gapP95', 'apprP95', 'unres'],
         ...perPairing.map(({ label, metrics }) => [
           label, pct(metrics.homeWinRate), String(metrics.medianTicks), String(metrics.p10Ticks),
           String(metrics.p95Ticks), pct(metrics.timeoutRate), String(metrics.resolutionGapP95Ticks),
+          String(metrics.approachP95Ticks), String(metrics.unresolvedBouts),
         ]),
         ['COMBINED', pct(combined.homeWinRate), String(combined.medianTicks), String(combined.p10Ticks),
-          String(combined.p95Ticks), pct(combined.timeoutRate), String(combined.resolutionGapP95Ticks)],
+          String(combined.p95Ticks), pct(combined.timeoutRate), String(combined.resolutionGapP95Ticks),
+          String(combined.approachP95Ticks), String(combined.unresolvedBouts)],
       ])
     }
 
@@ -217,19 +261,35 @@ const ADVANTAGED: ReadonlySet<string> = new Set(['heavy>fast', 'fast>technical',
 describe('fixed equal-stat style cohorts (500 seeds per ordered matchup)', () => {
   it('keeps the counter triangle real, soft, and side-neutral', async () => {
     const measured = new Map<string, number>()
-    const rows: string[][] = [['matchup', 'homeWin%', 'timeout%', 'median']]
+    const approaches: { label: string; metrics: PairingMetrics }[] = []
+    const rows: string[][] = [['matchup', 'homeWin%', 'timeout%', 'median', 'apprP95', 'unres']]
 
     for (const homeStyle of STYLES) {
       for (const awayStyle of STYLES) {
         const outcomes = await cohort(equalStatFighter('home', homeStyle), equalStatFighter('away', awayStyle), STYLE_SEED_COUNT)
         const metrics = measure(outcomes)
         measured.set(`${homeStyle}>${awayStyle}`, metrics.homeWinRate)
-        rows.push([`${homeStyle} vs ${awayStyle}`, pct(metrics.homeWinRate), pct(metrics.timeoutRate), String(metrics.medianTicks)])
+        approaches.push({ label: `${homeStyle} vs ${awayStyle}`, metrics })
+        rows.push([
+          `${homeStyle} vs ${awayStyle}`, pct(metrics.homeWinRate), pct(metrics.timeoutRate), String(metrics.medianTicks),
+          String(metrics.approachP95Ticks), String(metrics.unresolvedBouts),
+        ])
       }
     }
 
     const failures: string[] = []
     const rate = (key: string) => measured.get(key) as number
+
+    // The opening approach, per matchup rather than combined: this cohort is
+    // where the slowest one lives (fast vs. fast -- both sides want distance),
+    // and combining it with eight faster matchups would hide it. See
+    // `APPROACH_P95_LIMIT_TICKS`.
+    for (const { label, metrics } of approaches) {
+      if (metrics.unresolvedBouts > 0) failures.push(`${label}: ${metrics.unresolvedBouts} bouts never resolved anything`)
+      if (metrics.approachP95Ticks > APPROACH_P95_LIMIT_TICKS) {
+        failures.push(`${label} approach p95 ${metrics.approachP95Ticks} above ${APPROACH_P95_LIMIT_TICKS}`)
+      }
+    }
 
     // The advantaged style wins 55..75%: a real edge that is never a
     // guaranteed answer.

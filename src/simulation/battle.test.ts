@@ -12,7 +12,7 @@ import {
   type BattleState,
   type DuelDescriptor,
 } from './battle'
-import { createEncounter, type EncounterState } from './encounter'
+import { createEncounter, type EncounterEvent, type EncounterState } from './encounter'
 import { compareArchetypes, comparisonDamageMultiplier, type Archetype, type FighterDefinition } from './fighters'
 import { derivedUnitValue, formatTraceHash } from './random'
 
@@ -276,6 +276,41 @@ describe('battle duel adapter', () => {
     expect(first.events).toEqual(second.events)
     expect(first.traceHash).toBe(second.traceHash)
     expect(first.events.length).toBeGreaterThan(1)
+  })
+
+  // A tick that emits nothing keeps the previous `events` array by reference
+  // instead of copying it (`appendEvents`). That sharing is only safe while
+  // nothing ever appends in place, so the property under test is the one an
+  // in-place `push` would break: a state handed out earlier must keep exactly
+  // the log it had, however many ticks run afterwards. `main.ts` depends on
+  // this directly -- its render frame holds the pre-tick state and slices the
+  // post-tick one at the pre-tick length.
+  it('never grows a log a caller already holds, and shares the array across ticks that emit nothing', () => {
+    let battle = createBattle(baseConfig({ home: brutus, away: drusus, seed: 123 }))
+    const held: { events: readonly EncounterEvent[]; lengthWhenHeld: number }[] = []
+    let sharedWithPreviousTick = 0
+    let grewThisTick = 0
+
+    for (let tick = 0; tick < 400; tick += 1) {
+      const previous = battle
+      battle = advanceBattleTick(battle)
+      if (battle.events === previous.events) sharedWithPreviousTick += 1
+      else grewThisTick += 1
+      held.push({ events: battle.events, lengthWhenHeld: battle.events.length })
+    }
+
+    // Both branches of `appendEvents` are actually exercised by a real bout.
+    expect(sharedWithPreviousTick).toBeGreaterThan(0)
+    expect(grewThisTick).toBeGreaterThan(0)
+
+    for (const entry of held) {
+      expect(entry.events).toHaveLength(entry.lengthWhenHeld)
+    }
+    // Every held log is still a prefix of the final one, in the same order.
+    const final = battle.events
+    for (const entry of held) {
+      expect(final.slice(0, entry.lengthWhenHeld)).toEqual([...entry.events])
+    }
   })
 
   it('a changed seed changes the trace hash', () => {

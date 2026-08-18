@@ -16,6 +16,43 @@ passing as of this commit -- but passing those does not satisfy this gate.
 Only a completed version of this document, filled in by actual reviewers, can
 close Step 5.
 
+What *is* prepared: `npm run review:clips` records the whole material set from
+a fixed seed in one command (see below), so the two reviewers watch identical
+bouts and neither has to assemble anything by hand.
+
+## Producing the material
+
+```bash
+npm run review:clips
+```
+
+Records everything below into `docs/reviews/clips/` (gitignored -- it is review
+material, not an artifact) from a fixed seed, and writes a `README.md` there
+listing every clip with its pairing, its pre-roll offset, and the event trace
+behind it:
+
+- the nine `×1` pairing bouts, one video each;
+- three of them repeated with the HP cards and battle feed hidden (one per home
+  style) -- the clips this gate is actually scored on;
+- one full three-bout series at `×2`;
+- the complete event trace for each clip as JSON, so the label comparison in
+  the next section is done against the real trace rather than from memory.
+
+Two things the script deliberately does not produce, because it cannot:
+
+- **Sound.** Chromium records video silently. Review audio live against a
+  running `npm run dev`: `?audioDebug=1` fires each cue in isolation with no
+  bout running, and the **Sound off/on** control covers cues during a full
+  bout.
+- **A verdict.** It records; the reviewers judge. Nothing in this repository
+  can fill in a cell below.
+
+Reproducing an exact moment by hand uses the same two parameters the e2e suite
+uses: `?seed=<n>` fixes the series (the same seed always produces the same
+three bouts), and `?snapshot` starts the runtime **paused** so nothing advances
+until `__GLADIATOR_TEST__.advanceTicks(n)` is called. See
+`docs/reviews/clips/README.md` for the console recipe.
+
 ## What reviewers need to watch
 
 Per design.md's "Human review gate" section:
@@ -29,7 +66,8 @@ Per design.md's "Human review gate" section:
    different home-fighter-to-slot assignments, or driving individual bouts
    directly through `window.__GLADIATOR_TEST__.assign(fighterId, boutIndex)`
    / `.confirm()` in a `?seed=20260815&snapshot` session for ad-hoc review of
-   a single pairing. The nine pairs:
+   a single pairing. `npm run review:clips` does the three-rotation version
+   for you; the clip numbers below are the ones it writes. The nine pairs:
 
    | # | Home (style) | Opponent (style) |
    |---|---|---|
@@ -44,9 +82,12 @@ Per design.md's "Human review gate" section:
    | 9 | Nerva (technical) | Magnus (heavy) |
 
 2. One full three-bout series at `×2`.
-3. The key-pose screenshot storyboard: `tests/__screenshots__/heavy-cleave.png`,
-   `fast-burst.png`, `technical-parry.png`, `combat-outcomes.png`,
-   `combat-safe-frame.png`.
+3. The key-pose screenshot storyboard. Baselines are per-OS since `c7851c5`:
+   `tests/__screenshots__/win32/` on Windows, `tests/__screenshots__/linux/`
+   for the set CI compares against. Either set shows the same poses --
+   `heavy-cleave.png`, `fast-burst.png`, `technical-parry.png`,
+   `combat-outcomes.png`, `combat-safe-frame.png` -- and differs only in font
+   rasterization and antialiasing.
 4. A short recording with HP cards and the battle feed hidden.
 5. Each audio cue in isolation (`?audioDebug=1`, the nine cue buttons) and
    cues during a complete bout.
@@ -66,7 +107,10 @@ label:
   miss),
 - recovery (what the fighters did immediately after),
 
-and only then compare those labels against the real event trace. `probe`
+and only then compare those labels against the real event trace --
+`docs/reviews/clips/traces/<clip>.json`, the complete event log of exactly the
+bout in that clip, written alongside it by `npm run review:clips`. Write the
+labels down before opening the trace. `probe`
 exchanges are reviewed separately for visible resolution/recovery and do
 **not** count toward the committed-exchange anticipation metric -- the design
 explicitly does not promise human-readable probe anticipation.

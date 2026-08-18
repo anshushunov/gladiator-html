@@ -24,6 +24,11 @@ docker run --rm -v /tmp/shots:/work -w /work mcr.microsoft.com/playwright:v1.62.
 cp /tmp/shots/tests/__screenshots__/linux/*.png tests/__screenshots__/linux/
 ```
 
+## Other commands
+
+- `npm run benchmark:encounter` / `npm run benchmark:duel-log` — informational timings for the 100-combatant kernel and the duel adapter's event log. Neither asserts a threshold; both exit nonzero only on a structural failure.
+- `npm run review:clips` — records the human-review material (nine `×1` pairing bouts, three with the HUD hidden, one `×2` series, plus each clip's event trace) into the gitignored `docs/reviews/clips/`. Recording only: the gate itself needs two humans who did not implement the combat.
+
 ## Working agreement
 
 State the player hypothesis in the PR, keep one hypothesis per PR, and attach the Playwright screenshot. Avoid speculative systems, deep content, and broad refactors.

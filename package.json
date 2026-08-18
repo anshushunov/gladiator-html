@@ -12,6 +12,8 @@
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots",
     "benchmark:encounter": "vite-node scripts/benchmark-encounter.ts",
+    "benchmark:duel-log": "vite-node scripts/benchmark-duel-log.ts",
+    "review:clips": "vite-node scripts/record-review-clips.ts",
     "check": "npm run test && npm run build && npm run test:e2e"
   },
   "dependencies": {

@@ -197,6 +197,18 @@ export function transitionActionPhase(
   if (action.type !== 'active') {
     throw new Error('transitionActionPhase requires an active action')
   }
+  // "which must equal the action's current `phaseEndsAtTick`" above was a
+  // requirement stated and then never checked: every branch below rebuilds
+  // the phase window from `tick` alone, so an off-by-one caller would not
+  // fail here -- it would silently mint an action whose new phase starts at
+  // the wrong tick and whose `phaseEndsAtTick` is skewed by the same amount
+  // for the rest of the action. The kernel's only caller
+  // (`transitionExpiredPhases`, encounter.ts) already gates on exactly this
+  // equality, so this cannot fire in production today; it exists so that a
+  // second caller cannot introduce the drift quietly.
+  if (tick !== action.phaseEndsAtTick) {
+    throw new Error(`transitionActionPhase must be called on the action's own phaseEndsAtTick (${action.phaseEndsAtTick}), not ${tick}`)
+  }
 
   switch (action.phase) {
     case 'windup':
@@ -651,7 +663,18 @@ function validateAttackActionDefinition(
   requirePositiveInteger(definition.impactTicks, field('impactTicks'))
   requirePositiveInteger(definition.recoveryTicks, field('recoveryTicks'))
   requirePositiveInteger(definition.staggerTicks, field('staggerTicks'))
-  requirePositiveInteger(definition.contactPriority, field('contactPriority'))
+  // Finite, and nothing more. design.md constrains the numeric fields by kind
+  // -- "Tick counts are positive integers; distances and multipliers are
+  // non-negative" -- and `contactPriority` is none of those three: it is a
+  // sort key, read only by `compareContactIntents` (encounter.ts) as a
+  // descending comparison against other priorities. Every value a `number`
+  // can hold orders correctly, including a fractional one slipped between two
+  // authored tiers and a negative one meant to sort last, so rejecting those
+  // was an undisclosed rule the content author had no way to read off the
+  // spec. The authored table is all positive integers by convention, which
+  // `combatStyles.test.ts` pins value by value; that is a fact about the
+  // content, not a constraint on the type.
+  requireFinite(definition.contactPriority, field('contactPriority'))
 
   requireFiniteNonNegative(definition.damageMultiplier, field('damageMultiplier'))
   requireFiniteNonNegative(definition.rootTravel, field('rootTravel'))

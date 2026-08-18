@@ -394,9 +394,19 @@ describe('validateCombatStyleCatalog: finite numeric and integer fields', () => 
     expect(() => validateCombatStyleCatalog(next, DUEL_ARENA)).toThrow('staggerTicks')
   })
 
-  it('rejects a non-integer contactPriority', () => {
-    const next = replaceAction(COMBAT_STYLES, 'fast-slash', { contactPriority: 40.5 })
+  it('rejects a non-finite contactPriority', () => {
+    const next = replaceAction(COMBAT_STYLES, 'fast-slash', { contactPriority: Number.NaN })
     expect(() => validateCombatStyleCatalog(next, DUEL_ARENA)).toThrow('contactPriority')
+  })
+
+  // `contactPriority` is a sort key, not a tick count or a distance, and
+  // design.md constrains it to "finite" only. A fractional value slipped
+  // between two authored tiers, and a negative one meant to sort last, both
+  // order correctly -- so validation must not reject them, however unlike the
+  // authored table they look.
+  it.each([40.5, -1, 0])('accepts the finite non-positive-integer contactPriority %p that design.md permits', (contactPriority) => {
+    const next = replaceAction(COMBAT_STYLES, 'fast-slash', { contactPriority })
+    expect(validateCombatStyleCatalog(next, DUEL_ARENA)).toBe(next)
   })
 })
 
