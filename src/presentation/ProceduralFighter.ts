@@ -78,6 +78,28 @@ export const SEMANTIC_JOINT_NAMES: readonly JointName[] = [
   'foot.R',
 ]
 
+/**
+ * The five equipment/contact anchors govern only the things a consumer must
+ * be able to *discover and address* by name: the weapon (`weaponHand`,
+ * `weaponTip`), the shield (`offHand`, `shieldCenter`), and the general
+ * body-hit target (`hitCenter`) that contact-resolution zones map onto
+ * (design.md's "Presentation only adds an authored height and maps it to a
+ * rig anchor"). That is a closed, exact five -- the Step 1 rig test pins
+ * this literal set, and a later imported skeletal model reuses the same
+ * five names, so it is not extended for new equipment categories.
+ *
+ * Worn body decoration that nothing needs to address individually --
+ * Heavy's helmet/crest, Fast's light-armor strap -- is deliberately *not*
+ * anchor-addressable. It parents directly to its own semantic body joint
+ * (`head`, `chest`; see `buildEquipment`'s `hasHelmet`/`hasLightArmor`
+ * branches) like any other body-fixed mesh. Do not "fix" this by adding a
+ * sixth anchor (e.g. a `helmetMount`) for it: none of the five anchors is a
+ * sane parent for worn decoration (`hitCenter` is a hit target, not a
+ * mounting point), and doing so would break the Step 1 test's exact
+ * five-anchor assertion. `ProceduralFighter.test.ts`'s "attaches weapon/
+ * shield equipment only under their anchors, and worn decoration only under
+ * its body joint" test pins both halves of this split.
+ */
 export type EquipmentAnchorName = 'weaponHand' | 'offHand' | 'weaponTip' | 'shieldCenter' | 'hitCenter'
 
 export const EQUIPMENT_ANCHOR_NAMES: readonly EquipmentAnchorName[] = [
@@ -282,6 +304,8 @@ const RIM_SCALE = 1.05
 interface Owned {
   geometries: THREE.BufferGeometry[]
   materials: THREE.Material[]
+  /** One shared unlit back-face material for every rim outline in this fighter instance (see `addRimOutline`). */
+  outlineMaterial: THREE.Material
 }
 
 function trackedMaterial(owned: Owned, material: THREE.Material): THREE.Material {
@@ -356,14 +380,14 @@ function addSphere(
  * A cheap duplicate-geometry rim outline: the same geometry, scaled slightly
  * larger, rendered back-face-only in a near-black unlit material. This keeps
  * silhouettes readable against the floor without a post-processing pipeline
- * (design.md's "Arena, camera, and effects" section).
+ * (design.md's "Arena, camera, and effects" section). Every rim outline in
+ * one fighter instance shares `owned.outlineMaterial` -- there is nothing
+ * style- or mesh-specific about an unlit black back-face material, so
+ * allocating a fresh one per outlined mesh would just be extra tracked
+ * objects to dispose for no visual difference.
  */
 function addRimOutline(owned: Owned, joint: THREE.Object3D, sourceMesh: THREE.Mesh): THREE.Mesh {
-  const material = trackedMaterial(
-    owned,
-    new THREE.MeshBasicMaterial({ color: OUTLINE_COLOR, side: THREE.BackSide }),
-  )
-  const outline = new THREE.Mesh(sourceMesh.geometry, material)
+  const outline = new THREE.Mesh(sourceMesh.geometry, owned.outlineMaterial)
   outline.position.copy(sourceMesh.position)
   outline.scale.setScalar(RIM_SCALE)
   outline.userData.slot = 'rim'
@@ -529,7 +553,8 @@ function computeHorizontalEquipmentRadius(root: THREE.Group, anchors: ReadonlyMa
 export function createProceduralFighter(options: ProceduralFighterOptions): ProceduralFighter {
   const spec = STYLE_SPECS[options.archetype]
   const body = spec.body
-  const owned: Owned = { geometries: [], materials: [] }
+  const outlineMaterial = new THREE.MeshBasicMaterial({ color: OUTLINE_COLOR, side: THREE.BackSide })
+  const owned: Owned = { geometries: [], materials: [outlineMaterial], outlineMaterial }
 
   const skin = trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: SKIN_COLOR, roughness: 0.9 }))
   const cloth = trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: spec.clothColor, roughness: 0.85 }))

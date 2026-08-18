@@ -67,26 +67,45 @@ describe('createProceduralFighter', () => {
     fighter.dispose()
   })
 
-  it.each(ARCHETYPES)('gives every joint a finite, unique transform for %s', (archetype) => {
+  // `shoulder.*` is a zero-length, rotation-only joint in the rest pose --
+  // `upperArm.*` is added at local (0,0,0) relative to it (a real skeletal
+  // rig commonly has a shoulder joint that carries no bone length of its
+  // own), so the two intentionally share a world position. These are the
+  // *only* joint pairs this rig intends to coincide; every other joint must
+  // land at a distinct world position, or the rig has silently collapsed.
+  const INTENDED_COINCIDENCES: readonly (readonly [JointName, JointName])[] = [
+    ['shoulder.L', 'upperArm.L'],
+    ['shoulder.R', 'upperArm.R'],
+  ]
+
+  it.each(ARCHETYPES)('gives every joint a finite transform, with exactly the intended coincident pairs for %s', (archetype) => {
     const fighter = createProceduralFighter({ archetype })
     fighter.root.updateMatrixWorld(true)
 
-    const worldPositions: THREE.Vector3[] = []
-    for (const joint of fighter.joints.values()) {
+    const worldPositions = new Map<JointName, THREE.Vector3>()
+    for (const [name, joint] of fighter.joints) {
       expectFiniteVector3(joint.position)
       expectFiniteVector3(joint.quaternion as unknown as THREE.Vector3)
       const world = new THREE.Vector3()
       joint.getWorldPosition(world)
       expectFiniteVector3(world)
-      worldPositions.push(world)
+      worldPositions.set(name, world)
     }
 
-    // Every joint's own local position is finite (checked above); this also
-    // proves no two joints were accidentally built at the exact same offset
-    // stack, i.e. the rig has real extent rather than being collapsed to a
-    // single point.
-    const distinctKeys = new Set(worldPositions.map((v) => `${v.x.toFixed(6)},${v.y.toFixed(6)},${v.z.toFixed(6)}`))
-    expect(distinctKeys.size).toBeGreaterThan(1)
+    for (const [a, b] of INTENDED_COINCIDENCES) {
+      const distance = worldPositions.get(a)!.distanceTo(worldPositions.get(b)!)
+      expect(distance, `${a} and ${b} were expected to coincide`).toBeLessThan(1e-9)
+    }
+
+    // Every joint NOT named above must have a distinct world position --
+    // tightened from a bare "more than one distinct position" check, which
+    // would still pass even if two unrelated joints on the same limb
+    // accidentally landed on top of each other.
+    const distinctKeys = new Set(
+      [...worldPositions.values()].map((v) => `${v.x.toFixed(6)},${v.y.toFixed(6)},${v.z.toFixed(6)}`),
+    )
+    const expectedDistinctCount = SEMANTIC_JOINT_NAMES.length - INTENDED_COINCIDENCES.length
+    expect(distinctKeys.size).toBe(expectedDistinctCount)
 
     fighter.dispose()
   })
@@ -113,22 +132,78 @@ describe('createProceduralFighter', () => {
     fighter.dispose()
   })
 
-  it('attaches style-specific equipment only under the weapon/shield anchors', () => {
+  function isDescendantOf(object: THREE.Object3D, ancestor: THREE.Object3D): boolean {
+    let current: THREE.Object3D | null = object
+    while (current) {
+      if (current === ancestor) return true
+      current = current.parent
+    }
+    return false
+  }
+
+  it('attaches weapon/shield equipment only under their anchors, and worn decoration only under its body joint (never an anchor)', () => {
     for (const archetype of ARCHETYPES) {
       const fighter = createProceduralFighter({ archetype })
 
       const weaponHand = fighter.anchors.get('weaponHand')!
       const shieldCenter = fighter.anchors.get('shieldCenter')!
+      const hitCenter = fighter.anchors.get('hitCenter')!
+      const head = fighter.joints.get('head')!
+      const chest = fighter.joints.get('chest')!
+      const allAnchors = [...fighter.anchors.values()]
 
-      const weaponHasMesh = weaponHand.children.some((child) => child instanceof THREE.Mesh)
-      const shieldHasMesh = shieldCenter.children.some((child) => child instanceof THREE.Mesh)
-      expect(weaponHasMesh, `${archetype} weaponHand should carry a weapon mesh`).toBe(true)
-      expect(shieldHasMesh, `${archetype} shieldCenter should carry a shield mesh`).toBe(true)
+      const meshesBySlot = new Map<string, THREE.Mesh[]>()
+      fighter.root.traverse((object) => {
+        if (object instanceof THREE.Mesh && typeof object.userData.slot === 'string') {
+          const list = meshesBySlot.get(object.userData.slot) ?? []
+          list.push(object)
+          meshesBySlot.set(object.userData.slot, list)
+        }
+      })
+
+      // Weapon/shield equipment: anchor-addressable, per brief resolution #2.
+      const weaponMeshes = meshesBySlot.get('weapon') ?? []
+      expect(weaponMeshes.length, `${archetype} should have a weapon mesh`).toBeGreaterThan(0)
+      for (const mesh of weaponMeshes) {
+        expect(isDescendantOf(mesh, weaponHand), `${archetype} weapon mesh should be under weaponHand`).toBe(true)
+      }
+
+      const shieldMeshes = meshesBySlot.get('shield') ?? []
+      expect(shieldMeshes.length, `${archetype} should have a shield mesh`).toBeGreaterThan(0)
+      for (const mesh of shieldMeshes) {
+        expect(isDescendantOf(mesh, shieldCenter), `${archetype} shield mesh should be under shieldCenter`).toBe(true)
+      }
 
       // hitCenter is a contact marker only -- it must never carry equipment
       // geometry of its own.
-      const hitCenter = fighter.anchors.get('hitCenter')!
       expect(hitCenter.children.some((child) => child instanceof THREE.Mesh)).toBe(false)
+
+      // Worn decoration: deliberately NOT anchor-addressable. It must live
+      // under its own body joint and must never be reachable from any of
+      // the five equipment anchors.
+      const helmetMeshes = [...(meshesBySlot.get('helmet') ?? []), ...(meshesBySlot.get('crest') ?? [])]
+      if (archetype === 'heavy') {
+        expect(helmetMeshes.length, 'heavy should have a helmet/crest mesh').toBeGreaterThan(0)
+      }
+      for (const mesh of helmetMeshes) {
+        expect(isDescendantOf(mesh, head), `${archetype} helmet/crest should be under the head joint`).toBe(true)
+        expect(
+          allAnchors.some((anchor) => isDescendantOf(mesh, anchor)),
+          `${archetype} helmet/crest must not be reachable from any equipment anchor`,
+        ).toBe(false)
+      }
+
+      const armorMeshes = meshesBySlot.get('armor') ?? []
+      if (archetype === 'fast') {
+        expect(armorMeshes.length, 'fast should have a light-armor mesh').toBeGreaterThan(0)
+      }
+      for (const mesh of armorMeshes) {
+        expect(isDescendantOf(mesh, chest), `${archetype} armor should be under the chest joint`).toBe(true)
+        expect(
+          allAnchors.some((anchor) => isDescendantOf(mesh, anchor)),
+          `${archetype} armor must not be reachable from any equipment anchor`,
+        ).toBe(false)
+      }
 
       fighter.dispose()
     }
