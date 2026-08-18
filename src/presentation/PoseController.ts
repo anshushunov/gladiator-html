@@ -218,6 +218,13 @@ function buildFullPose(working: Readonly<SparsePose>): Record<JointName, JointTr
   return result
 }
 
+/** Shared by the reaction overlay (shows the stagger pose) and grounding
+ * (must not touch a staggered fighter's legs) so the condition can't drift
+ * between the two call sites. */
+function isStaggered(current: Readonly<FighterCombatState>, currentTick: number): boolean {
+  return current.status === 'active' && currentTick < current.staggerUntilTick
+}
+
 // ---------------------------------------------------------------------------
 // Easing
 // ---------------------------------------------------------------------------
@@ -333,6 +340,10 @@ function sampleReactionOverlay(
   const overlay: SparsePose = {}
 
   if (recognitionFlinchActive) {
+    // Applied as an outright pop, not an eased blend, unlike every other
+    // branch below: a recognition flinch is a startle reflex, and its own
+    // pose data already carries an 'ease-out' curve describing its *return*
+    // toward guard, not a wind-up into itself (Task 16 review Minor #1).
     mergeInto(overlay, stylePoses.recognitionFlinch.joints)
   }
 
@@ -342,8 +353,7 @@ function sampleReactionOverlay(
     mergeInto(overlay, sampleDefenseCurve(stylePoses.guard, defensePose, action.phase, phaseProgress, reducedMotion))
   }
 
-  const staggered = current.status === 'active' && currentTick < current.staggerUntilTick
-  if (staggered) {
+  if (isStaggered(current, currentTick)) {
     mergeInto(overlay, stylePoses.stagger.joints)
   }
 
@@ -404,6 +414,32 @@ function mirrorJointName(name: JointName): JointName {
   return name
 }
 
+/** Legs directly under a foot side, used by both the gait mirror lookup and
+ * grounding's per-side reset. */
+const LEG_JOINTS_BY_SIDE: Readonly<Record<'L' | 'R', readonly JointName[]>> = {
+  L: ['upperLeg.L', 'lowerLeg.L', 'foot.L'],
+  R: ['upperLeg.R', 'lowerLeg.R', 'foot.R'],
+}
+
+const LEG_JOINT_NAME_SET = new Set<JointName>([...LEG_JOINTS_BY_SIDE.L, ...LEG_JOINTS_BY_SIDE.R])
+
+/**
+ * `locomotion.joints` is built via `mergeJoints(guard.joints, {...overrides})`
+ * (combatPoses.ts), so it carries *every* guard joint key -- not only the leg
+ * (and arm-swing) keys its own overrides name -- including asymmetric guard
+ * values a mirror substitution must never cross between hands, e.g. the
+ * weapon-hand `forearm.R` bend versus the shield-hand `forearm.L` bend.
+ *
+ * Only the leg joints in `LEG_JOINTS_BY_SIDE` alternate which side reads as
+ * forward across the gait's two halves (mirrored on half B). Every other
+ * joint `locomotion.joints` defines -- arm swing, and any joint inherited
+ * unchanged from guard -- always blends toward its own *unmirrored* authored
+ * value in both halves, so it never depends on which half of the cycle is
+ * active (Task 16 review Finding 1: the previous version mirrored every
+ * joint present in `locomotion.joints`, which silently swapped the weapon
+ * and shield arms' forearm bend -- and, for Technical, the entire upper body
+ * -- once per stride).
+ */
 function applyGaitLayer(working: SparsePose, stylePoses: StyleCorePoses, gaitPhase: number, speedWeight: number): void {
   if (speedWeight <= 0) return
   const locomotion = stylePoses.locomotion
@@ -412,18 +448,12 @@ function applyGaitLayer(working: SparsePose, stylePoses: StyleCorePoses, gaitPha
   if (weight <= 0) return
 
   for (const jointName of Object.keys(locomotion.joints) as JointName[]) {
-    const sourceName = half === 'A' ? jointName : mirrorJointName(jointName)
+    const mirrorEligible = half === 'B' && LEG_JOINT_NAME_SET.has(jointName)
+    const sourceName = mirrorEligible ? mirrorJointName(jointName) : jointName
     const target = locomotion.joints[sourceName] ?? locomotion.joints[jointName]
     if (!target) continue
     working[jointName] = lerpTransform(working[jointName], target, weight)
   }
-}
-
-/** Legs directly under a foot side, used by both the gait mirror lookup and
- * grounding's per-side reset. */
-const LEG_JOINTS_BY_SIDE: Readonly<Record<'L' | 'R', readonly JointName[]>> = {
-  L: ['upperLeg.L', 'lowerLeg.L', 'foot.L'],
-  R: ['upperLeg.R', 'lowerLeg.R', 'foot.R'],
 }
 
 // ---------------------------------------------------------------------------
@@ -439,8 +469,7 @@ const LEG_JOINTS_BY_SIDE: Readonly<Record<'L' | 'R', readonly JointName[]>> = {
  * grounding is a locomotion concern, not a reaction-pose concern.
  */
 function applyGroundingLayer(working: SparsePose, stylePoses: StyleCorePoses, current: Readonly<FighterCombatState>, currentTick: number, gaitPhase: number): void {
-  const staggered = current.status === 'active' && currentTick < current.staggerUntilTick
-  const isOrdinary = current.action.type === 'neutral' && !staggered && current.status === 'active'
+  const isOrdinary = current.action.type === 'neutral' && !isStaggered(current, currentTick) && current.status === 'active'
   if (!isOrdinary) return
 
   const { plantedFoot } = classifyGaitPhase(gaitPhase)

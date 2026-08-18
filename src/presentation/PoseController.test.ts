@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import { createProceduralFighter, SEMANTIC_JOINT_NAMES, type JointName } from './ProceduralFighter'
 import { PoseController, type PoseSampleInput } from './PoseController'
-import { COMBAT_POSES } from './poses/combatPoses'
+import { COMBAT_POSES, STYLE_GAIT_CYCLE_DISTANCE } from './poses/combatPoses'
 import type { CombatActionId, CombatActionPhase, CombatActionState } from '../simulation/combatActions'
 import type { FighterCombatState } from '../simulation/encounter'
 import type { Archetype, FighterDefinition } from '../simulation/fighters'
@@ -247,24 +247,29 @@ describe('PoseController fixed layer order', () => {
     fighter.dispose()
   })
 
-  it('never raises the full defense pose for a declined defense (recognition-flinch only)', () => {
+  const DEFENSE_ID_BY_ARCHETYPE: Readonly<Record<Archetype, keyof typeof COMBAT_POSES.defenses>> = {
+    heavy: 'heavy-guard',
+    fast: 'fast-evade',
+    technical: 'technical-parry',
+  }
+
+  it.each(['heavy', 'fast', 'technical'] as const)('never raises the full defense pose for a declined defense (recognition-flinch only) for %s', (archetype) => {
     const controller = new PoseController()
-    const fighter = createProceduralFighter({ archetype: 'technical' })
-    const neutral = baseFighterState('technical')
+    const fighter = createProceduralFighter({ archetype })
+    const neutral = baseFighterState(archetype)
 
     const sample = controller.apply(
       makeInput({ current: neutral, currentTick: 5, reaction: { defenseDeclinedTick: 5 } }),
       fighter,
     )
 
-    // Only assert on the joints technical-parry actually *distinguishes*
-    // from guard (chest/upperArm.R/forearm.R) -- joints the defense pose
-    // leaves equal to guard (e.g. upperArm.L) would trivially "match" here
-    // too, since recognition-flinch only touches head/chest and otherwise
-    // also falls back to guard.
-    const parryPose = COMBAT_POSES.defenses['technical-parry']
-    const guard = COMBAT_POSES.styles.technical.guard
-    for (const [joint, transform] of Object.entries(parryPose.joints)) {
+    // Only assert on the joints the style's own defense pose actually
+    // *distinguishes* from guard -- joints the defense pose leaves equal to
+    // guard would trivially "match" here too, since recognition-flinch only
+    // touches head/chest and otherwise also falls back to guard.
+    const defensePose = COMBAT_POSES.defenses[DEFENSE_ID_BY_ARCHETYPE[archetype]]
+    const guard = COMBAT_POSES.styles[archetype].guard
+    for (const [joint, transform] of Object.entries(defensePose.joints)) {
       const guardValue = guard.joints[joint as JointName]?.rotation
       if (guardValue && transform!.rotation.every((v, i) => v === guardValue[i])) continue
       expect(sample.pose[joint as JointName].rotation, `${joint} should not show the raised defense pose`).not.toEqual(transform!.rotation)
@@ -435,6 +440,44 @@ describe('PoseController gait', () => {
     fighter.dispose()
   })
 
+  it.each(['heavy', 'fast', 'technical'] as const)(
+    'keeps arm/forearm joints identical between gait halves at matching stride envelope, while legs differ (%s)',
+    (archetype) => {
+      // Task 16 review Finding 1: the gait mirror must be scoped to leg
+      // joints only. Guard poses deliberately give the weapon and shield
+      // arms different values (most starkly for Technical, whose own
+      // `locomotion` pose never overrides upperArm/forearm at all -- they
+      // reach `applyGaitLayer` purely via `mergeJoints(guard.joints, ...)`),
+      // so a half-B mirror that swapped every joint present in
+      // `locomotion.joints` would periodically swap those asymmetric arm
+      // values between hands. Sampling two travelled distances that land on
+      // each half's peak stride envelope (so weights match exactly) proves
+      // arms/forearms never depend on which half is active, while legs still
+      // genuinely alternate.
+      const controller = new PoseController()
+      const fighter = createProceduralFighter({ archetype })
+      const velocity: Vec2 = { x: 0, z: 2 }
+      const cycle = STYLE_GAIT_CYCLE_DISTANCE[archetype]
+
+      const halfAState = baseFighterState(archetype, { travelledDistance: cycle * 0.25, velocity })
+      const sampleA = controller.apply(makeInput({ current: halfAState, previous: halfAState, currentTick: 1, alpha: 0 }), fighter)
+
+      const halfBState = baseFighterState(archetype, { travelledDistance: cycle * 0.75, velocity })
+      const sampleB = controller.apply(makeInput({ current: halfBState, previous: halfBState, currentTick: 2, alpha: 0 }), fighter)
+
+      for (const joint of ['upperArm.L', 'upperArm.R', 'forearm.L', 'forearm.R'] as const) {
+        expect(sampleB.pose[joint], `${joint} should not change between gait halves`).toEqual(sampleA.pose[joint])
+      }
+
+      // Sanity: legs genuinely do alternate between halves (the mirror still
+      // works where it should).
+      expect(sampleB.pose['upperLeg.L']).not.toEqual(sampleA.pose['upperLeg.L'])
+      expect(sampleB.pose['upperLeg.R']).not.toEqual(sampleA.pose['upperLeg.R'])
+
+      fighter.dispose()
+    },
+  )
+
   it('produces finite leg transforms while idle (zero velocity, zero travelled distance)', () => {
     const controller = new PoseController()
     const fighter = createProceduralFighter({ archetype: 'technical' })
@@ -492,6 +535,12 @@ describe('PoseController weapon-arm IK', () => {
     const nearTarget: Vec2 = { x: 0.15, z: 1.3 }
     const withIk = controller.apply(makeInput({ current, currentTick: 21, alpha: 0, reaction: { contactTarget: nearTarget } }), fighter)
     const ikReach = shoulderToWeaponTipDistance(fighter, withIk.pose)
+
+    // The solve actually engaged: a within-cap target must move the arm.
+    // Without this, a permanently-disabled IK solve (always returning `{}`)
+    // would pass the cap assertion below vacuously, since `authoredReach` is
+    // always `<= cap` by construction (Task 16 review Finding 2).
+    expect(withIk.pose['upperArm.R']).not.toEqual(withoutIk.pose['upperArm.R'])
 
     // Never stretched beyond the authored cosmetic cap (a fixed ratio above
     // the authored pose's own reach).
