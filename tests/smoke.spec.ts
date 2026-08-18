@@ -84,6 +84,120 @@ test('resets arena presentation for the second bout', async ({ page }) => {
   await expect.poll(async () => Number(await canvas.getAttribute('data-last-event-id'))).toBeGreaterThan(0)
 })
 
+// ---------------------------------------------------------------------------
+// Task 19 Step 2: reset fixtures (rig identity, pose, flashes, camera, and
+// event cursor across bout boundaries) and reduced-motion behavior.
+// ---------------------------------------------------------------------------
+
+test('resets rig identity, pose, flashes, camera framing, and event cursor for every new bout', async ({ page }) => {
+  await page.goto('/?seed=20260815&snapshot')
+  await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.assign('aquila', 0)
+    window.__GLADIATOR_TEST__.assign('nerva', 1)
+    window.__GLADIATOR_TEST__.assign('brutus', 2)
+    window.__GLADIATOR_TEST__.confirm()
+  })
+  const boutZeroStart = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
+  // Bout 0: `home.aquila` vs `away.drusus`, at the arena's fixed authored
+  // start positions -- see `battle.test.ts`'s "places home/away at the
+  // authored duel start positions".
+  expect(Object.keys(boutZeroStart!.rootPositions).sort()).toEqual(['away.drusus', 'home.aquila'])
+  expect(boutZeroStart!.rootPositions).toEqual({ 'home.aquila': { x: -4.2, z: 0 }, 'away.drusus': { x: 4.2, z: 0 } })
+  expect(boutZeroStart!.activeEffectIds).toEqual([])
+  expect(boutZeroStart!.eventCursor).toBe(-1)
+  // Always 0 at a fresh bout start: both authored start positions are
+  // symmetric about the arena's origin, regardless of which two archetypes
+  // are fighting, so the look target's midpoint is always the same even
+  // though the framing *distance* legitimately varies with each pair's own
+  // equipment radii.
+  expect(boutZeroStart!.camera.lookTargetX).toBe(0)
+
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
+  const boutOneStart = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
+  // Bout 1: `home.nerva` vs `away.cassius` -- a different rig identity from
+  // bout 0's (proves the prior bout's rigs were actually torn down, not
+  // merely repositioned), reset to the same fixed start positions, with
+  // flashes and the event cursor cleared again.
+  expect(Object.keys(boutOneStart!.rootPositions).sort()).toEqual(['away.cassius', 'home.nerva'])
+  expect(boutOneStart!.rootPositions).toEqual({ 'home.nerva': { x: -4.2, z: 0 }, 'away.cassius': { x: 4.2, z: 0 } })
+  expect(boutOneStart!.activeEffectIds).toEqual([])
+  expect(boutOneStart!.eventCursor).toBe(-1)
+  expect(boutOneStart!.camera.lookTargetX).toBe(0)
+  expect(boutOneStart!.jointTransformsFinite).toBe(true)
+
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
+  const boutTwoStart = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
+  // Bout 2: `home.brutus` vs `away.magnus` -- same reset guarantees again.
+  expect(Object.keys(boutTwoStart!.rootPositions).sort()).toEqual(['away.magnus', 'home.brutus'])
+  expect(boutTwoStart!.rootPositions).toEqual({ 'home.brutus': { x: -4.2, z: 0 }, 'away.magnus': { x: 4.2, z: 0 } })
+  expect(boutTwoStart!.activeEffectIds).toEqual([])
+  expect(boutTwoStart!.eventCursor).toBe(-1)
+  expect(boutTwoStart!.camera.lookTargetX).toBe(0)
+  expect(boutTwoStart!.jointTransformsFinite).toBe(true)
+
+  // The sound control (and its underlying `CombatAudio.resetBout()` voice/
+  // cursor reset, unit-tested directly in `CombatAudio.test.ts`) keeps
+  // working across every one of these bout boundaries rather than wedging.
+  await expect(page.getByTestId('toggle-sound')).toBeVisible()
+})
+
+test('reduced motion removes trails and flashes while a hit, its stagger, and its result still land unchanged', async ({ page }) => {
+  const seenEvents = async (targetPage: import('@playwright/test').Page, tick: number) =>
+    targetPage.evaluate((t) => window.__GLADIATOR_TEST__.getState().activeBattle!.events.filter((event) => event.tick === t), tick)
+
+  // Baseline: the same seeded matchup, ordinary motion.
+  const normalPage = page
+  await normalPage.goto('/?seed=20260815&snapshot')
+  await normalPage.evaluate(() => {
+    window.__GLADIATOR_TEST__.assign('brutus', 0)
+    window.__GLADIATOR_TEST__.assign('aquila', 1)
+    window.__GLADIATOR_TEST__.assign('nerva', 2)
+    window.__GLADIATOR_TEST__.confirm()
+  })
+  // tick 256: the frozen mutual hit/stagger from `combat-visuals.spec.ts`'s
+  // key-pose fixture -- a real, guaranteed contact-flash trigger.
+  await normalPage.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(256))
+  const normalSnapshot = await normalPage.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
+  const normalEvents = await seenEvents(normalPage, 255)
+  expect(normalSnapshot!.activeEffectIds.length).toBeGreaterThan(0) // sanity: a real flash fired without reduced motion
+
+  // Reduced motion: identical seed/lineup/tick count, `prefers-reduced-
+  // motion: reduce` emulated from before navigation (matching how a real
+  // browser reports the OS preference at page load).
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/?seed=20260815&snapshot')
+  await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.assign('brutus', 0)
+    window.__GLADIATOR_TEST__.assign('aquila', 1)
+    window.__GLADIATOR_TEST__.assign('nerva', 2)
+    window.__GLADIATOR_TEST__.confirm()
+  })
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(256))
+  const reducedSnapshot = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
+  const reducedEvents = await seenEvents(page, 255)
+
+  // Anticipation/contact/result preserved: the simulation's own event trace
+  // (amounts, remaining HP, stagger durations) is byte-identical regardless
+  // of reduced motion -- a presentation preference never touches simulation.
+  expect(reducedEvents).toEqual(normalEvents)
+  const reducedCombatants = await page.evaluate(() => {
+    const battle = window.__GLADIATOR_TEST__.getState().activeBattle!
+    return { brutus: battle.encounter.combatants['home.brutus'], drusus: battle.encounter.combatants['away.drusus'] }
+  })
+  expect(reducedCombatants.brutus.hp).toBe(298)
+  expect(reducedCombatants.drusus.hp).toBe(302)
+  expect(reducedCombatants.brutus.staggerUntilTick).toBeGreaterThan(256)
+  expect(reducedCombatants.drusus.staggerUntilTick).toBeGreaterThan(256)
+  expect(reducedSnapshot!.jointTransformsFinite).toBe(true)
+
+  // Trail/flash removed: the same contact that lit a flash above spawns none
+  // under reduced motion (`ArenaView.ts`'s `processNewEvents`/weapon-trail
+  // gating, both keyed off the same `isReducedMotion()` check).
+  expect(reducedSnapshot!.activeEffectIds).toEqual([])
+})
+
 test('renders movement-rich encounter combat', async ({ page }) => {
   await startSeededFirstBout(page)
   const before = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveCombatantPositions())
