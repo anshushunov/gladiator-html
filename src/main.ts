@@ -1,6 +1,14 @@
 import './style.css'
 import { ArenaView, type ArenaDebugSnapshot, type BattleRenderFrame } from './presentation/ArenaView'
 import { SeriesView, type RuntimeViewState, type SeriesIntent } from './presentation/SeriesView'
+import {
+  ALL_COMBAT_CUES,
+  classifyPlantedFoot,
+  createBrowserAudioBackend,
+  CombatAudio,
+  type CombatCue,
+  type FootstepThreshold,
+} from './presentation/CombatAudio'
 import { COMBAT_STYLES } from './content/combatStyles'
 import { homeRoster, opponents } from './content/mvpSeries'
 import {
@@ -45,6 +53,10 @@ interface GladiatorTestApi {
   renderActiveBattleAtAlpha?(alpha: number): void
   /** Dev-only (`import.meta.env.DEV`); absent from production builds -- see `ArenaView.getDebugSnapshot`. */
   getArenaDebugSnapshot?(): ArenaDebugSnapshot | null
+  /** Dev-only (`import.meta.env.DEV`), and only when `?audioDebug=1` is present -- triggers one cue through the real backend without starting a bout; see `CombatAudio.debugPlayCue`. */
+  triggerAudioCue?(cue: CombatCue): void
+  /** Dev-only (`import.meta.env.DEV`), and only when `?audioDebug=1` is present -- the cues `triggerAudioCue` has fired so far, for Playwright assertions with no real audio hardware. */
+  getAudioDebugLog?(): readonly CombatCue[]
 }
 
 /**
@@ -78,9 +90,10 @@ const canvas = required<HTMLCanvasElement>('canvas')
 
 const seriesView = new SeriesView(shell, applyIntent)
 const arenaView = new ArenaView(canvas)
+const combatAudio = new CombatAudio(createBrowserAudioBackend())
 
 let series: SeriesState = createSeries({ homeRoster, opponents, seed, combatStyles: COMBAT_STYLES })
-const runtime: RuntimeViewState = { paused: snapshotMode, speed: 1 }
+const runtime: RuntimeViewState = { paused: snapshotMode, speed: 1, soundEnabled: false }
 let previousFrame = performance.now()
 let lastPhase = series.phase
 let lastActiveBoutIndex: number | null = series.activeBoutIndex
@@ -113,17 +126,76 @@ let renderFrame: RenderSnapshot | undefined
 let pendingEvents: EncounterEvent[] = []
 
 /**
+ * `CombatAudio`'s own per-render batch, accumulated and reset in lockstep
+ * with `pendingEvents` (same reasoning, same lifecycle) but kept as a
+ * separate array/type: footstep thresholds are presentation-only pseudo-
+ * events `PoseController.ts`/`ArenaView.ts` never see and `EncounterEvent`'s
+ * union does not include, minted here from each combatant's own
+ * `travelledDistance` via `classifyPlantedFoot` -- the same gait math
+ * `PoseController` samples for cosmetic leg poses, mirrored rather than
+ * imported since neither `PoseController.ts` nor `ArenaView.ts` is one of
+ * this task's owned files (see `CombatAudio.ts`'s own header comment).
+ */
+let pendingFootsteps: FootstepThreshold[] = []
+
+/** One entry per combatant, the last `classifyPlantedFoot` result computed
+ * for them this bout -- lets `collectFootstepThresholds` detect a *change*
+ * (design.md: "fire when the planted foot changes") without re-deriving
+ * `PoseController`'s own per-frame state. Reset (cleared) at every bout
+ * boundary alongside `pendingFootsteps`; an absent entry is treated as
+ * `'both'`, matching every fresh combatant's own `travelledDistance: 0`
+ * baseline (`buildFighterCombatState`), so the very first tick of a bout
+ * never spuriously fires a footstep. */
+const lastPlantedFoot = new Map<CombatantId, 'left' | 'right' | 'both'>()
+
+/** Monotonic id source for `FootstepThreshold`s, distinct from (and never
+ * compared against) `EncounterEvent.id` -- `CombatAudio` dedupes the two
+ * kinds with separate cursors. Reset to `0` at every bout boundary. */
+let nextFootstepId = 0
+
+/**
  * Bout lifecycle boundary: (re)initializes both render snapshots to the
  * given battle's current tick (tick 0 for a freshly created battle), with an
  * empty event batch -- or clears them entirely when no battle is active
  * (planning/summary). Called only from command paths (`applyIntent`/
  * `applyCommand`), never from tick-stepping, so an `activeBattle` reference
  * change reaching here always means a bout started or ended, never a tick
- * advanced.
+ * advanced. Also the one place that resets `CombatAudio`'s own event/
+ * footstep cursors and stops its voices (design.md: "Arena reset clears
+ * pose, trails, flashes, audio voices, event cursors... at each new bout and
+ * on rematch") -- every path that reaches here is exactly a bout change or a
+ * rematch, never an ordinary tick.
  */
 function resetRenderFrame(battle: BattleState | undefined): void {
   renderFrame = battle ? { previous: battle, current: battle, events: [] } : undefined
   pendingEvents = []
+  pendingFootsteps = []
+  lastPlantedFoot.clear()
+  nextFootstepId = 0
+  combatAudio.resetBout()
+}
+
+/**
+ * Detects every combatant whose planted foot (per `classifyPlantedFoot`,
+ * driven by their own `travelledDistance`) changed between the previous and
+ * current tick, minting a fresh `FootstepThreshold` for each -- 'both' is
+ * the double-support window between strides and never itself fires a cue,
+ * matching `classifyPlantedFoot`'s own contract.
+ */
+function collectFootstepThresholds(currentBattle: BattleState): FootstepThreshold[] {
+  const thresholds: FootstepThreshold[] = []
+  for (const id of currentBattle.encounter.combatantIds) {
+    const combatant = currentBattle.encounter.combatants[id]
+    const archetype = combatant.definition.archetype
+    const plant = classifyPlantedFoot(combatant.travelledDistance, archetype)
+    const previousPlant = lastPlantedFoot.get(id) ?? 'both'
+    if (plant !== previousPlant && plant !== 'both') {
+      thresholds.push({ id: nextFootstepId, combatantId: id, archetype, foot: plant })
+      nextFootstepId += 1
+    }
+    lastPlantedFoot.set(id, plant)
+  }
+  return thresholds
 }
 
 /**
@@ -147,6 +219,7 @@ function stepBattleTick(): void {
   const currentBattle = series.activeBattle
   if (previousBattle && currentBattle && currentBattle !== previousBattle) {
     pendingEvents.push(...currentBattle.events.slice(previousBattle.events.length))
+    pendingFootsteps.push(...collectFootstepThresholds(currentBattle))
     renderFrame = { previous: previousBattle, current: currentBattle, events: pendingEvents }
   }
 }
@@ -163,14 +236,46 @@ function applyIntent(intent: SeriesIntent): void {
   switch (intent.type) {
     case 'assign': series = assignFighter(series, intent.fighterId, intent.boutIndex).state; break
     case 'unassign': series = unassignSlot(series, intent.boutIndex).state; break
-    case 'confirm': series = confirmLineup(series).state; break
+    case 'confirm': {
+      // Gesture lifecycle (brief resolution #5): `enableAfterGesture` is
+      // fired synchronously, without `await`, as the very first statement
+      // reached from the click -- `SeriesView.handleClick`'s 'confirm' case
+      // calls `this.onIntent({ type: 'confirm' })` synchronously from the
+      // native click handler, and nothing between that call and this line
+      // is asynchronous, so `AudioContext.resume()` still begins inside the
+      // browser gesture's own call stack even though this promise only
+      // settles later. `.then`/`.catch` both just refresh the visible
+      // Sound on/off control; the synchronous series command below runs
+      // immediately regardless of whether audio ends up enabled.
+      void combatAudio.enableAfterGesture().then(refreshAudioUi).catch(refreshAudioUi)
+      series = confirmLineup(series).state
+      break
+    }
     case 'start-next': series = startNextBout(series).state; break
     case 'rematch': series = rematch(series).state; break
     case 'toggle-pause': runtime.paused = !runtime.paused; break
     case 'set-speed': runtime.speed = intent.speed; break
+    case 'toggle-sound': {
+      // Also a gesture-eligible click (design.md: "an explicit `Sound on`
+      // click"), and reached synchronously from `SeriesView`'s click
+      // handler the same way 'confirm' is -- so this preserves the same
+      // synchronous-first `enable`/`resume` window when sound has never yet
+      // been turned on.
+      void combatAudio.setSoundEnabled(!combatAudio.isSoundEnabled()).then(refreshAudioUi).catch(refreshAudioUi)
+      break
+    }
   }
   if (series.activeBattle !== previousBattle) resetRenderFrame(series.activeBattle)
   renderDom()
+}
+
+/** Refreshes only the visible Sound on/off control after an async audio
+ * gesture settles -- deliberately not `renderDom()` (which also drives
+ * phase-change bookkeeping/focus), since an audio settlement is never a
+ * `series`-changing event. */
+function refreshAudioUi(): void {
+  runtime.soundEnabled = combatAudio.isSoundEnabled()
+  seriesView.render(series, runtime)
 }
 
 function applyCommand(result: SeriesCommandResult): TestCommandResult {
@@ -206,10 +311,19 @@ function handleArenaPhaseChange(): void {
 function syncArena(): void {
   if (renderFrame && (series.phase === 'fighting' || series.phase === 'between-bouts')) {
     arenaView.sync({ ...renderFrame, alpha: currentAlpha() })
-    // Consumed: the next accumulation window (`pendingEvents`) starts empty,
-    // keeping every batch handed to `ArenaView` bounded to "since last
-    // render" rather than growing across the whole bout.
+    combatAudio.consume({
+      events: pendingEvents,
+      footsteps: pendingFootsteps,
+      boutIndex: series.activeBoutIndex ?? 0,
+      speed: runtime.speed,
+      paused: runtime.paused,
+    })
+    // Consumed: the next accumulation window (`pendingEvents`/
+    // `pendingFootsteps`) starts empty, keeping every batch handed to
+    // `ArenaView`/`CombatAudio` bounded to "since last render" rather than
+    // growing across the whole bout.
     pendingEvents = []
+    pendingFootsteps = []
   }
 }
 
@@ -294,4 +408,41 @@ window.__GLADIATOR_TEST__ = {
 if (import.meta.env.DEV) {
   window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha = (alpha) => arenaView.renderActiveBattleAtAlpha?.(alpha)
   window.__GLADIATOR_TEST__.getArenaDebugSnapshot = () => arenaView.getDebugSnapshot?.() ?? null
+
+  // Dev/test-only audio debug surface (brief resolution #9, design.md: "In
+  // Vite dev/test only, `?audioDebug=1` exposes a test API that can trigger
+  // every cue without starting a bout. Production builds ignore the
+  // parameter and render no debug UI."). Nested inside the same
+  // `import.meta.env.DEV` branch Task 17 already relies on for dead-code
+  // elimination -- `vite build` statically replaces `import.meta.env.DEV`
+  // with `false`, so this entire block (the query check, the panel, and the
+  // test-API assignments) is unreachable and gets eliminated from a
+  // production bundle; verified by building and grepping the emitted bundle
+  // for these names (see the task report).
+  if (new URLSearchParams(window.location.search).has('audioDebug')) {
+    buildAudioDebugPanel()
+    window.__GLADIATOR_TEST__.triggerAudioCue = (cue) => combatAudio.debugPlayCue?.(cue)
+    window.__GLADIATOR_TEST__.getAudioDebugLog = () => combatAudio.getDebugPlayedCues?.() ?? []
+  }
+}
+
+/** Renders one visible trigger button per `CombatCue`, each firing that cue
+ * through the real backend (bypassing `consume`'s event mapping/voice-cap/
+ * speed policy entirely) so a reviewer -- or a Playwright fixture using an
+ * instrumented/fake backend -- can hear or assert every cue in isolation
+ * without ever starting a bout. */
+function buildAudioDebugPanel(): void {
+  const panel = document.createElement('div')
+  panel.className = 'audio-debug'
+  panel.dataset.testid = 'audio-debug'
+  for (const cue of ALL_COMBAT_CUES) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'button audio-debug__button'
+    button.dataset.testid = `audio-debug-${cue}`
+    button.textContent = cue
+    button.addEventListener('click', () => window.__GLADIATOR_TEST__.triggerAudioCue?.(cue))
+    panel.append(button)
+  }
+  document.body.append(panel)
 }

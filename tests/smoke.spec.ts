@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { preview, type PreviewServer } from 'vite'
 
 test('plans and locks three matchups', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
@@ -318,4 +319,116 @@ test('matches the stable planning snapshot', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
   await expect(page.locator('canvas')).toBeHidden()
   await expect(page).toHaveScreenshot('planning.png', { fullPage: true })
+})
+
+// ---------------------------------------------------------------------------
+// Task 18: optional event-driven combat audio
+// ---------------------------------------------------------------------------
+
+test('turns sound on by default after a real lineup-confirm click, and Sound off mutes without affecting the series', async ({ page }) => {
+  await page.goto('/?seed=20260815&snapshot')
+  for (const [fighterId, boutIndex] of [['aquila', 0], ['nerva', 1], ['brutus', 2]] as const) {
+    await page.getByTestId(`fighter-${fighterId}`).click()
+    await page.getByTestId(`slot-${boutIndex}`).click()
+  }
+  // The gesture-eligible click itself: `combatAudio.enableAfterGesture()`
+  // fires synchronously inside this click's handler (see main.ts's
+  // `applyIntent` 'confirm' case), so `AudioContext.resume()` begins inside
+  // this real browser gesture -- the same requirement Playwright's own
+  // click satisfies for autoplay policy purposes.
+  await page.getByTestId('confirm-lineup').click()
+  await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'fighting')
+
+  // The enable promise settles asynchronously; the visible control catches
+  // up once it does.
+  await expect(page.getByTestId('toggle-sound')).toHaveText('Sound on')
+  await expect(page.getByTestId('toggle-sound')).toHaveAttribute('aria-pressed', 'true')
+
+  await page.getByTestId('toggle-sound').click()
+  await expect(page.getByTestId('toggle-sound')).toHaveText('Sound off')
+  await expect(page.getByTestId('toggle-sound')).toHaveAttribute('aria-pressed', 'false')
+
+  // A presentation/audio control can never stop or mutate the simulation.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))
+  const tick = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  expect(tick).toBeGreaterThan(0)
+})
+
+test('keeps the sound control (and its audio voice/cursor reset) working across the second bout', async ({ page }) => {
+  await startSeededFirstBout(page)
+  await finishActiveBout(page)
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
+  // The Sound on/off control survives a bout boundary rather than resetting
+  // to its planning-phase absence -- audio enablement is a session concern,
+  // not a per-bout one (design.md: "Persistence across page loads is out of
+  // scope", but persistence *within* a session across bouts is expected).
+  // `CombatAudio.resetBout()` itself (voices/cursors) is exercised at the
+  // unit level in `CombatAudio.test.ts`; this only proves the surrounding
+  // wiring still functions across a real bout boundary.
+  await expect(page.getByTestId('toggle-sound')).toBeVisible()
+})
+
+test('audio debug: triggers all nine cues via the dev-only ?audioDebug=1 panel without starting a bout', async ({ page }) => {
+  await page.goto('/?audioDebug=1&seed=20260815&snapshot')
+  await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
+  await expect(page.locator('[data-testid="audio-debug"]')).toBeVisible()
+
+  const cues = [
+    'footstep-light',
+    'footstep-heavy',
+    'weapon-whoosh-light',
+    'weapon-whoosh-heavy',
+    'body-hit',
+    'shield-block',
+    'weapon-parry',
+    'stagger',
+    'defeat',
+  ]
+  for (const cue of cues) {
+    await expect(page.getByTestId(`audio-debug-${cue}`)).toBeVisible()
+    await page.getByTestId(`audio-debug-${cue}`).click()
+  }
+
+  await expect.poll(() => page.evaluate(() => window.__GLADIATOR_TEST__.getAudioDebugLog?.())).toEqual(cues)
+  // No bout was ever started by exercising the debug panel.
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getState().phase)).toBe('planning')
+})
+
+/**
+ * Serves the already-built `dist/` output (via Vite's own `preview()` API,
+ * the programmatic equivalent of `npm run preview`) on a dedicated port,
+ * distinct from `tests/global-setup.ts`'s dev server on 4173 -- that global
+ * server always runs with `import.meta.env.DEV` true, so it can never stand
+ * in for "what does a production build actually ship". Requires `dist/` to
+ * already exist (`npm run build`, which `npm run check` always runs before
+ * `test:e2e`); `vite.preview()` itself throws a clear, actionable error
+ * otherwise.
+ */
+async function withProductionPreview<T>(run: (baseUrl: string) => Promise<T>): Promise<T> {
+  const previewPort = 4174
+  const server: PreviewServer = await preview({ preview: { host: '127.0.0.1', port: previewPort, strictPort: true } })
+  try {
+    return await run(`http://127.0.0.1:${previewPort}`)
+  } finally {
+    await server.close()
+  }
+}
+
+test('a production build renders no audio debug UI even with ?audioDebug=1, and exposes no debug test API', async ({ page }) => {
+  await withProductionPreview(async (baseUrl) => {
+    await page.goto(`${baseUrl}/?audioDebug=1&seed=20260815&snapshot`)
+    await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
+    await expect(page.locator('[data-testid="audio-debug"]')).toHaveCount(0)
+
+    const debugSurface = await page.evaluate(() => ({
+      triggerAudioCue: typeof window.__GLADIATOR_TEST__.triggerAudioCue,
+      getAudioDebugLog: typeof window.__GLADIATOR_TEST__.getAudioDebugLog,
+      renderActiveBattleAtAlpha: typeof window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha,
+    }))
+    expect(debugSurface).toEqual({
+      triggerAudioCue: 'undefined',
+      getAudioDebugLog: 'undefined',
+      renderActiveBattleAtAlpha: 'undefined',
+    })
+  })
 })

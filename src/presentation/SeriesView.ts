@@ -11,8 +11,9 @@ export type SeriesIntent =
   | { type: 'rematch' }
   | { type: 'toggle-pause' }
   | { type: 'set-speed'; speed: 1 | 2 | 4 }
+  | { type: 'toggle-sound' }
 
-export interface RuntimeViewState { paused: boolean; speed: 1 | 2 | 4 }
+export interface RuntimeViewState { paused: boolean; speed: 1 | 2 | 4; soundEnabled: boolean }
 
 const BOUT_NUMERALS = ['I', 'II', 'III'] as const
 const RC = { enDash: '\u2013', middleDot: '\u00b7', times: '\u00d7', arrow: '\u2192', emDash: '\u2014' }
@@ -148,6 +149,9 @@ export class SeriesView {
       case 'toggle-pause':
         this.onIntent({ type: 'toggle-pause' })
         return
+      case 'toggle-sound':
+        this.onIntent({ type: 'toggle-sound' })
+        return
       case 'set-speed': {
         const speed = Number(target.dataset.speed)
         if (speed === 1 || speed === 2 || speed === 4) this.onIntent({ type: 'set-speed', speed })
@@ -207,11 +211,12 @@ export class SeriesView {
       return
     }
     const pause = el('button', { class: 'button', type: 'button', 'data-action': 'toggle-pause', 'data-testid': 'toggle-pause', 'aria-pressed': String(runtime.paused) }, runtime.paused ? 'Resume' : 'Pause')
+    const sound = el('button', { class: 'button', type: 'button', 'data-action': 'toggle-sound', 'data-testid': 'toggle-sound', 'aria-pressed': String(runtime.soundEnabled) }, runtime.soundEnabled ? 'Sound on' : 'Sound off')
     const group = el('div', { class: 'speed-control', role: 'group', 'aria-label': 'Bout speed' })
     for (const speed of [1, 2, 4] as const) {
       group.append(el('button', { class: 'button speed-control__button', type: 'button', 'data-action': 'set-speed', 'data-speed': String(speed), 'data-testid': `speed-${speed}`, 'aria-pressed': String(runtime.speed === speed) }, `${RC.times}${speed}`))
     }
-    container.replaceChildren(pause, group)
+    container.replaceChildren(pause, sound, group)
   }
 
   private updateControls(runtime: RuntimeViewState): void {
@@ -221,6 +226,11 @@ export class SeriesView {
     if (pause) {
       pause.textContent = runtime.paused ? 'Resume' : 'Pause'
       pause.setAttribute('aria-pressed', String(runtime.paused))
+    }
+    const sound = container.querySelector<HTMLElement>('[data-action="toggle-sound"]')
+    if (sound) {
+      sound.textContent = runtime.soundEnabled ? 'Sound on' : 'Sound off'
+      sound.setAttribute('aria-pressed', String(runtime.soundEnabled))
     }
     for (const speed of [1, 2, 4] as const) {
       const button = container.querySelector<HTMLElement>(`[data-action="set-speed"][data-speed="${speed}"]`)
