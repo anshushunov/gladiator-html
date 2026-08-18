@@ -92,6 +92,75 @@ test('renders movement-rich encounter combat', async ({ page }) => {
   await expect(page.locator('canvas')).toHaveAttribute('data-rendered-combatants', '2')
 })
 
+test('carries events from every tick in a multi-tick batch to the arena, not just the last', async ({ page }) => {
+  await startSeededFirstBout(page)
+  // A single large `advanceTicks` burst mirrors what happens at x2/x4 speed
+  // (or any render that falls behind): many `stepBattleTick()` calls run
+  // before the one `syncArena()` call that follows. Every event from every
+  // one of those ticks -- not only the final tick's -- must still reach
+  // `ArenaView`'s cursor; a per-tick delta (this task's own self-caught
+  // regression) would silently drop everything but the last tick's slice.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(700))
+
+  const { maxEventId, contactEventCount } = await page.evaluate(() => {
+    const contactTypes = new Set(['damage-dealt', 'attack-blocked', 'attack-parried'])
+    const events = window.__GLADIATOR_TEST__.getState().activeBattle!.events
+    return {
+      maxEventId: Math.max(...events.map((event) => event.id)),
+      contactEventCount: events.filter((event) => contactTypes.has(event.type)).length,
+    }
+  })
+  // Sanity: this seeded run must contain more than one contact-producing
+  // event spread across the batch (not all concentrated on the final tick),
+  // or the assertion below would pass vacuously.
+  expect(contactEventCount).toBeGreaterThan(1)
+
+  const lastEventId = Number(await page.locator('canvas').getAttribute('data-last-event-id'))
+  expect(lastEventId).toBe(maxEventId)
+})
+
+test('replays no new effects when the same tick pair is re-rendered at a different alpha', async ({ page }) => {
+  await startSeededFirstBout(page)
+  // Advance enough ticks that at least one contact-producing event (and
+  // therefore an active contact flash) is essentially guaranteed for this
+  // seeded lineup -- the same tick count used above, and empirically
+  // verified to already contain several by then.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(700))
+
+  const result = await page.evaluate(() => {
+    const getSnapshot = window.__GLADIATOR_TEST__.getArenaDebugSnapshot
+    const renderAtAlpha = window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha
+    if (!getSnapshot || !renderAtAlpha) throw new Error('dev-only arena test API is unavailable')
+
+    const before = getSnapshot()!
+    // Re-render the exact same immutable previous/current pair at two
+    // different alphas -- presentation-only, must never reprocess events.
+    renderAtAlpha(0.1)
+    const afterAlphaLow = getSnapshot()!
+    renderAtAlpha(0.9)
+    const afterAlphaHigh = getSnapshot()!
+    return {
+      eventCursor: before.eventCursor,
+      activeEffectIds: before.activeEffectIds,
+      afterAlphaLow: { eventCursor: afterAlphaLow.eventCursor, activeEffectIds: afterAlphaLow.activeEffectIds },
+      afterAlphaHigh: { eventCursor: afterAlphaHigh.eventCursor, activeEffectIds: afterAlphaHigh.activeEffectIds },
+    }
+  })
+
+  // Sanity: a real flash must actually be active, or "no new flash" would
+  // hold vacuously for both an empty array before and after.
+  expect(result.eventCursor).toBeGreaterThan(0)
+  expect(result.activeEffectIds.length).toBeGreaterThan(0)
+
+  // Same event cursor and the exact same set of active flash IDs (not just
+  // the same count) at both alphas: no event was reprocessed by either
+  // replay, regardless of which alpha it re-rendered at.
+  expect(result.afterAlphaLow.eventCursor).toBe(result.eventCursor)
+  expect(result.afterAlphaLow.activeEffectIds).toEqual(result.activeEffectIds)
+  expect(result.afterAlphaHigh.eventCursor).toBe(result.eventCursor)
+  expect(result.afterAlphaHigh.activeEffectIds).toEqual(result.activeEffectIds)
+})
+
 test('shows a readable fallback and keeps the series running after WebGL context loss', async ({ page }) => {
   await startSeededFirstBout(page)
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))

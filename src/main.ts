@@ -17,7 +17,7 @@ import {
   type SeriesState,
 } from './simulation/series'
 import { TICKS_PER_SECOND, type BattleState } from './simulation/battle'
-import type { CombatantId } from './simulation/encounter'
+import type { CombatantId, EncounterEvent } from './simulation/encounter'
 import type { Vec2 } from './simulation/movement'
 import { formatTraceHash } from './simulation/random'
 
@@ -49,10 +49,16 @@ interface GladiatorTestApi {
 
 /**
  * The runtime's own render-frame bookkeeping: the previous and current
- * simulation tick's immutable `BattleState`, plus the event slice emitted by
- * that single-tick transition. `previous`/`current` are never cloned --
- * unchanged nested catalog/event structures keep structural sharing, and
- * presentation (Tasks 15-18) must never mutate either snapshot.
+ * simulation tick's immutable `BattleState`, plus the *accumulated* event
+ * batch for every tick since `ArenaView` last actually consumed one.
+ * `previous`/`current` are never cloned -- unchanged nested catalog/event
+ * structures keep structural sharing, and presentation (Tasks 15-18) must
+ * never mutate either snapshot. `previous`/`current` are always exactly the
+ * last two *consecutive* ticks (never further apart), matching design.md's
+ * "interpolation remains between the last two actual states" even when
+ * several ticks run before the next render; `events` is the one field that
+ * intentionally spans however many ticks that was -- see `pendingEvents`
+ * and `stepBattleTick` below.
  *
  * `undefined` while no bout is active (planning/summary, or before the first
  * bout starts). `alpha` is deliberately not stored here -- it is a
@@ -86,6 +92,27 @@ const tickDuration = 1 / TICKS_PER_SECOND
 let renderFrame: RenderSnapshot | undefined
 
 /**
+ * Every event emitted by `stepBattleTick` since `syncArena` last actually
+ * handed a batch to `ArenaView` -- appended to there, consumed-and-reset
+ * here. At `x1` this is always exactly one tick's worth (`syncArena` runs
+ * every animation frame, and normally only one tick elapses per frame), but
+ * at `x2`/`x4` speed -- or a test-driven `advanceTicks` burst -- several
+ * `stepBattleTick` calls can happen before the next `syncArena` call, so
+ * this accumulates across all of them rather than only keeping the latest.
+ * This is what keeps `RenderSnapshot.events` a *bounded per-render batch*
+ * (design.md: "a future mass renderer consumes event batches and chooses
+ * its own bounded presentation window") rather than `BattleState`'s own
+ * unboundedly-growing whole-bout log -- handing `ArenaView` that full log
+ * every call would also be technically safe (its own event cursor
+ * de-duplicates regardless of how much redundant history it's handed), but
+ * abandons that bounded-batch shape for an ever-larger rescan on every
+ * rendered frame for the rest of the bout, which is the wrong shape for
+ * exactly the mass-caller future `ArenaCamera`'s target-array signature
+ * already anticipates.
+ */
+let pendingEvents: EncounterEvent[] = []
+
+/**
  * Bout lifecycle boundary: (re)initializes both render snapshots to the
  * given battle's current tick (tick 0 for a freshly created battle), with an
  * empty event batch -- or clears them entirely when no battle is active
@@ -96,21 +123,17 @@ let renderFrame: RenderSnapshot | undefined
  */
 function resetRenderFrame(battle: BattleState | undefined): void {
   renderFrame = battle ? { previous: battle, current: battle, events: [] } : undefined
+  pendingEvents = []
 }
 
 /**
  * Advances the active battle by exactly one fixed simulation tick, assigning
  * the pre-tick battle state to `previous` and the post-tick state to
- * `current`. `events` is `current.events` -- `BattleState`'s own complete,
- * append-only event log for the whole bout so far (`battle.ts`), not a
- * single-tick delta: at `x2`/`x4` speed (or a test-driven `advanceTicks`
- * burst), several ticks can run per `syncArena()` call, so a delta slice of
- * only the *latest* tick would silently drop every event from the ticks in
- * between. `ArenaView` already de-duplicates by its own monotonic event
- * cursor (brief resolution #5), so handing it the full log every call is
- * exactly what the previous side-keyed renderer did too -- safe, just
- * re-skipping already-seen IDs -- and is what actually makes every event
- * reach it at any render rate or speed multiplier.
+ * `current`, and appending that single tick's own new-event slice onto
+ * `pendingEvents` (never replacing it) -- see `pendingEvents`'s own doc
+ * comment for why accumulating, not overwriting, is what actually gets
+ * every tick's events to `ArenaView` regardless of how many ticks run
+ * before the next render.
  *
  * A no-op (series and renderFrame both untouched) whenever there is no
  * active bout to advance.
@@ -123,7 +146,8 @@ function stepBattleTick(): void {
   series = nextSeries
   const currentBattle = series.activeBattle
   if (previousBattle && currentBattle && currentBattle !== previousBattle) {
-    renderFrame = { previous: previousBattle, current: currentBattle, events: currentBattle.events }
+    pendingEvents.push(...currentBattle.events.slice(previousBattle.events.length))
+    renderFrame = { previous: previousBattle, current: currentBattle, events: pendingEvents }
   }
 }
 
@@ -182,6 +206,10 @@ function handleArenaPhaseChange(): void {
 function syncArena(): void {
   if (renderFrame && (series.phase === 'fighting' || series.phase === 'between-bouts')) {
     arenaView.sync({ ...renderFrame, alpha: currentAlpha() })
+    // Consumed: the next accumulation window (`pendingEvents`) starts empty,
+    // keeping every batch handed to `ArenaView` bounded to "since last
+    // render" rather than growing across the whole bout.
+    pendingEvents = []
   }
 }
 

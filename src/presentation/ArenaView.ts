@@ -452,21 +452,38 @@ export class ArenaView {
    * dev-only `renderActiveBattleAtAlpha`, or a duplicate `sync()` call with
    * the same batch) never replays a contact flash or recognition-flinch
    * trigger twice (brief resolution #5).
+   *
+   * A guard-blocked hit always emits *both* `attack-blocked` and
+   * `damage-dealt` for the same `actionInstanceId` (`encounter.ts`'s
+   * contact resolution pushes them back-to-back, same tick, same
+   * `contactZone: 'shield'`, same `contactPoint`) -- spawning a flash for
+   * each would burn both of `shield`'s pool slots on two overlapping
+   * flashes at the identical place and moment, for the exact exchange human
+   * reviewers are asked to read as "a block". `blockedInstanceIds` (scoped
+   * to this one call/batch, since a resolution's paired events can never be
+   * split across two different batches -- they're emitted atomically on the
+   * same tick) lets the `damage-dealt` branch skip its flash whenever this
+   * same batch already spawned one for the paired `attack-blocked`.
    */
   private processNewEvents(events: readonly EncounterEvent[], reducedMotion: boolean, nowMs: number): void {
+    const blockedInstanceIds = new Set<string>()
+
     for (const event of events) {
       if (event.id <= this.eventCursor) continue
       this.eventCursor = event.id
 
       switch (event.type) {
         case 'attack-blocked':
+          blockedInstanceIds.add(event.actionInstanceId)
           if (!reducedMotion) this.flashes.spawn('shield', event.contactPoint, nowMs)
           break
         case 'attack-parried':
           if (!reducedMotion) this.flashes.spawn('weapon', event.contactPoint, nowMs)
           break
         case 'damage-dealt':
-          if (!reducedMotion) this.flashes.spawn(event.contactZone, event.contactPoint, nowMs)
+          if (!reducedMotion && !blockedInstanceIds.has(event.actionInstanceId)) {
+            this.flashes.spawn(event.contactZone, event.contactPoint, nowMs)
+          }
           break
         case 'defense-declined': {
           const rig = this.rigs.get(event.defenderId)
