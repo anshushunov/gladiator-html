@@ -255,7 +255,16 @@ function createTrail(): { geometry: THREE.BufferGeometry; material: THREE.LineBa
 // ---------------------------------------------------------------------------
 
 export class ArenaView {
-  private readonly renderer: THREE.WebGLRenderer
+  /**
+   * `undefined` only when construction itself failed (final-review fix #2:
+   * no WebGL context could be created at all) -- every other field below is
+   * still built normally in that case (they need no live GL context to
+   * construct), so `contextLost` is the single source of truth for whether
+   * rendering is possible; `this.renderer` and `this.contextLost` are always
+   * set together, so every read site below that is already guarded by
+   * `!this.contextLost` (or returns early on it) can safely non-null-assert.
+   */
+  private readonly renderer: THREE.WebGLRenderer | undefined
   private readonly scene = new THREE.Scene()
   private readonly perspectiveCamera = new THREE.PerspectiveCamera(CAMERA_FOV_DEGREES, 1, CAMERA_NEAR, CAMERA_FAR)
   private readonly arenaCamera = new ArenaCamera({ minDistance: CAMERA_MIN_DISTANCE, maxDistance: CAMERA_MAX_DISTANCE })
@@ -290,9 +299,24 @@ export class ArenaView {
   declare getDebugSnapshot?: () => ArenaDebugSnapshot
 
   constructor(private readonly canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    this.renderer.shadowMap.enabled = true
+    try {
+      this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+      this.renderer.shadowMap.enabled = true
+    } catch {
+      // Final-review fix #2: no WebGL context could be created at all (e.g. a
+      // browser/session with WebGL disabled entirely) -- `new
+      // THREE.WebGLRenderer(...)` throws in that case, and this constructor
+      // runs unguarded at `main.ts` module top level, so letting it propagate
+      // took the whole app down before `renderDom()`/the first
+      // `requestAnimationFrame` ever ran (no series controls, nothing).
+      // Enter exactly the state `handleContextLost` already produces for a
+      // context lost *after* construction -- `contextLost = true`, canvas
+      // hidden, fallback text shown -- rather than adding a second failure
+      // mode every other method would need to learn about.
+      this.renderer = undefined
+      this.contextLost = true
+    }
     this.scene.background = new THREE.Color(0x16131a)
     this.scene.fog = new THREE.Fog(0x16131a, 14, 24)
 
@@ -305,6 +329,11 @@ export class ArenaView {
     this.resize()
 
     this.canvas.addEventListener('webglcontextlost', this.handleContextLost, false)
+
+    if (this.contextLost) {
+      this.canvas.hidden = true
+      this.showFallback()
+    }
 
     if (import.meta.env.DEV) {
       this.renderActiveBattleAtAlpha = (alpha: number): void => {
@@ -378,7 +407,7 @@ export class ArenaView {
     for (const rig of this.rigs.values()) this.disposeRig(rig)
     this.rigs.clear()
     this.flashes.dispose(this.scene)
-    if (!this.contextLost) this.renderer.dispose()
+    if (!this.contextLost) this.renderer?.dispose()
     if (this.fallbackElement) {
       this.fallbackElement.remove()
       this.fallbackElement = null
@@ -447,7 +476,10 @@ export class ArenaView {
     this.applyCameraTransform(cameraState)
 
     this.flashes.update(nowMs)
-    this.renderer.render(this.scene, this.perspectiveCamera)
+    // Non-null: this method returns early on `this.contextLost` above, and
+    // `this.renderer`/`this.contextLost` are always set together (see the
+    // field's own doc comment).
+    this.renderer!.render(this.scene, this.perspectiveCamera)
 
     if (this.activeBoutIndex !== undefined) this.canvas.dataset.activeBoutIndex = String(this.activeBoutIndex)
     this.canvas.dataset.lastEventId = String(this.eventCursor)
@@ -653,7 +685,7 @@ export class ArenaView {
     for (const rig of this.rigs.values()) this.disposeRig(rig)
     this.rigs.clear()
     this.flashes.dispose(this.scene)
-    this.renderer.dispose()
+    this.renderer?.dispose()
 
     this.canvas.hidden = true
     this.showFallback()
@@ -697,12 +729,15 @@ export class ArenaView {
   }
 
   private resize(): void {
+    if (this.contextLost) return
     const width = this.canvas.clientWidth
     const height = this.canvas.clientHeight
     if (!width || !height) return
     this.perspectiveCamera.aspect = width / height
     this.perspectiveCamera.updateProjectionMatrix()
-    this.renderer.setSize(width, height, false)
+    // Non-null: guarded by the `contextLost` return above -- see
+    // `this.renderer`'s own doc comment for the paired-invariant this relies on.
+    this.renderer!.setSize(width, height, false)
   }
 }
 

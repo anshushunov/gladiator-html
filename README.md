@@ -88,12 +88,16 @@ npx playwright test tests/combat-visuals.spec.ts --update-snapshots
 
 ## Dev-only отладка
 
-В dev-режиме (`import.meta.env.DEV`; полностью вырезается из production-сборки) доступны:
+Весь `window.__GLADIATOR_TEST__` — включая базовый командный/инспекционный API (`getState`, `assign`/`unassign`/`confirm`, `advanceTicks`, `startNextBout`, `rematch`, `getActiveBattleTraceHash`, `getActiveCombatantPositions`, `getRenderDebugState`), а не только расширения ниже — существует только в dev-режиме (`import.meta.env.DEV`; полностью вырезается из production-сборки статически, проверено сборкой + поиском по бандлу). `?snapshot` (стартует серию на паузе, для стабильного первого кадра в Playwright-фикстурах) читается тем же способом и тоже не действует в production. `tests/global-setup.ts` всегда поднимает dev-сервер Vite, поэтому продакшен-сборке ничего из этого не нужно.
+
+Также в dev-режиме доступны:
 
 - `window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha(alpha)` / `.getArenaDebugSnapshot()` — рендер на произвольной альфе и числовой снапшот сцены (позиции корней ригов, конечность всех joint-трансформов, активные ID вспышек контакта, состояние камеры, курсор событий) для тестов без модификации самой симуляции.
+- `window.__GLADIATOR_TEST__.getAudioEventCursor()` — читает собственный курсор событий `CombatAudio`, независимо от `?audioDebug=1`.
+- `window.__GLADIATOR_TEST__.forcePresentationThrowOnce()` — форсирует однократный throw в презентационном шаге следующего кадра, чтобы тест мог проверить, что такой сбой отключает только рендер (`getRenderDebugState().presentationDisabled`), а не продвижение тиков симуляции.
 - `?audioDebug=1` — панель из девяти кнопок, по одной на каждый `CombatCue`, воспроизводящих звук напрямую через реальный бэкенд, не запуская бой. `window.__GLADIATOR_TEST__.getAudioDebugLog()` возвращает список уже проигранных cue — для тестов без реального аудио-железа.
 
-Оба вырезаны из production-сборки статически (проверено сборкой + поиском по бандлу); `?audioDebug=1` в production ничего не показывает и не создаёт debug test API.
+`?audioDebug=1` в production ничего не показывает и не создаёт debug test API (как и весь остальной test API выше).
 
 ## Human review
 

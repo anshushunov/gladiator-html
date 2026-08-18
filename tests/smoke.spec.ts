@@ -297,14 +297,35 @@ test('renders movement-rich encounter combat', async ({ page }) => {
 })
 
 test('carries events from every tick in a multi-tick batch to the arena, not just the last', async ({ page }) => {
-  await startSeededFirstBout(page)
   // A single large `advanceTicks` burst mirrors what happens at x2/x4 speed
   // (or any render that falls behind): many `stepBattleTick()` calls run
   // before the one `syncArena()` call that follows. Every event from every
   // one of those ticks -- not only the final tick's -- must still reach
   // `ArenaView`'s cursor; a per-tick delta (this task's own self-caught
   // regression) would silently drop everything but the last tick's slice.
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(700))
+  await startSeededFirstBout(page)
+  const burstLastEventId = await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.advanceTicks(700)
+    return document.querySelector('canvas')!.getAttribute('data-last-event-id')
+  })
+
+  // Final-review fix #7: comparing the burst's own `data-last-event-id`
+  // against `maxEventId` read from that SAME burst's final state (the
+  // original assertion below) only actually catches a per-tick-delta
+  // regression when tick 700 itself happens to emit an event -- otherwise
+  // `maxEventId` legitimately comes from an earlier tick and the comparison
+  // passes vacuously even under the regression. Re-running the identical
+  // seeded bout via 700 single-tick `advanceTicks(1)` calls instead -- which
+  // forces a `syncArena()`/cursor update after every tick, the known-correct
+  // behaviour regardless of what any individual tick emits -- and comparing
+  // its own `data-last-event-id` against the burst's discriminates
+  // regardless of which tick actually carries the max event id.
+  await startSeededFirstBout(page)
+  const perTickLastEventId = await page.evaluate(() => {
+    for (let step = 0; step < 700; step += 1) window.__GLADIATOR_TEST__.advanceTicks(1)
+    return document.querySelector('canvas')!.getAttribute('data-last-event-id')
+  })
+  expect(burstLastEventId).toBe(perTickLastEventId)
 
   const { maxEventId, contactEventCount } = await page.evaluate(() => {
     const contactTypes = new Set(['damage-dealt', 'attack-blocked', 'attack-parried'])
@@ -316,11 +337,12 @@ test('carries events from every tick in a multi-tick batch to the arena, not jus
   })
   // Sanity: this seeded run must contain more than one contact-producing
   // event spread across the batch (not all concentrated on the final tick),
-  // or the assertion below would pass vacuously.
+  // or the comparison above would be weaker than intended.
   expect(contactEventCount).toBeGreaterThan(1)
-
-  const lastEventId = Number(await page.locator('canvas').getAttribute('data-last-event-id'))
-  expect(lastEventId).toBe(maxEventId)
+  // The per-tick run (known-correct) really does end up at the batch's true
+  // max event id, so the equality above is actually pinning the burst to the
+  // right value, not just to itself.
+  expect(Number(perTickLastEventId)).toBe(maxEventId)
 })
 
 test('replays no new effects when the same tick pair is re-rendered at a different alpha', async ({ page }) => {
@@ -395,6 +417,101 @@ test('shows a readable fallback and keeps the series running after WebGL context
   await expect(page.locator('canvas')).toBeHidden()
 })
 
+// ---------------------------------------------------------------------------
+// Final-review fix #2: `new ArenaView(canvas)` runs unguarded at `main.ts`
+// module top level, and its constructor's first statement used to be `new
+// THREE.WebGLRenderer(...)`, which throws when no WebGL context can be
+// created at all -- a strictly earlier failure than `webglcontextlost`
+// (tested above), which only covers a context lost *after* a working one was
+// already constructed. Before the fix this took the whole app down before
+// `renderDom()`/the first `requestAnimationFrame` ever ran, so nothing --
+// not even the planning screen -- ever appeared.
+// ---------------------------------------------------------------------------
+
+test('falls back gracefully instead of crashing when WebGL is unavailable at startup', async ({ page }) => {
+  // Makes `HTMLCanvasElement.getContext` return `null` for every WebGL
+  // context type before the app's own module-scope code runs, so
+  // `THREE.WebGLRenderer`'s constructor hits exactly the "no context at all"
+  // failure this fix guards -- installed via `addInitScript` so it is in
+  // place before Vite's bundle even starts executing on navigation.
+  await page.addInitScript(() => {
+    const originalGetContext = HTMLCanvasElement.prototype.getContext
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(HTMLCanvasElement.prototype as any).getContext = function (this: HTMLCanvasElement, type: string, ...args: unknown[]) {
+      if (typeof type === 'string' && type.toLowerCase().includes('webgl')) return null
+      return (originalGetContext as (...a: unknown[]) => unknown).apply(this, [type, ...args])
+    }
+  })
+
+  await page.goto('/?seed=20260815&snapshot')
+
+  // The app boots normally -- planning screen and controls -- despite zero
+  // WebGL from the very first frame. `#battle-ui` (the fallback text's own
+  // ancestor) is only unhidden once a bout starts (`SeriesView.render`), so
+  // the fallback's own visibility is checked after that below, matching how
+  // the mid-session context-loss test above orders its assertions.
+  await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
+
+  await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.assign('aquila', 0)
+    window.__GLADIATOR_TEST__.assign('nerva', 1)
+    window.__GLADIATOR_TEST__.assign('brutus', 2)
+    window.__GLADIATOR_TEST__.confirm()
+  })
+  await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'fighting')
+  await expect(page.locator('.arena__webgl-fallback')).toBeVisible()
+  await expect(page.locator('canvas')).toBeHidden()
+
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))
+  const tick = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  expect(tick).toBeGreaterThan(0)
+  await expect(page.locator('.arena__webgl-fallback')).toBeVisible()
+})
+
+// ---------------------------------------------------------------------------
+// Final-review fix #1: `requestAnimationFrame(frame)` used to be `frame()`'s
+// last statement, with the whole `syncArena()` -> `ArenaView.sync()` ->
+// pose sampling/IK/`renderer.render`/`combatAudio.consume` path unguarded --
+// any throw there skipped the reschedule and silently stopped every future
+// frame (and therefore every future simulation tick) forever.
+// ---------------------------------------------------------------------------
+
+test('a throwing presentation frame latches a disabled-presentation flag but never stops tick advancement', async ({ page }) => {
+  // Unpaused (no `&snapshot`) so the real `requestAnimationFrame` loop drives
+  // ticks from real wall-clock time, not test-driven `advanceTicks` bursts --
+  // this is specifically about `frame()`'s own real rAF loop surviving a
+  // presentation throw, not about the `advanceTicks` code path (which never
+  // goes through `frame()` at all).
+  await page.goto('/?seed=20260815')
+  await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.assign('aquila', 0)
+    window.__GLADIATOR_TEST__.assign('nerva', 1)
+    window.__GLADIATOR_TEST__.assign('brutus', 2)
+    window.__GLADIATOR_TEST__.confirm()
+  })
+  await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'fighting')
+
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState().presentationDisabled)).toBe(false)
+
+  await page.evaluate(() => window.__GLADIATOR_TEST__.forcePresentationThrowOnce!())
+  // Let the forced throw actually happen on a real animation frame, and a
+  // few more real frames run after it.
+  await page.waitForTimeout(200)
+
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState().presentationDisabled)).toBe(true)
+
+  const tickAfterDisable = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  expect(tickAfterDisable).toEqual(expect.any(Number))
+
+  // Ticks keep advancing from real wall-clock time even though presentation
+  // stays latched off -- the failure never re-throws (a real frame already
+  // ran since it fired) and never stops the simulation loop above it.
+  await page.waitForTimeout(200)
+  const tickLater = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  expect(tickLater).toBeGreaterThan(tickAfterDisable as number)
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState().presentationDisabled)).toBe(true)
+})
+
 test('plays three bouts, reports a 2–1 win, and rematches the same seed', async ({ page }) => {
   // A stats-led ordering, deliberately NOT the all-counter one. Under Task 13's
   // final balance the all-counter lineup (Brutus->Drusus, Aquila->Cassius,
@@ -421,6 +538,49 @@ test('plays three bouts, reports a 2–1 win, and rematches the same seed', asyn
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeFocused()
   await expect(page.getByTestId('confirm-lineup')).toBeDisabled()
   expect(new URL(page.url()).searchParams.get('seed')).toBe('20260815')
+})
+
+// ---------------------------------------------------------------------------
+// Final-review fix #3: `series.ts` flips `phase` straight from `fighting` to
+// `summary` on the very tick the series-ending (third) bout resolves, unlike
+// bouts 1/2 which always land in `between-bouts` first. `syncArena`'s gate
+// only forwarded batches while `fighting`/`between-bouts`, so the third
+// bout's final `damage-dealt`/`fighter-staggered`/`fighter-defeated`/
+// `encounter-finished` batch never reached `ArenaView`/`CombatAudio` --
+// every series ended with the arena vanishing mid-killing-blow and no defeat
+// sound.
+// ---------------------------------------------------------------------------
+
+test('flushes the series-ending bout\'s final event batch to audio instead of dropping it', async ({ page }) => {
+  await page.goto('/?seed=20260815&snapshot')
+  await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.assign('aquila', 0)
+    window.__GLADIATOR_TEST__.assign('brutus', 1)
+    window.__GLADIATOR_TEST__.assign('nerva', 2)
+    window.__GLADIATOR_TEST__.confirm()
+  })
+  for (let bout = 0; bout < 3; bout += 1) {
+    await finishActiveBout(page)
+    if (bout < 2) await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
+  }
+  await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'summary')
+
+  const { finalEvents, audioCursor } = await page.evaluate(() => ({
+    finalEvents: window.__GLADIATOR_TEST__.getState().activeBattle!.events,
+    audioCursor: window.__GLADIATOR_TEST__.getAudioEventCursor!(),
+  }))
+  // Sanity: the finished battle's own event log really does end with the
+  // killing-blow batch, or the cursor comparison below would hold vacuously.
+  expect(finalEvents.some((event) => event.type === 'fighter-defeated' || event.type === 'encounter-finished')).toBe(true)
+
+  const maxEventId = Math.max(...finalEvents.map((event) => event.id))
+  // Before the fix, this cursor stayed stuck below the finished battle's own
+  // max event id -- the third bout's final batch (landing on the exact tick
+  // that flips `phase` to `summary`) never reached `CombatAudio.consume`, so
+  // the defeat cue that bouts 1/2 both play never fired for bout 3. It must
+  // now exactly match, proving every event -- including the last one --
+  // actually reached `CombatAudio`.
+  expect(audioCursor).toBe(maxEventId)
 })
 
 test('reports school defeat in the summary heading for a losing lineup', async ({ page }) => {
@@ -617,27 +777,41 @@ async function withProductionPreview<T>(run: (baseUrl: string) => Promise<T>): P
   }
 }
 
-test('a production build renders no audio debug UI even with ?audioDebug=1, and exposes no debug test API', async ({ page }) => {
+test('a production build renders no audio debug UI even with ?audioDebug=1, and exposes no test API at all (base or debug)', async ({ page }) => {
   await withProductionPreview(async (baseUrl) => {
     await page.goto(`${baseUrl}/?audioDebug=1&seed=20260815&snapshot`)
     await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
     await expect(page.locator('[data-testid="audio-debug"]')).toHaveCount(0)
 
-    const debugSurface = await page.evaluate(() => ({
-      triggerAudioCue: typeof window.__GLADIATOR_TEST__.triggerAudioCue,
-      getAudioDebugLog: typeof window.__GLADIATOR_TEST__.getAudioDebugLog,
-      renderActiveBattleAtAlpha: typeof window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha,
-      // Task 19 additions -- same dev-only gate, so a production build must
-      // drop these exactly like the pre-existing surfaces above.
-      getArenaDebugSnapshot: typeof window.__GLADIATOR_TEST__.getArenaDebugSnapshot,
-      getAudioEventCursor: typeof window.__GLADIATOR_TEST__.getAudioEventCursor,
-    }))
-    expect(debugSurface).toEqual({
-      triggerAudioCue: 'undefined',
-      getAudioDebugLog: 'undefined',
-      renderActiveBattleAtAlpha: 'undefined',
-      getArenaDebugSnapshot: 'undefined',
-      getAudioEventCursor: 'undefined',
-    })
+    // Final-review fix #4: the base command/inspection API
+    // (`getState`/`assign`/`advanceTicks`/etc.) used to be assigned
+    // unconditionally, so this test previously only checked the dev-only
+    // *extensions* on top of it. The whole surface is dev-only now --
+    // `window.__GLADIATOR_TEST__` itself is `undefined` in a production
+    // build, not merely missing individual fields.
+    const testApiType = await page.evaluate(() => typeof window.__GLADIATOR_TEST__)
+    expect(testApiType).toBe('undefined')
+  })
+})
+
+test('a production build ignores ?snapshot and never starts a real session paused', async ({ page }) => {
+  await withProductionPreview(async (baseUrl) => {
+    // Final-review fix #4: `?snapshot` (pauses on load, for stable Playwright
+    // fixtures) used to be read unconditionally, making it a production-
+    // reachable URL param that could silently start a real player's session
+    // paused. No test API is available in production (see the test above),
+    // so this plays the lineup through real DOM clicks and confirms the
+    // canvas's own `data-last-event-id` attribute keeps climbing over real
+    // wall-clock time -- proving ticks are not stuck paused.
+    await page.goto(`${baseUrl}/?seed=20260815&snapshot`)
+    for (const [fighterId, boutIndex] of [['aquila', 0], ['nerva', 1], ['brutus', 2]] as const) {
+      await page.getByTestId(`fighter-${fighterId}`).click()
+      await page.getByTestId(`slot-${boutIndex}`).click()
+    }
+    await page.getByTestId('confirm-lineup').click()
+    await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'fighting')
+
+    const canvas = page.locator('canvas')
+    await expect.poll(async () => Number(await canvas.getAttribute('data-last-event-id'))).toBeGreaterThan(0)
   })
 })
