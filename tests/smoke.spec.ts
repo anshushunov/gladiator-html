@@ -83,6 +83,45 @@ test('resets arena presentation for the second bout', async ({ page }) => {
   await expect.poll(async () => Number(await canvas.getAttribute('data-last-event-id'))).toBeGreaterThan(0)
 })
 
+test('renders movement-rich encounter combat', async ({ page }) => {
+  await startSeededFirstBout(page)
+  const before = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveCombatantPositions())
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(600))
+  const after = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveCombatantPositions())
+  expect(after).not.toEqual(before)
+  await expect(page.locator('canvas')).toHaveAttribute('data-rendered-combatants', '2')
+})
+
+test('shows a readable fallback and keeps the series running after WebGL context loss', async ({ page }) => {
+  await startSeededFirstBout(page)
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))
+
+  const tickBefore = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  expect(tickBefore).toEqual(expect.any(Number))
+
+  await page.evaluate(() => {
+    document.querySelector('canvas')!.dispatchEvent(new Event('webglcontextlost'))
+  })
+
+  await expect(page.locator('.arena__webgl-fallback')).toBeVisible()
+  await expect(page.locator('canvas')).toBeHidden()
+
+  // The series and runtime continue after the presentation failure: ticks
+  // still advance, and the fallback stays up rather than crashing the page.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))
+  const tickAfter = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  expect(tickAfter).toBeGreaterThan(tickBefore as number)
+  await expect(page.locator('.arena__webgl-fallback')).toBeVisible()
+
+  // A later bout boundary must not silently re-show the disposed canvas or
+  // rebuild rigs against it -- the fallback owns the arena for the rest of
+  // the session (no context-loss recovery is attempted).
+  await finishActiveBout(page)
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
+  await expect(page.locator('.arena__webgl-fallback')).toBeVisible()
+  await expect(page.locator('canvas')).toBeHidden()
+})
+
 test('plays three bouts, reports a 2–1 win, and rematches the same seed', async ({ page }) => {
   // A stats-led ordering, deliberately NOT the all-counter one. Under Task 13's
   // final balance the all-counter lineup (Brutus->Drusus, Aquila->Cassius,

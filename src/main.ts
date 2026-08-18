@@ -1,5 +1,5 @@
 import './style.css'
-import { ArenaView } from './presentation/ArenaView'
+import { ArenaView, type ArenaDebugSnapshot, type BattleRenderFrame } from './presentation/ArenaView'
 import { SeriesView, type RuntimeViewState, type SeriesIntent } from './presentation/SeriesView'
 import { COMBAT_STYLES } from './content/combatStyles'
 import { homeRoster, opponents } from './content/mvpSeries'
@@ -16,8 +16,8 @@ import {
   type SeriesCommandResult,
   type SeriesState,
 } from './simulation/series'
-import { fighterBySide, TICKS_PER_SECOND, type BattleState } from './simulation/battle'
-import type { CombatantId, EncounterEvent } from './simulation/encounter'
+import { TICKS_PER_SECOND, type BattleState } from './simulation/battle'
+import type { CombatantId } from './simulation/encounter'
 import type { Vec2 } from './simulation/movement'
 import { formatTraceHash } from './simulation/random'
 
@@ -41,6 +41,10 @@ interface GladiatorTestApi {
   getActiveBattleTraceHash(): string | null
   getActiveCombatantPositions(): Readonly<Record<CombatantId, Vec2>>
   getRenderDebugState(): Readonly<RenderDebugState>
+  /** Dev-only (`import.meta.env.DEV`); absent from production builds -- see `ArenaView.renderActiveBattleAtAlpha`. */
+  renderActiveBattleAtAlpha?(alpha: number): void
+  /** Dev-only (`import.meta.env.DEV`); absent from production builds -- see `ArenaView.getDebugSnapshot`. */
+  getArenaDebugSnapshot?(): ArenaDebugSnapshot | null
 }
 
 /**
@@ -51,13 +55,13 @@ interface GladiatorTestApi {
  * presentation (Tasks 15-18) must never mutate either snapshot.
  *
  * `undefined` while no bout is active (planning/summary, or before the first
- * bout starts).
+ * bout starts). `alpha` is deliberately not stored here -- it is a
+ * presentation clock value, recomputed fresh every `syncArena()` call and
+ * merged in only when actually building the `BattleRenderFrame` `ArenaView`
+ * consumes (see `syncArena` below), so a tick boundary (which replaces this
+ * snapshot) is never confused with an alpha update (which does not).
  */
-interface BattleRenderFrame {
-  previous: BattleState
-  current: BattleState
-  events: readonly EncounterEvent[]
-}
+type RenderSnapshot = Omit<BattleRenderFrame, 'alpha'>
 
 const url = new URL(window.location.href)
 const seed = resolveSeriesSeed(url)
@@ -78,8 +82,8 @@ let lastRenderedSeries: SeriesState = series
 let accumulator = 0
 const tickDuration = 1 / TICKS_PER_SECOND
 
-/** `undefined` whenever no bout is active; see `BattleRenderFrame`'s doc comment. */
-let renderFrame: BattleRenderFrame | undefined
+/** `undefined` whenever no bout is active; see `RenderSnapshot`'s doc comment. */
+let renderFrame: RenderSnapshot | undefined
 
 /**
  * Bout lifecycle boundary: (re)initializes both render snapshots to the
@@ -97,9 +101,19 @@ function resetRenderFrame(battle: BattleState | undefined): void {
 /**
  * Advances the active battle by exactly one fixed simulation tick, assigning
  * the pre-tick battle state to `previous` and the post-tick state to
- * `current`, and retaining only that transition's new event slice. A no-op
- * (series and renderFrame both untouched) whenever there is no active bout
- * to advance.
+ * `current`. `events` is `current.events` -- `BattleState`'s own complete,
+ * append-only event log for the whole bout so far (`battle.ts`), not a
+ * single-tick delta: at `x2`/`x4` speed (or a test-driven `advanceTicks`
+ * burst), several ticks can run per `syncArena()` call, so a delta slice of
+ * only the *latest* tick would silently drop every event from the ticks in
+ * between. `ArenaView` already de-duplicates by its own monotonic event
+ * cursor (brief resolution #5), so handing it the full log every call is
+ * exactly what the previous side-keyed renderer did too -- safe, just
+ * re-skipping already-seen IDs -- and is what actually makes every event
+ * reach it at any render rate or speed multiplier.
+ *
+ * A no-op (series and renderFrame both untouched) whenever there is no
+ * active bout to advance.
  */
 function stepBattleTick(): void {
   const previousSeries = series
@@ -109,8 +123,15 @@ function stepBattleTick(): void {
   series = nextSeries
   const currentBattle = series.activeBattle
   if (previousBattle && currentBattle && currentBattle !== previousBattle) {
-    renderFrame = { previous: previousBattle, current: currentBattle, events: currentBattle.events.slice(previousBattle.events.length) }
+    renderFrame = { previous: previousBattle, current: currentBattle, events: currentBattle.events }
   }
+}
+
+function currentAlpha(): number {
+  const raw = accumulator / tickDuration
+  if (raw < 0) return 0
+  if (raw > 1) return 1
+  return raw
 }
 
 function applyIntent(intent: SeriesIntent): void {
@@ -150,8 +171,7 @@ function renderDom(): void {
 function handleArenaPhaseChange(): void {
   if (series.phase === 'fighting') {
     if (series.activeBoutIndex !== null && series.activeBoutIndex !== lastActiveBoutIndex && series.activeBattle) {
-      const battle = series.activeBattle
-      arenaView.startBout(series.activeBoutIndex, fighterBySide(battle, 'home').definition, fighterBySide(battle, 'away').definition)
+      arenaView.startBout(series.activeBoutIndex, series.activeBattle)
     }
   } else if (series.phase === 'planning' || series.phase === 'summary') {
     arenaView.clearBout()
@@ -160,8 +180,9 @@ function handleArenaPhaseChange(): void {
 }
 
 function syncArena(): void {
-  const battle = series.activeBattle
-  if (battle && (series.phase === 'fighting' || series.phase === 'between-bouts')) arenaView.sync(battle)
+  if (renderFrame && (series.phase === 'fighting' || series.phase === 'between-bouts')) {
+    arenaView.sync({ ...renderFrame, alpha: currentAlpha() })
+  }
 }
 
 function frame(now: number): void {
@@ -237,7 +258,12 @@ window.__GLADIATOR_TEST__ = {
   getRenderDebugState: () => ({
     previousTick: renderFrame ? renderFrame.previous.encounter.tick : null,
     currentTick: renderFrame ? renderFrame.current.encounter.tick : null,
-    alpha: accumulator / tickDuration,
+    alpha: currentAlpha(),
     paused: runtime.paused,
   }),
+}
+
+if (import.meta.env.DEV) {
+  window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha = (alpha) => arenaView.renderActiveBattleAtAlpha?.(alpha)
+  window.__GLADIATOR_TEST__.getArenaDebugSnapshot = () => arenaView.getDebugSnapshot?.() ?? null
 }
