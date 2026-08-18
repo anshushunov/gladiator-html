@@ -3,7 +3,14 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './tests',
   globalSetup: './tests/global-setup.ts',
-  snapshotPathTemplate: '{testDir}/__screenshots__/{arg}{ext}',
+  // Baselines are per-OS. Font rasterization, antialiasing and the WebGL
+  // backend all differ between a developer's Windows machine and the Linux
+  // runner CI uses: the planning snapshot alone measured ~2.2% differing
+  // pixels across the two, which is far past any tolerance that still catches
+  // a real pose regression. One shared baseline can therefore only ever be
+  // green on the machine that captured it -- `{platform}` gives each OS its
+  // own, and `npm run test:e2e:update` on that OS is what authors it.
+  snapshotPathTemplate: '{testDir}/__screenshots__/{platform}/{arg}{ext}',
   // A test run must never author a baseline. Playwright's own default
   // (`missing`) still writes any absent snapshot straight into
   // `tests/__screenshots__/` on a plain `npm run test:e2e` -- the run reports

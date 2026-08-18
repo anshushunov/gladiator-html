@@ -18,7 +18,7 @@ import type { JointTransform } from './poses/combatPoses'
 import type { BattleState } from '../simulation/battle'
 import type { ContactZone } from '../simulation/combatActions'
 import type { CombatantId, EncounterEvent, FighterCombatState } from '../simulation/encounter'
-import { normalizeVec2, type Vec2 } from '../simulation/movement'
+import { normalizeVec2, TICKS_PER_SECOND, type Vec2 } from '../simulation/movement'
 
 /**
  * The runtime's per-render-frame payload (owned here, the consumer, per the
@@ -82,7 +82,11 @@ const SETTLE_STEPS_PER_SECOND = 60
 const TRAIL_MAX_POINTS = 6
 const TRAIL_COLOR = 0xf4ead7
 
+/** Contact-flash lifetime, in *presentation* milliseconds -- the encounter's own tick rate scaled to ms, never the wall clock (see `applyFrame`). At x1 this is the same 260 ms it always was; at x2/x4 a flash now lives the same number of ticks instead of the same number of seconds, which is what "expire before the next exchange" (design.md) actually measures. */
 const FLASH_DURATION_MS = 260
+
+/** Presentation milliseconds per simulation tick. */
+const MS_PER_TICK = 1000 / TICKS_PER_SECOND
 const FLASH_SLOTS_PER_ZONE = 2
 const FLASH_PEAK_OPACITY = 0.85
 const CONTACT_ZONES: readonly ContactZone[] = ['body', 'shield', 'weapon']
@@ -141,7 +145,7 @@ function buildContactFlashGeometry(zone: ContactZone): THREE.BufferGeometry {
 interface FlashSlot {
   mesh: THREE.Mesh
   material: THREE.MeshBasicMaterial
-  spawnedAtMs: number
+  spawnedAtPresentationMs: number
   id: string
 }
 
@@ -168,12 +172,12 @@ class ContactFlashEffects {
         mesh.visible = false
         mesh.frustumCulled = false
         scene.add(mesh)
-        this.slotsByZone[zone].push({ mesh, material, spawnedAtMs: 0, id: '' })
+        this.slotsByZone[zone].push({ mesh, material, spawnedAtPresentationMs: 0, id: '' })
       }
     }
   }
 
-  spawn(zone: ContactZone, point: Readonly<Vec2>, nowMs: number): void {
+  spawn(zone: ContactZone, point: Readonly<Vec2>, presentationMs: number): void {
     const slots = this.slotsByZone[zone]
     const index = this.roundRobin[zone] % slots.length
     this.roundRobin[zone] += 1
@@ -181,17 +185,17 @@ class ContactFlashEffects {
     slot.mesh.position.set(point.x, CONTACT_ZONE_HEIGHT[zone], point.z)
     slot.mesh.visible = true
     slot.material.opacity = FLASH_PEAK_OPACITY
-    slot.spawnedAtMs = nowMs
+    slot.spawnedAtPresentationMs = presentationMs
     slot.id = `${zone}-${this.nextSerial}`
     this.nextSerial += 1
   }
 
   /** Fades and, once past `FLASH_DURATION_MS`, hides each active flash -- "expire before the next exchange" (design.md). */
-  update(nowMs: number): void {
+  update(presentationMs: number): void {
     for (const zone of CONTACT_ZONES) {
       for (const slot of this.slotsByZone[zone]) {
         if (!slot.mesh.visible) continue
-        const age = nowMs - slot.spawnedAtMs
+        const age = presentationMs - slot.spawnedAtPresentationMs
         if (age >= FLASH_DURATION_MS) {
           slot.mesh.visible = false
           continue
@@ -475,11 +479,20 @@ export class ArenaView {
     const { previous, current, events } = frame
     const alpha = clamp01(frame.alpha)
     const nowMs = performance.now()
+    // Contact flashes age on the encounter's own tick, not on the wall clock:
+    // a flash spawned by a tick-255 contact is exactly as far through its life
+    // at tick 260 no matter how long the machine took to render those five
+    // ticks. On a loaded CI runner the wall-clock version routinely expired
+    // between an `advanceTicks` burst and the snapshot read that was supposed
+    // to observe it. Deliberately read off the whole tick rather than the
+    // interpolated one, so re-rendering the same tick pair at a different
+    // alpha cannot age a flash either.
+    const presentationMs = current.encounter.tick * MS_PER_TICK
 
     this.reconcileRigs(current.encounter.combatantIds, current.encounter.combatants)
 
     const reducedMotion = this.isReducedMotion()
-    this.processNewEvents(events, reducedMotion, nowMs)
+    this.processNewEvents(events, reducedMotion, presentationMs)
 
     const framingTargets: HorizontalFramingTarget[] = []
 
@@ -523,7 +536,7 @@ export class ArenaView {
     const cameraState = this.arenaCamera.update(framingTargets, elapsedSeconds)
     this.applyCameraTransform(cameraState)
 
-    this.flashes.update(nowMs)
+    this.flashes.update(presentationMs)
     // Non-null: this method returns early on `this.contextLost` above, and
     // `this.renderer`/`this.contextLost` are always set together (see the
     // field's own doc comment).
@@ -553,7 +566,7 @@ export class ArenaView {
    * same tick) lets the `damage-dealt` branch skip its flash whenever this
    * same batch already spawned one for the paired `attack-blocked`.
    */
-  private processNewEvents(events: readonly EncounterEvent[], reducedMotion: boolean, nowMs: number): void {
+  private processNewEvents(events: readonly EncounterEvent[], reducedMotion: boolean, presentationMs: number): void {
     const blockedInstanceIds = new Set<string>()
 
     for (const event of events) {
@@ -563,14 +576,14 @@ export class ArenaView {
       switch (event.type) {
         case 'attack-blocked':
           blockedInstanceIds.add(event.actionInstanceId)
-          if (!reducedMotion) this.flashes.spawn('shield', event.contactPoint, nowMs)
+          if (!reducedMotion) this.flashes.spawn('shield', event.contactPoint, presentationMs)
           break
         case 'attack-parried':
-          if (!reducedMotion) this.flashes.spawn('weapon', event.contactPoint, nowMs)
+          if (!reducedMotion) this.flashes.spawn('weapon', event.contactPoint, presentationMs)
           break
         case 'damage-dealt':
           if (!reducedMotion && !blockedInstanceIds.has(event.actionInstanceId)) {
-            this.flashes.spawn(event.contactZone, event.contactPoint, nowMs)
+            this.flashes.spawn(event.contactZone, event.contactPoint, presentationMs)
           }
           break
         case 'defense-declined': {
