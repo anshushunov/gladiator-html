@@ -57,6 +57,8 @@ interface GladiatorTestApi {
   triggerAudioCue?(cue: CombatCue): void
   /** Dev-only (`import.meta.env.DEV`), and only when `?audioDebug=1` is present -- the cues `triggerAudioCue` has fired so far, for Playwright assertions with no real audio hardware. */
   getAudioDebugLog?(): readonly CombatCue[]
+  /** Dev-only (`import.meta.env.DEV`); absent from production builds. Unlike `triggerAudioCue`/`getAudioDebugLog`, available regardless of `?audioDebug=1` -- this reads the real `CombatAudio` instance's own event cursor (Task 19 addition) so a reset fixture can prove it actually clears across a real bout/rematch boundary, not just in `CombatAudio.test.ts`'s unit-level isolation; see `CombatAudio.getDebugEventCursor`. */
+  getAudioEventCursor?(): number | null
 }
 
 /**
@@ -408,6 +410,7 @@ window.__GLADIATOR_TEST__ = {
 if (import.meta.env.DEV) {
   window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha = (alpha) => arenaView.renderActiveBattleAtAlpha?.(alpha)
   window.__GLADIATOR_TEST__.getArenaDebugSnapshot = () => arenaView.getDebugSnapshot?.() ?? null
+  window.__GLADIATOR_TEST__.getAudioEventCursor = () => combatAudio.getDebugEventCursor?.() ?? null
 
   // Dev/test-only audio debug surface (brief resolution #9, design.md: "In
   // Vite dev/test only, `?audioDebug=1` exposes a test API that can trigger

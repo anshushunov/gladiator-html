@@ -231,6 +231,12 @@ export class CombatAudio {
    * the closure body, not just the assignment. */
   declare debugPlayCue?: (cue: CombatCue) => void
   declare getDebugPlayedCues?: () => readonly CombatCue[]
+  /** Task 19 addition, same dev-only pattern: a read-only accessor for
+   * `eventCursor` -- lets an acceptance fixture prove `resetBout()` (called
+   * from `main.ts`'s `resetRenderFrame`, on every bout/rematch boundary)
+   * actually fires against the real running app, not only against the unit
+   * test that already covers `resetBout()` itself in isolation. */
+  declare getDebugEventCursor?: () => number
 
   constructor(private readonly backend: AudioBackend | undefined) {
     if (import.meta.env.DEV) {
@@ -244,6 +250,7 @@ export class CombatAudio {
         }).catch(() => {})
       }
       this.getDebugPlayedCues = (): readonly CombatCue[] => debugLog.slice()
+      this.getDebugEventCursor = (): number => this.eventCursor
     }
   }
 

@@ -89,7 +89,7 @@ test('resets arena presentation for the second bout', async ({ page }) => {
 // event cursor across bout boundaries) and reduced-motion behavior.
 // ---------------------------------------------------------------------------
 
-test('resets rig identity, pose, flashes, camera framing, and event cursor for every new bout', async ({ page }) => {
+test('resets rig identity, pose, trails, flashes, camera framing, the audio cursor, and event cursor for every new bout', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.assign('aquila', 0)
@@ -104,7 +104,9 @@ test('resets rig identity, pose, flashes, camera framing, and event cursor for e
   expect(Object.keys(boutZeroStart!.rootPositions).sort()).toEqual(['away.drusus', 'home.aquila'])
   expect(boutZeroStart!.rootPositions).toEqual({ 'home.aquila': { x: -4.2, z: 0 }, 'away.drusus': { x: 4.2, z: 0 } })
   expect(boutZeroStart!.activeEffectIds).toEqual([])
+  expect(boutZeroStart!.trailPointCounts).toEqual({ 'home.aquila': 0, 'away.drusus': 0 })
   expect(boutZeroStart!.eventCursor).toBe(-1)
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getAudioEventCursor!())).toBe(-1)
   // Always 0 at a fresh bout start: both authored start positions are
   // symmetric about the arena's origin, regardless of which two archetypes
   // are fighting, so the look target's midpoint is always the same even
@@ -118,11 +120,13 @@ test('resets rig identity, pose, flashes, camera framing, and event cursor for e
   // Bout 1: `home.nerva` vs `away.cassius` -- a different rig identity from
   // bout 0's (proves the prior bout's rigs were actually torn down, not
   // merely repositioned), reset to the same fixed start positions, with
-  // flashes and the event cursor cleared again.
+  // trails, flashes, and the event cursor cleared again.
   expect(Object.keys(boutOneStart!.rootPositions).sort()).toEqual(['away.cassius', 'home.nerva'])
   expect(boutOneStart!.rootPositions).toEqual({ 'home.nerva': { x: -4.2, z: 0 }, 'away.cassius': { x: 4.2, z: 0 } })
   expect(boutOneStart!.activeEffectIds).toEqual([])
+  expect(boutOneStart!.trailPointCounts).toEqual({ 'home.nerva': 0, 'away.cassius': 0 })
   expect(boutOneStart!.eventCursor).toBe(-1)
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getAudioEventCursor!())).toBe(-1)
   expect(boutOneStart!.camera.lookTargetX).toBe(0)
   expect(boutOneStart!.jointTransformsFinite).toBe(true)
 
@@ -133,7 +137,9 @@ test('resets rig identity, pose, flashes, camera framing, and event cursor for e
   expect(Object.keys(boutTwoStart!.rootPositions).sort()).toEqual(['away.magnus', 'home.brutus'])
   expect(boutTwoStart!.rootPositions).toEqual({ 'home.brutus': { x: -4.2, z: 0 }, 'away.magnus': { x: 4.2, z: 0 } })
   expect(boutTwoStart!.activeEffectIds).toEqual([])
+  expect(boutTwoStart!.trailPointCounts).toEqual({ 'home.brutus': 0, 'away.magnus': 0 })
   expect(boutTwoStart!.eventCursor).toBe(-1)
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getAudioEventCursor!())).toBe(-1)
   expect(boutTwoStart!.camera.lookTargetX).toBe(0)
   expect(boutTwoStart!.jointTransformsFinite).toBe(true)
 
@@ -141,6 +147,89 @@ test('resets rig identity, pose, flashes, camera framing, and event cursor for e
   // cursor reset, unit-tested directly in `CombatAudio.test.ts`) keeps
   // working across every one of these bout boundaries rather than wedging.
   await expect(page.getByTestId('toggle-sound')).toBeVisible()
+})
+
+test('resets rig identity, pose, trails, flashes, the audio cursor, and event cursor on rematch, and again for the bout that follows it', async ({ page }) => {
+  await page.goto('/?seed=20260815&snapshot')
+  await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.assign('aquila', 0)
+    window.__GLADIATOR_TEST__.assign('nerva', 1)
+    window.__GLADIATOR_TEST__.assign('brutus', 2)
+    window.__GLADIATOR_TEST__.confirm()
+  })
+
+  // Real, non-empty rig/event state (both the arena's own and
+  // `CombatAudio`'s) exists partway through the series -- captured while
+  // still mid-bout (`advanceTicks(600)`, well short of a bout's own
+  // `MAX_BOUT_TICKS`), not after a bout finishes: a single `advanceTicks`
+  // burst that both finishes a bout *and* is the only `render`/`syncArena`
+  // call in that burst never actually calls `combatAudio.consume()` for it
+  // (`syncArena` only consumes while `series.phase` is `fighting`/`between-
+  // bouts`, and a finishing burst has already flipped `phase` to `between-
+  // bouts`/`summary` by the time the one `renderDom()` call at the end of
+  // `advanceTicks` runs) -- so a cursor read taken only after a bout
+  // finishes is not a reliable "did real events flow through" signal, only
+  // a live mid-bout read is.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(600))
+  const midBout = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
+  expect(Object.keys(midBout!.rootPositions).length).toBeGreaterThan(0)
+  expect(midBout!.eventCursor).toBeGreaterThan(0)
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getAudioEventCursor!())).toBeGreaterThan(0)
+
+  // Finish the series (the rest of bout 0, all of bout 1, all of bout 2).
+  // The arena clears itself at the `summary` transition regardless (existing
+  // behavior, not itself what this test is about -- already covered by the
+  // bout-boundary test above); `CombatAudio`'s own cursor may or may not
+  // still read a stale non-zero value here depending on exactly which tick
+  // range the final `consume()` call landed in (see the comment above), so
+  // this test deliberately makes no claim about its value at this exact
+  // instant -- only about `rematch()`'s own, unconditional effect on it,
+  // asserted next.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3000))
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
+
+  await page.evaluate(() => window.__GLADIATOR_TEST__.rematch())
+  const afterRematch = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
+  // `series.ts`'s own `rematch()` clears `activeBattle`, which `main.ts`'s
+  // `resetRenderFrame` (reached because `activeBattle` changed) tears every
+  // rig down for, and unconditionally resets `CombatAudio` via
+  // `resetBout()` -- regardless of whatever value the cursor held going in.
+  expect(afterRematch!.rootPositions).toEqual({})
+  expect(afterRematch!.activeEffectIds).toEqual([])
+  expect(afterRematch!.trailPointCounts).toEqual({})
+  expect(afterRematch!.eventCursor).toBe(-1)
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getAudioEventCursor!())).toBe(-1)
+
+  // The same reset guarantees `smoke.spec.ts`'s bout-boundary test proves for
+  // bout 1/2 hold again for the fresh bout that follows a rematch -- rematch
+  // is not a special case the ordinary per-bout reset path skips.
+  await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.assign('aquila', 0)
+    window.__GLADIATOR_TEST__.assign('nerva', 1)
+    window.__GLADIATOR_TEST__.assign('brutus', 2)
+    window.__GLADIATOR_TEST__.confirm()
+  })
+  const postRematchBoutStart = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
+  expect(Object.keys(postRematchBoutStart!.rootPositions).sort()).toEqual(['away.drusus', 'home.aquila'])
+  expect(postRematchBoutStart!.rootPositions).toEqual({ 'home.aquila': { x: -4.2, z: 0 }, 'away.drusus': { x: 4.2, z: 0 } })
+  expect(postRematchBoutStart!.activeEffectIds).toEqual([])
+  expect(postRematchBoutStart!.trailPointCounts).toEqual({ 'home.aquila': 0, 'away.drusus': 0 })
+  expect(postRematchBoutStart!.eventCursor).toBe(-1)
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getAudioEventCursor!())).toBe(-1)
+  expect(postRematchBoutStart!.camera.lookTargetX).toBe(0)
+  expect(postRematchBoutStart!.jointTransformsFinite).toBe(true)
+
+  // And the reset pipeline is genuinely live again afterward, not merely
+  // stuck at its reset value: a modest, still-mid-bout advance (mirroring
+  // the `advanceTicks(600)` read above, for the same reason) shows both
+  // cursors climbing off `-1`/0 from fresh post-rematch events.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(600))
+  const postRematchMidBout = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
+  expect(postRematchMidBout!.eventCursor).toBeGreaterThan(0)
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getAudioEventCursor!())).toBeGreaterThan(0)
 })
 
 test('reduced motion removes trails and flashes while a hit, its stagger, and its result still land unchanged', async ({ page }) => {
@@ -538,11 +627,17 @@ test('a production build renders no audio debug UI even with ?audioDebug=1, and 
       triggerAudioCue: typeof window.__GLADIATOR_TEST__.triggerAudioCue,
       getAudioDebugLog: typeof window.__GLADIATOR_TEST__.getAudioDebugLog,
       renderActiveBattleAtAlpha: typeof window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha,
+      // Task 19 additions -- same dev-only gate, so a production build must
+      // drop these exactly like the pre-existing surfaces above.
+      getArenaDebugSnapshot: typeof window.__GLADIATOR_TEST__.getArenaDebugSnapshot,
+      getAudioEventCursor: typeof window.__GLADIATOR_TEST__.getAudioEventCursor,
     }))
     expect(debugSurface).toEqual({
       triggerAudioCue: 'undefined',
       getAudioDebugLog: 'undefined',
       renderActiveBattleAtAlpha: 'undefined',
+      getArenaDebugSnapshot: 'undefined',
+      getAudioEventCursor: 'undefined',
     })
   })
 })

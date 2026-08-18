@@ -239,20 +239,49 @@ test('freezes heavy guard/cleave, fast burst/disengage, a mutual hit/stagger, a 
   const disengaging = await combatantState(page, 'away.drusus')
   expect(disengaging.locomotionIntent).toBe('disengage')
 
+  // tick 400: a quiet baseline read, before the decline below -- away.drusus
+  // is neutral (recovered from its previous stagger at tick 393, its next
+  // action doesn't start until tick 417), so no reaction-overlay layer
+  // (recognition-flinch, block/evade/parry, stagger, or defeat) touches its
+  // `head` joint here. `PoseController`'s own layering leaves an untouched
+  // joint at the identity transform, so this is `[0, 0, 0]` -- captured only
+  // to give the tick-478 assertion below a same-run, same-rig comparison
+  // point, not asserted as a standalone fact about the renderer.
+  await advanceToTick(page, 400, cursor)
+  const drususBaselineHead = (await arenaSnapshot(page))!.jointRotations['away.drusus'].head
+
   // tick 478: a `defense-declined` window -- away.drusus declined to defend
   // against home.brutus's `heavy-cleave` (instance `home.brutus:4`, event at
-  // tick 475), and the eventual damage (tick 482) has not landed yet. This is
-  // the recognition-flinch trigger window `PoseController`/`ArenaView`
-  // consume (see `ArenaView.ts`'s `pendingDefenseDeclinedTick`); the
-  // numeric guarantee this task's owned files can make is that the frame
-  // stays fully finite through it.
+  // tick 475), and the eventual damage (tick 482) has not landed yet.
+  //
+  // This is the recognition-flinch trigger window `PoseController`/
+  // `ArenaView` consume (see `ArenaView.ts`'s `pendingDefenseDeclinedTick`).
+  // Asserting only `jointTransformsFinite` here would pass identically even
+  // if the flinch had never been wired into `PoseController`/`ArenaView` at
+  // all -- an unrendered flinch is still a finite, non-crashing frame. The
+  // renderer-specific guarantee is the `head` joint itself: `PoseController`
+  // only ever writes `head` from `recognitionFlinch`/`stagger`/`defeat`
+  // overlays (`buildRecognitionFlinch` in `combatPoses.ts` sets it to
+  // `[0.14, 0.08, 0]`, distinct from every other overlay's own value), and
+  // away.drusus is in neither a stagger nor defeated state at this tick, so
+  // observing that exact value -- differing from the tick-400 baseline
+  // above, taken from the same rig in the same run -- is only possible if
+  // the flinch overlay actually fired. Removing the `defenseDeclinedTick`
+  // wiring in `ArenaView.ts`, or the `recognitionFlinchActive` branch in
+  // `PoseController.ts`, would leave this `head` reading at the tick-400
+  // baseline and fail this assertion, unlike the old finite-only check.
   await advanceToTick(page, 478, cursor)
   const declineEvents = await eventsAtTick(page, 475)
   expect(declineEvents).toContainEqual(expect.objectContaining({ type: 'defense-declined', defenderId: 'away.drusus', incomingActionId: 'home.brutus:4' }))
   const drususBeforeDamage = await combatantState(page, 'away.drusus')
   expect(drususBeforeDamage.hp).toBe(254) // unchanged -- the decline's own damage lands at tick 482, not yet
+  expect(drususBeforeDamage.staggerUntilTick).toBeLessThanOrEqual(478) // not staggered -- isolates the flinch overlay from the stagger overlay
+  expect(drususBeforeDamage.status).toBe('active') // not defeated -- isolates the flinch overlay from the defeat overlay
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
+  const drususFlinchHead = snapshot!.jointRotations['away.drusus'].head
+  expect(drususFlinchHead).not.toEqual(drususBaselineHead)
+  expect(drususFlinchHead).toEqual([0.14, 0.08, 0])
 
   // tick 1910: home.brutus's defeat -- the bout's decisive `fighter-defeated`.
   await advanceToTick(page, 1910, cursor)

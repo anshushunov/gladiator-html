@@ -35,15 +35,23 @@ export interface BattleRenderFrame {
 
 /**
  * Dev-only introspection (brief resolution #9): rendered root positions,
- * whether every rendered joint transform is finite, which contact-flash
- * effect IDs are currently live, the camera's own state, and the event
- * cursor. Production builds never construct one of these -- see
- * `ArenaView`'s constructor.
+ * whether every rendered joint transform is finite, the actual per-joint
+ * rotation values (Task 19 addition -- read-only, mirrors data `ArenaView`
+ * already computes for the finiteness check above; lets an acceptance
+ * fixture distinguish "the pose changed" from "nothing crashed"), which
+ * contact-flash effect IDs are currently live, each rig's live weapon-trail
+ * point count (Task 19 addition -- `0`/trail hidden precisely tracks
+ * `updateWeaponTrail`'s own clear path, so a reset fixture can prove trails
+ * are actually cleared rather than merely unobserved), the camera's own
+ * state, and the event cursor. Production builds never construct one of
+ * these -- see `ArenaView`'s constructor.
  */
 export interface ArenaDebugSnapshot {
   rootPositions: Readonly<Record<CombatantId, Vec2>>
   jointTransformsFinite: boolean
+  jointRotations: Readonly<Record<CombatantId, Readonly<Record<JointName, readonly [number, number, number]>>>>
   activeEffectIds: readonly string[]
+  trailPointCounts: Readonly<Record<CombatantId, number>>
   camera: ArenaCameraState
   eventCursor: number
 }
@@ -718,22 +726,33 @@ function buildArenaDebugSnapshot(
   eventCursor: number,
 ): ArenaDebugSnapshot {
   const rootPositions: Record<CombatantId, Vec2> = {}
+  const jointRotations: Record<CombatantId, Record<JointName, readonly [number, number, number]>> = {}
+  const trailPointCounts: Record<CombatantId, number> = {}
   let jointTransformsFinite = true
 
   for (const [id, rig] of rigs) {
     rootPositions[id] = { x: rig.fighter.root.position.x, z: rig.fighter.root.position.z }
+    const rotationsForRig = {} as Record<JointName, readonly [number, number, number]>
     for (const name of SEMANTIC_JOINT_NAMES) {
       const joint = rig.fighter.joints.get(name)
-      if (!joint) continue
+      if (!joint) {
+        rotationsForRig[name] = [0, 0, 0]
+        continue
+      }
       const values = [joint.position.x, joint.position.y, joint.position.z, joint.rotation.x, joint.rotation.y, joint.rotation.z]
       if (values.some((value) => !Number.isFinite(value))) jointTransformsFinite = false
+      rotationsForRig[name] = [joint.rotation.x, joint.rotation.y, joint.rotation.z]
     }
+    jointRotations[id] = rotationsForRig
+    trailPointCounts[id] = rig.trailLine.visible ? rig.trailPoints.length : 0
   }
 
   return {
     rootPositions,
     jointTransformsFinite,
+    jointRotations,
     activeEffectIds: flashes.activeEffectIds(),
+    trailPointCounts,
     camera: cameraState,
     eventCursor,
   }
