@@ -196,11 +196,59 @@ export function advanceBattleTick(previous: BattleState): BattleState {
     descriptor,
     encounter,
     phase,
-    events: [...previous.events, ...events],
+    events: appendEvents(previous.events, events),
     traceHash: foldBattleTick(previous.traceHash, encounter.tick, events),
     winnerSide,
     finishReason,
   }
+}
+
+/**
+ * The accumulated log, extended by one tick's batch. A tick that emitted
+ * nothing keeps the previous array *by reference* rather than copying it into
+ * an identical new one -- which is most ticks: a measured 225-bout cohort runs
+ * 368,434 ticks and emits 37,691 events, and an emitting tick usually emits
+ * several, so comfortably over nine ticks in ten were paying a full copy to
+ * append nothing.
+ *
+ * Sharing the array between two states is safe for the same reason
+ * `descriptor` is already shared: `BattleState.events` is `readonly` and
+ * nothing in the codebase mutates it. That readonly-ness is exactly what an
+ * in-place `push` would give up, and it is not optional here -- earlier states
+ * stay live (`main.ts`'s render frame holds the pre-tick state while rendering
+ * against the post-tick one, and `series.ts` keeps every finished bout), so an
+ * appended-to log would retroactively grow behind a holder that already
+ * measured it.
+ *
+ * The copy that remains is quadratic in a bout's own event count, and the
+ * review that raised it (issue #7) expected it to be the dominant term in
+ * `npm run check`. Measured, it is nowhere near it -- which is why it was
+ * worth measuring before designing around it. `npm run benchmark:duel-log`
+ * replays a real 225-bout cohort's recorded batches through each strategy,
+ * so the log is timed apart from the kernel feeding it:
+ *
+ *   simulating those 225 bouts (368,434 ticks, 37,691 events)  14,384 ms
+ *   no log at all (the floor, not a candidate)                      0.6 ms
+ *   copying every tick (what this replaced)                        46.1 ms
+ *   copying only on ticks that emit (this)                         17.5 ms
+ *
+ * The entire quadratic term is 0.3% of a cohort; this saves 0.2% of it. At
+ * the balance suite's 6300-bout scale that is under a second of its ~290.
+ *
+ * A chain of per-tick batches materialized lazily behind a getter -- the
+ * non-aliasing structure the review asked for -- was built and measured too,
+ * and it is *worse end to end*: the same cohort went from 14.9 s to
+ * 17.4-18.5 s. Giving every per-tick state its own accessor property costs
+ * more than the copy it removes, and it deoptimizes every downstream
+ * `battle.encounter`/`battle.phase` read besides. If a longer bout or a mass
+ * adapter ever does make the quadratic term matter, the variant that measured
+ * well was a chain behind a *prototype* getter, which is only viable if
+ * `events` never has to survive own-property enumeration (`structuredClone`,
+ * `JSON.stringify`, spread) -- today it does.
+ */
+function appendEvents(previous: readonly EncounterEvent[], tickEvents: readonly EncounterEvent[]): readonly EncounterEvent[] {
+  if (tickEvents.length === 0) return previous
+  return [...previous, ...tickEvents]
 }
 
 export function advanceBattleTicks(initial: BattleState, ticks: number): BattleState {
