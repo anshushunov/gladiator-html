@@ -1,7 +1,7 @@
 import { formatBattleFeed } from './battleFeed'
 import { getAssignmentComparison, type BoutIndex, type SeriesPhase, type SeriesState } from '../simulation/series'
 import type { Archetype, FighterDefinition, FighterSide } from '../simulation/fighters'
-import type { BattleState } from '../simulation/battle'
+import { fighterBySide, type BattleState } from '../simulation/battle'
 
 export type SeriesIntent =
   | { type: 'assign'; fighterId: string; boutIndex: BoutIndex }
@@ -11,8 +11,9 @@ export type SeriesIntent =
   | { type: 'rematch' }
   | { type: 'toggle-pause' }
   | { type: 'set-speed'; speed: 1 | 2 | 4 }
+  | { type: 'toggle-sound' }
 
-export interface RuntimeViewState { paused: boolean; speed: 1 | 2 | 4 }
+export interface RuntimeViewState { paused: boolean; speed: 1 | 2 | 4; soundEnabled: boolean }
 
 const BOUT_NUMERALS = ['I', 'II', 'III'] as const
 const RC = { enDash: '\u2013', middleDot: '\u00b7', times: '\u00d7', arrow: '\u2192', emDash: '\u2014' }
@@ -148,6 +149,9 @@ export class SeriesView {
       case 'toggle-pause':
         this.onIntent({ type: 'toggle-pause' })
         return
+      case 'toggle-sound':
+        this.onIntent({ type: 'toggle-sound' })
+        return
       case 'set-speed': {
         const speed = Number(target.dataset.speed)
         if (speed === 1 || speed === 2 || speed === 4) this.onIntent({ type: 'set-speed', speed })
@@ -207,11 +211,12 @@ export class SeriesView {
       return
     }
     const pause = el('button', { class: 'button', type: 'button', 'data-action': 'toggle-pause', 'data-testid': 'toggle-pause', 'aria-pressed': String(runtime.paused) }, runtime.paused ? 'Resume' : 'Pause')
+    const sound = el('button', { class: 'button', type: 'button', 'data-action': 'toggle-sound', 'data-testid': 'toggle-sound', 'aria-pressed': String(runtime.soundEnabled) }, runtime.soundEnabled ? 'Sound on' : 'Sound off')
     const group = el('div', { class: 'speed-control', role: 'group', 'aria-label': 'Bout speed' })
     for (const speed of [1, 2, 4] as const) {
       group.append(el('button', { class: 'button speed-control__button', type: 'button', 'data-action': 'set-speed', 'data-speed': String(speed), 'data-testid': `speed-${speed}`, 'aria-pressed': String(runtime.speed === speed) }, `${RC.times}${speed}`))
     }
-    container.replaceChildren(pause, group)
+    container.replaceChildren(pause, sound, group)
   }
 
   private updateControls(runtime: RuntimeViewState): void {
@@ -221,6 +226,11 @@ export class SeriesView {
     if (pause) {
       pause.textContent = runtime.paused ? 'Resume' : 'Pause'
       pause.setAttribute('aria-pressed', String(runtime.paused))
+    }
+    const sound = container.querySelector<HTMLElement>('[data-action="toggle-sound"]')
+    if (sound) {
+      sound.textContent = runtime.soundEnabled ? 'Sound on' : 'Sound off'
+      sound.setAttribute('aria-pressed', String(runtime.soundEnabled))
     }
     for (const speed of [1, 2, 4] as const) {
       const button = container.querySelector<HTMLElement>(`[data-action="set-speed"][data-speed="${speed}"]`)
@@ -266,7 +276,7 @@ export class SeriesView {
     button.append(
       title,
       el('span', { class: 'fighter-option__school' }, fighter.school),
-      el('span', { class: 'fighter-option__stats' }, `HP ${fighter.maxHp} ${RC.middleDot} DMG ${fighter.damage} ${RC.middleDot} ${fighter.attackIntervalTicks}t interval`),
+      el('span', { class: 'fighter-option__stats' }, `HP ${fighter.maxHp} ${RC.middleDot} Power ${fighter.power} ${RC.middleDot} Defense ${Math.round(fighter.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(fighter.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(fighter.criticalChance * 100)}%`),
       el('span', { class: 'fighter-option__assignment' }, assignedIndex === -1 ? 'Unassigned' : `Bout ${BOUT_NUMERALS[assignedIndex]}`),
     )
     return button
@@ -296,7 +306,7 @@ export class SeriesView {
     pick.append(
       el('span', { class: 'matchup-slot__numeral' }, BOUT_NUMERALS[boutIndex]),
       opponentBlock,
-      el('span', { class: 'matchup-slot__stats' }, `HP ${opponent.maxHp} ${RC.middleDot} DMG ${opponent.damage} ${RC.middleDot} ${opponent.attackIntervalTicks}t`),
+      el('span', { class: 'matchup-slot__stats' }, `HP ${opponent.maxHp} ${RC.middleDot} Power ${opponent.power} ${RC.middleDot} Defense ${Math.round(opponent.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(opponent.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(opponent.criticalChance * 100)}%`),
     )
 
     if (assignedId !== null) {
@@ -402,7 +412,7 @@ export class SeriesView {
   }
 
   private buildFighterCard(container: HTMLElement, side: FighterSide, battle: BattleState | undefined): void {
-    const fighter = battle?.fighters[side]
+    const fighter = battle ? fighterBySide(battle, side) : undefined
     if (!fighter) {
       container.replaceChildren()
       return
@@ -421,7 +431,7 @@ export class SeriesView {
   }
 
   private updateHp(container: HTMLElement | null, side: FighterSide, battle: BattleState | undefined): void {
-    const fighter = battle?.fighters[side]
+    const fighter = battle ? fighterBySide(battle, side) : undefined
     if (!fighter || !container?.firstChild) return
     const hp = container.querySelector<HTMLElement>(`[data-hp="${side}"]`)
     const bar = container.querySelector<HTMLElement>(`[data-health="${side}"]`)
@@ -435,7 +445,7 @@ export class SeriesView {
       status.textContent = ''
       return
     }
-    status.textContent = `Bout ${BOUT_NUMERALS[state.activeBoutIndex]} ${RC.middleDot} ${battle.fighters.home.definition.name} vs ${battle.fighters.away.definition.name}`
+    status.textContent = `Bout ${BOUT_NUMERALS[state.activeBoutIndex]} ${RC.middleDot} ${fighterBySide(battle, 'home').definition.name} vs ${fighterBySide(battle, 'away').definition.name}`
   }
 
   private updateFeed(feed: HTMLElement, state: SeriesState): void {
@@ -449,8 +459,8 @@ export class SeriesView {
     if (latestEventId === this.lastFeedEventId) return
     this.lastFeedEventId = latestEventId
     const entries = formatBattleFeed(battle.events, {
-      home: battle.fighters.home.definition.name,
-      away: battle.fighters.away.definition.name,
+      [battle.descriptor.homeId]: fighterBySide(battle, 'home').definition.name,
+      [battle.descriptor.awayId]: fighterBySide(battle, 'away').definition.name,
     })
     feed.replaceChildren(...entries.slice().reverse().map((entry) => {
       const item = document.createElement('li')

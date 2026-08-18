@@ -17,14 +17,82 @@ describe('MVP series content', () => {
 
   it('pins the six content rows exactly', () => {
     expect(homeRoster).toEqual([
-      { id: 'brutus', name: 'Brutus', school: 'House of Mars', archetype: 'heavy', maxHp: 360, damage: 12, attackIntervalTicks: 54, accuracy: 0.86, blockChance: 0.18, criticalChance: 0.10 },
-      { id: 'aquila', name: 'Aquila', school: 'House of Mars', archetype: 'fast', maxHp: 240, damage: 8, attackIntervalTicks: 38, accuracy: 0.82, blockChance: 0.08, criticalChance: 0.12 },
-      { id: 'nerva', name: 'Nerva', school: 'House of Mars', archetype: 'technical', maxHp: 345, damage: 12, attackIntervalTicks: 44, accuracy: 0.92, blockChance: 0.16, criticalChance: 0.16 },
+      { id: 'brutus', name: 'Brutus', school: 'House of Mars', archetype: 'heavy', maxHp: 324, power: 22, accuracy: 0.86, defenseChance: 0.34, criticalChance: 0.10 },
+      { id: 'aquila', name: 'Aquila', school: 'House of Mars', archetype: 'fast', maxHp: 274, power: 20, accuracy: 0.855, defenseChance: 0.315, criticalChance: 0.148 },
+      { id: 'nerva', name: 'Nerva', school: 'House of Mars', archetype: 'technical', maxHp: 314, power: 20, accuracy: 0.92, defenseChance: 0.40, criticalChance: 0.16 },
     ])
     expect(opponents).toEqual([
-      { id: 'drusus', name: 'Drusus', school: 'House of Saturn', archetype: 'fast', maxHp: 390, damage: 13, attackIntervalTicks: 36, accuracy: 0.90, blockChance: 0.12, criticalChance: 0.15 },
-      { id: 'cassius', name: 'Cassius', school: 'House of Neptune', archetype: 'technical', maxHp: 330, damage: 11, attackIntervalTicks: 48, accuracy: 0.90, blockChance: 0.15, criticalChance: 0.12 },
-      { id: 'magnus', name: 'Magnus', school: 'House of Vulcan', archetype: 'heavy', maxHp: 288, damage: 10, attackIntervalTicks: 62, accuracy: 0.78, blockChance: 0.18, criticalChance: 0.06 },
+      { id: 'drusus', name: 'Drusus', school: 'House of Saturn', archetype: 'fast', maxHp: 350, power: 21, accuracy: 0.90, defenseChance: 0.36, criticalChance: 0.15 },
+      { id: 'cassius', name: 'Cassius', school: 'House of Neptune', archetype: 'technical', maxHp: 312, power: 19, accuracy: 0.90, defenseChance: 0.395, criticalChance: 0.12 },
+      { id: 'magnus', name: 'Magnus', school: 'House of Vulcan', archetype: 'heavy', maxHp: 299, power: 18, accuracy: 0.85, defenseChance: 0.335, criticalChance: 0.099 },
     ])
+  })
+
+  // The design permits tuning these numbers but fixes the relative intent behind
+  // them (design.md:698), so each stat's rank order is pinned as a property
+  // rather than left implicit in the rows above. Four of five are exactly the
+  // authored order; the fifth is a disclosed, load-bearing deviation and is
+  // pinned in its deviated form so it cannot drift further unnoticed.
+  const rankBy = (key: 'maxHp' | 'power' | 'accuracy' | 'defenseChance' | 'criticalChance') =>
+    [...homeRoster, ...opponents].sort((a, b) => b[key] - a[key]).map(({ id }) => id)
+
+  it('preserves the authored rank order for HP, accuracy, defence and critical chance', () => {
+    expect(rankBy('maxHp')).toEqual(['drusus', 'brutus', 'nerva', 'cassius', 'magnus', 'aquila'])
+    expect(rankBy('accuracy')).toEqual(['nerva', 'drusus', 'cassius', 'brutus', 'aquila', 'magnus'])
+    expect(rankBy('defenseChance')).toEqual(['nerva', 'cassius', 'drusus', 'brutus', 'magnus', 'aquila'])
+    expect(rankBy('criticalChance')).toEqual(['nerva', 'drusus', 'aquila', 'cassius', 'brutus', 'magnus'])
+  })
+
+  it('records the one deviated rank order: Aquila is no longer lowest on power', () => {
+    // Authored: brutus > drusus > nerva > cassius > magnus > aquila.
+    // Aquila moves from strictly lowest to tied THIRD with Nerva. Without it
+    // `aquila/drusus` measures 1.5% and `aquila/magnus` 10.5% against the
+    // cohort's 15..85% band -- see the note in `mvpSeries.ts` for the levers
+    // that were measured and rejected first. Pinned so the deviation stays
+    // exactly this size and does not quietly grow.
+    //
+    // Asserted as RELATIONS rather than as a sorted rank array. A rank array is
+    // the natural shape here but cannot express "tied third" without depending
+    // on sort stability to break the Aquila/Nerva tie, and an earlier version of
+    // this test compared `rankBy('power')` against a literal that was itself
+    // sorted by the same live comparator -- so both sides moved together and it
+    // could not fail for any power assignment at all.
+    const byId = Object.fromEntries([...homeRoster, ...opponents].map((f) => [f.id, f]))
+    const power = (id: string) => byId[id].power
+    const all = [...homeRoster, ...opponents]
+
+    // Exactly two fighters out-power her: Brutus and Drusus. This is the
+    // statement "tied third", and it fails the moment the deviation grows
+    // (Aquila passing Drusus) or shrinks (Nerva pulling ahead of her).
+    expect(all.filter((f) => f.power > power('aquila'))).toHaveLength(2)
+    expect(power('aquila')).toBe(20)
+    expect(power('aquila')).toBe(power('nerva')) // the tie itself
+    expect(power('brutus')).toBeGreaterThan(power('drusus')) // authored top two, unchanged
+    expect(power('drusus')).toBeGreaterThan(power('aquila'))
+
+    // ...and she is genuinely no longer at the bottom, which is the deviation.
+    expect(power('aquila')).toBeGreaterThan(power('cassius'))
+    expect(power('aquila')).toBeGreaterThan(power('magnus'))
+    expect(Math.min(...all.map((f) => f.power))).toBe(power('magnus'))
+  })
+
+  it('keeps the named identities from the design table', () => {
+    const all = [...homeRoster, ...opponents]
+    const byId = Object.fromEntries(all.map((f) => [f.id, f]))
+
+    // Drusus absorbs a sacrifice; Aquila is the fragile burst fighter.
+    expect(Math.max(...all.map((f) => f.maxHp))).toBe(byId.drusus.maxHp)
+    expect(Math.min(...all.map((f) => f.maxHp))).toBe(byId.aquila.maxHp)
+
+    // Nerva is the strongest all-rounder: top accuracy, defence and critical.
+    expect(Math.max(...all.map((f) => f.accuracy))).toBe(byId.nerva.accuracy)
+    expect(Math.max(...all.map((f) => f.defenseChance))).toBe(byId.nerva.defenseChance)
+    expect(Math.max(...all.map((f) => f.criticalChance))).toBe(byId.nerva.criticalChance)
+
+    // Magnus is the vulnerable opponent: lowest HP of the three opponents, and
+    // the lowest accuracy and critical chance of all six.
+    expect(Math.min(...opponents.map((f) => f.maxHp))).toBe(byId.magnus.maxHp)
+    expect(Math.min(...all.map((f) => f.accuracy))).toBe(byId.magnus.accuracy)
+    expect(Math.min(...all.map((f) => f.criticalChance))).toBe(byId.magnus.criticalChance)
   })
 })

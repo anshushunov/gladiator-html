@@ -699,6 +699,76 @@ Implementation may tune these fighter numbers plus action `damageMultiplier`/`re
 
 Planning cards replace attack interval with Power and Defense while retaining HP, Accuracy, Critical, and the always-visible counter rule.
 
+### Amendment — Task 13 balance calibration (approved during Task 13 execution on `feature/readable-deep-combat`)
+
+**The table above remains the authored initial content and is the historical record of intent.
+`src/content/mvpSeries.ts` and `src/content/combatStyles.ts` are now the source of truth for current
+values.** Read the table for *why* a fighter is shaped the way it is; read the content files for what
+the numbers are. `src/content/mvpSeries.test.ts` pins the rank orders below as properties.
+
+Task 13 could not satisfy the fixed statistical cohorts while holding every relative standing in the
+table. The plan owner approved the following deviations, each recorded with the measurement that
+forced it.
+
+What is **unchanged**: four of the five stat rank-orders (`maxHp`, `accuracy`, `defenseChance`,
+`criticalChance`) are exactly as authored, as are names, styles, opponent order, the
+`Heavy < Technical < Fast` turn ordering, Fast's `0.9–1.2` evade envelope, and the qualitative action
+ordering.
+
+What is **changed but not itemised below**: several values moved in magnitude without disturbing any
+rank, under the blanket "Implementation may tune these fighter numbers" clause above. Listed here in
+full so an audit of the freeze against the approved set finds no unexplained number — Aquila
+`accuracy` 0.84 → 0.855, `defenseChance` 0.31 → 0.315, `criticalChance` 0.14 → 0.148; Cassius
+`defenseChance` 0.38 → 0.395. Each is a small step taken to stay inside its own rank while the rows
+around it moved; none crosses a neighbour.
+
+**1. Aquila `power` 16 → 20** — from strictly lowest of the six to tied third with Nerva. This is the
+only rank-order change. Without it `aquila/drusus` measures 1.5% and `aquila/magnus` 10.5% against
+the cohort's `15..85%` band; with it, the shipped calibration measures 19.5% and 33.0%. Every
+alternative was measured and is
+insufficient: critical chance is nearly inert (+1.0 point when *doubled*, since criticals apply only
+to an unblocked hit on a target already in recovery or stagger), and compressing the HP spread alone
+reaches 5.5%. Aquila keeps strictly the lowest HP and the highest critical chance, so "fragile burst
+fighter" survives — and low HP with high per-hit power arguably reads as a truer glass cannon than
+the authored 16, which made her simply worse at everything.
+
+**2. HP-spread compression** — rank order preserved; magnitudes compressed. Aquila now sits at
+**78%** of Drusus's HP (274 against 350) versus the authored 65% (120 against 185), so "fragile"
+survives as an ordinal but is softer as a magnitude. The scale factors are deliberately **not**
+uniform — they span 1.892 (Drusus) to 2.283 (Aquila) — because the compression *is* the deviation;
+a uniform scale would have preserved the authored 65% and left `aquila/drusus` unreachable. This is
+the other half of what makes that pairing clear its band.
+
+**3. Magnus buffed toward his neighbours** — accuracy `0.78 → 0.85`, critical `0.06 → 0.099`, defence
+`0.32 → 0.335`; rank order preserved, and he remains last on accuracy and critical and fifth on
+defence. Needed to hold `brutus/magnus` and `nerva/magnus` under the `85%` ceiling. He is still the
+weakest opponent on every axis the table names for him.
+
+**4. Golden scenario: "at least three distinct final score/result profiles" relaxed to two.**
+
+The only reachable third-profile flip at seed `20260815` is Aquila beating Magnus, which requires
+Magnus at `maxHp <= ~264`. Keeping `brutus/magnus` at or under `85%` requires him at `~282`. Brutus
+cannot absorb the difference: he sits one point above Nerva at his own standing floor. The four
+alternative flips that would also produce a third profile (Aquila beating Drusus or Cassius, Nerva
+losing to Cassius or Magnus) are 83–162 HP away against 15–26 HP for the Magnus flip, and Cassius and
+Nerva are each within a point or two of their standing ceilings. A configuration achieving three
+profiles was built and measured; it shipped `brutus/magnus` at 86.5% and `nerva/magnus` at exactly
+85.0%, and was rejected for that reason.
+
+The two golden criteria that carry product intent both still hold, and are asserted as strictly as
+before: the all-counter lineup does **not** sweep (it loses `1–2`), and a different lineup wins. What
+is lost is puzzle *variety* across the six orderings.
+
+The basis for prioritising the cohorts over this criterion is the design's own framing, two
+paragraphs below: "Determinism, style balance, roster balance, and pacing are **separate checks**",
+and the golden-scenario block closes by describing itself as "a determinism/product-puzzle fixture,
+**not evidence of statistical balance**". The statistical cohorts are the balance acceptance; this
+criterion is a property of one seed.
+
+Separately, and not a content matter: Task 13 found and fixed six conformance defects in
+`src/simulation/combatDecision.ts`, `encounter.ts` and `combatActions.ts`, three of which were
+silently propping up balance numbers. See `.superpowers/sdd/2026-08-16-readable-deep-combat/task-13-report.md`.
+
 ## Balance acceptance
 
 Determinism, style balance, roster balance, and pacing are separate checks.
@@ -707,7 +777,7 @@ Determinism, style balance, roster balance, and pacing are separate checks.
 
 - the all-counter lineup `Brutus→Drusus`, `Aquila→Cassius`, `Nerva→Magnus` must not sweep `3–0`; the UI counter rule is useful but not a guaranteed answer to stronger individual opponents;
 - at least one different lineup wins `2–1` or `3–0`;
-- the six possible lineups contain at least three distinct final score/result profiles;
+- ~~the six possible lineups contain at least three distinct final score/result profiles~~ — **AMENDED to at least two** during Task 13; see "Amendment — Task 13 balance calibration" under Fighter content for the measured conflict with the roster win-rate bands;
 - one complete lineup has a checked canonical event-trace hash. This is a determinism/product-puzzle fixture, not evidence of statistical balance.
 
 **Fixed statistical cohorts:**
@@ -824,13 +894,58 @@ Defeat uses a style-specific controlled pose. Rotating the whole group onto its 
 - The camera look target follows the fighters' midpoint only after it leaves an 8% viewport dead zone, with a `0.75 s` damping time constant.
 - Camera distance changes only after the horizontal group extent leaves a 12% framing dead zone, uses a separate `1.25 s` damping time constant, and is clamped to `11..18` world units from the look target.
 - Framing includes each fighter's style-authored horizontal equipment radius and a 10% margin. It uses no motion lookahead.
-- Camera does not orbit, cross the combat axis, cut, or shake.
+- ~~Camera does not orbit, cross the combat axis, cut, or shake.~~ — **AMENDED on 2026-08-18**: the camera now holds a bounded, damped yaw that keeps the combat axis across frame. It still never crosses the combat axis, cuts, or shakes. See "Amendment — combat-axis yaw" below.
 - Lighting, material value, and an inexpensive geometry/rim outline keep silhouettes separate from the floor without a post-processing pipeline.
 - Weapon trails appear only during the final part of windup through contact.
 - `body`, `shield`, and `weapon` contacts use distinct effect shape/position, not color alone.
 - Contact flashes expire before the next exchange and never obscure either torso.
 - Arena reset clears pose, trails, flashes, audio voices, event cursors, and camera interpolation at each new bout and on rematch.
 - With `prefers-reduced-motion: reduce`, weapon trails and transient contact flashes are disabled and nonessential pose overshoot is reduced; simulation, key anticipations, contact holds, and results do not change.
+
+### Amendment — combat-axis yaw (approved by the plan owner on 2026-08-18, resolving issue #4)
+
+The original rule pinned the camera's *orientation* as well as its position: it framed world-X extent
+only and always looked down `-Z`. Nothing then kept the pair's own axis perpendicular to that view.
+Measured on the shipped build at seed `20260815`: the fighters start on a clean profile at
+`(-4.2, 0)`/`(4.2, 0)`, but by mid-bout the pair axis had rotated about `19°` off world X (positions
+`x 1.6/3.3` at `z 1.1/1.7`). Two consequences, both visible in the arena:
+
+1. At close-quarters range (~`1.8` units) with a `38°` FOV the two silhouettes overlap, and slightly
+   turned-away profiles read as "both fighters are facing the viewer".
+2. The zoom worked against the reader: with extent measured along world X, a pair rotating toward the
+   view axis measures *narrower* and pulls the camera in, exactly when it should not.
+
+The `z = -2.5..2.5` lateral clamp and the ordered-pair rule prevent the fighters from swapping sides,
+but neither keeps the axis square to the camera; that is a camera responsibility, so the camera takes
+it.
+
+**Amended rules** (these supersede the corresponding bullets above):
+
+- The camera holds a **yaw** around its look target so the group's spread axis stays across the frame.
+  Desired yaw is the group's own principal (unsigned) spread axis, negated; it is clamped to
+  **`±30°`** from the arena's authored home shot, moves only after the desired yaw leaves a **`5°`**
+  dead zone, and damps with a **`1.5 s`** time constant — deliberately the slowest of the three axes,
+  so yaw reads as the fight turning rather than as the camera moving.
+- Group extent (the input to the distance mapping) is measured across the camera's **screen-horizontal
+  axis at the current yaw**, not along world X.
+- The look target is the group's 2D centre (X and Z), not an X-only midpoint on the `z = 0` line. Its
+  8% dead zone is measured on the full 2D drift.
+- The camera still **does not cut or shake, and still cannot cross the combat axis**: the spread axis
+  is read as an unsigned axis (`0.5 · atan2(2·Sxz, Sxx − Szz)`, range `(-90°, 90°]`), so no ordering
+  of the targets and no clamped yaw can put the camera on the far side of the fight. A degenerate
+  group (a single target, or several exactly stacked) yaws to `0`, not to an angle read out of float
+  noise.
+
+Not changed: fixed FOV, the fixed elevation/distance ratio, the `11..18` distance clamp, the 12%
+framing dead zone, the 10% equipment margin, the absence of motion lookahead, and the hard cut of all
+camera state at each new bout and on rematch.
+
+Consequence for acceptance: the frozen pose baselines were recaptured under the amended framing.
+Because `?snapshot` holds the runtime paused and a paused frame advances no camera time at all
+(that is what makes a capture depend on tick count rather than on how long test setup took), each
+capture now first asks a dev-only hook to damp the camera by four seconds of *simulated*
+presentation time onto the frame it is showing. Without it every baseline would show the bout's
+opening wide shot no matter which tick it froze.
 
 ## Combat audio
 

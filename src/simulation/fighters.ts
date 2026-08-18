@@ -8,10 +8,9 @@ export interface FighterDefinition {
   school: string
   archetype: Archetype
   maxHp: number
-  damage: number
-  attackIntervalTicks: number
+  power: number
   accuracy: number
-  blockChance: number
+  defenseChance: number
   criticalChance: number
 }
 
@@ -22,9 +21,9 @@ const COUNTERS: Record<Archetype, Archetype> = {
 }
 
 const DAMAGE_MULTIPLIERS: Record<MatchupComparison, number> = {
-  advantage: 1.25,
+  advantage: 1.10,
   neutral: 1,
-  disadvantage: 0.8,
+  disadvantage: 0.90,
 }
 
 export function compareArchetypes(home: Archetype, away: Archetype): MatchupComparison {
@@ -34,4 +33,40 @@ export function compareArchetypes(home: Archetype, away: Archetype): MatchupComp
 
 export function comparisonDamageMultiplier(comparison: MatchupComparison): number {
   return DAMAGE_MULTIPLIERS[comparison]
+}
+
+export function validateFighterDefinition(definition: FighterDefinition): FighterDefinition {
+  requireNonEmptyString(definition.id, 'id')
+  requireNonEmptyString(definition.name, 'name')
+  requireNonEmptyString(definition.school, 'school')
+  requirePositiveIntegerFinite(definition.maxHp, 'maxHp')
+  requirePositiveFinite(definition.power, 'power')
+  requireProbability(definition.accuracy, 'accuracy')
+  requireProbability(definition.defenseChance, 'defenseChance')
+  requireProbability(definition.criticalChance, 'criticalChance')
+  return definition
+}
+
+function requireNonEmptyString(value: string, field: string): void {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`FighterDefinition ${field} must be a non-empty string`)
+  }
+}
+
+function requirePositiveIntegerFinite(value: number, field: string): void {
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`FighterDefinition ${field} must be a positive integer`)
+  }
+}
+
+function requirePositiveFinite(value: number, field: string): void {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`FighterDefinition ${field} must be a positive finite number`)
+  }
+}
+
+function requireProbability(value: number, field: string): void {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`FighterDefinition ${field} must be a number between 0 and 1`)
+  }
 }
