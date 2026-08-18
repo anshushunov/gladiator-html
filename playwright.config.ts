@@ -31,14 +31,34 @@ export default defineConfig({
   expect: {
     toHaveScreenshot: {
       animations: 'disabled',
-      // 0.005 of the 1280x820 capture is ~2,624 pixels. The previous 0.05
-      // (~52,480 pixels, a 229x229 block -- wider than a fighter silhouette)
-      // was loose enough to be no baseline at all: swapping
-      // `combat-safe-frame.png`'s baseline for the completely different
-      // `heavy-cleave.png` frame still passed. Every screenshot here is
-      // captured paused, at a fixed tick and a fixed alpha, so there is no
-      // animation jitter for a wide tolerance to absorb.
-      maxDiffPixelRatio: 0.005,
+      // Playwright's own per-pixel default, kept deliberately: raising it
+      // was measured to be the wrong knob. At `threshold: 0.4` a baseline
+      // swapped for a completely different frame of the same bout still
+      // passed -- the fighters are low-contrast against the arena floor, so
+      // "how different is this pixel" stops discriminating long before "how
+      // many pixels moved" does.
+      threshold: 0.2,
+      // Both bounds below were measured on this suite rather than guessed,
+      // at the default `threshold` above:
+      //
+      //   - a baseline swapped for a different frame of the same bout
+      //     (`heavy-cleave` standing in for `combat-safe-frame`): 9.0% of
+      //     the frame differs -- this is the smallest real regression the
+      //     bar has to catch, since two ticks of one bout look far more
+      //     alike than any accidental change would;
+      //   - the same frame captured on two different machines running the
+      //     same OS and the same Chromium: up to 2.5%. Chromium's software
+      //     rasterizer picks SIMD paths from the host CPU, so identical 3D
+      //     content shades slightly differently on a developer box and on a
+      //     CI runner. Per-OS baselines (see `snapshotPathTemplate`) remove
+      //     the font/AA half of this, not the WebGL half, and no capture
+      //     machine can be pinned for every future runner.
+      //
+      // 4% sits between them with room on both sides. The DOM-only planning
+      // snapshot has no 3D in it and matches exactly across machines; it is
+      // held to the same number only because a shared config is simpler than
+      // a per-test override that would drift.
+      maxDiffPixelRatio: 0.04,
     },
   },
   projects: [
