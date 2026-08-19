@@ -300,19 +300,64 @@ describe('createProceduralFighter', () => {
   it('gives the head a front: a visor slot on the forward hemisphere', () => {
     const fighter = createProceduralFighter({ archetype: 'fast' })
     const head = fighter.joints.get('head')!
-    const visor = head.children.find((child) => child.userData.slot === 'visor')
+    const visor = head.children.find(
+      (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.userData.slot === 'visor',
+    )
     expect(visor).toBeDefined()
     // Sits forward of the head's own centre.
     expect(visor!.position.z).toBeGreaterThan(0)
+
+    // It must be real protruding geometry, not just a dark colour: that is
+    // the stated reason it exists as a separate mesh at all (legible even
+    // where the head is only a few pixels wide).
+    const headSphere = head.children.find(
+      (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.userData.slot === 'skin',
+    )
+    expect(headSphere).toBeDefined()
+    const sphereBox = new THREE.Box3().setFromObject(headSphere!)
+    const visorBox = new THREE.Box3().setFromObject(visor!)
+    const visorSize = new THREE.Vector3()
+    visorBox.getSize(visorSize)
+    expect(visorSize.x).toBeGreaterThan(0.01)
+    expect(visorSize.y).toBeGreaterThan(0.01)
+    expect(visorSize.z).toBeGreaterThan(0.01)
+    // Protrudes forward of the head sphere's own surface, not sunk inside it.
+    expect(visorBox.max.z).toBeGreaterThan(sphereBox.max.z)
+
     fighter.dispose()
   })
 
   it('separates chest from back by value, without introducing a third hue', () => {
     const fighter = createProceduralFighter({ archetype: 'technical' })
     const chest = fighter.joints.get('chest')!
-    const plate = chest.children.find((child) => child.userData.slot === 'breastplate')
+    const plate = chest.children.find(
+      (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.userData.slot === 'breastplate',
+    )
     expect(plate).toBeDefined()
-    expect((plate as THREE.Mesh).position.z).toBeGreaterThan(0)
+    expect(plate!.position.z).toBeGreaterThan(0)
+
+    // Must be derived from the fighter's own house/cloth colour (lightened),
+    // never a hard-coded literal and never a third hue that would compete
+    // with the red/blue/green that already separates the three styles.
+    let houseColor: THREE.Color | undefined
+    fighter.root.traverse((object) => {
+      if (!houseColor && object instanceof THREE.Mesh && object.userData.slot === 'cloth') {
+        houseColor = (object.material as THREE.MeshStandardMaterial).color
+      }
+    })
+    expect(houseColor).toBeDefined()
+
+    const plateColor = (plate!.material as THREE.MeshStandardMaterial).color
+    // Not a literal copy of the house colour -- it must actually be lightened.
+    expect(plateColor.equals(houseColor!)).toBe(false)
+
+    const houseHsl = houseColor!.getHSL({ h: 0, s: 0, l: 0 })
+    const plateHsl = plateColor.getHSL({ h: 0, s: 0, l: 0 })
+    // Same hue as the source colour (within float rounding) -- no third hue.
+    expect(Math.abs(plateHsl.h - houseHsl.h)).toBeLessThan(0.005)
+    // Strictly lighter -- value, not hue, carries the front/back contrast.
+    expect(plateHsl.l).toBeGreaterThan(houseHsl.l)
+
     fighter.dispose()
   })
 })
