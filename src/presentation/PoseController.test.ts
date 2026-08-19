@@ -686,6 +686,12 @@ describe('PoseController idle layer', () => {
     const sample = controller.apply(standing, fighter)
 
     expect(sample.pose.chest.rotation[1]).toBeCloseTo(0.1, 10)
+    // The Y assertion alone would pass identically if the idle layer were
+    // deleted outright, since `sampleIdleLayer` never writes Y. Prove idle
+    // actually ran by checking its Z contribution (`-swing * 0.4`): FAST_GUARD
+    // authors chest Z as exactly `0`, so any non-zero Z here can only be the
+    // idle sway, not the guard pose.
+    expect(Math.abs(sample.pose.chest.rotation[2])).toBeGreaterThan(1e-4)
     fighter.dispose()
   })
 
