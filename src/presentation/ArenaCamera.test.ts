@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { ArenaCamera, type HorizontalFramingTarget } from './ArenaCamera'
+import { COMBAT_STYLES } from '../content/combatStyles'
+import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
+import { advanceBattleTick, createBattle, fighterBySide, type BattleState } from '../simulation/battle'
 
 const DEGREE = Math.PI / 180
 
@@ -248,14 +251,44 @@ describe('ArenaCamera', () => {
       expect(onScreenSeparation(targets, 0)).toBeLessThan(2.9)
     })
 
-    it('clamps to 30 degrees, so an axis pointing at the camera never swings the shot around the fight', () => {
+    it('stays continuous when the pair axis crosses the frame vertical', () => {
+      // The raw principal axis is reported in (-90, +90] degrees, so 91 degrees
+      // comes back as -89. Without an unwrap the desired yaw jumps ~180 degrees
+      // here and the damping then walks the camera through yaw=0 -- straight
+      // down the pair's own axis, the exact shot this whole slice removes.
       const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
-      // 80 degrees off X: nearly nose-on to the home shot, the worst case.
+      camera.reset(pairOnAxis(89))
+
+      const before = camera.update(pairOnAxis(89), 1e6).yaw
+      const across = camera.update(pairOnAxis(91), 1e6).yaw
+
+      expect(Math.abs(across - before)).toBeLessThan(15 * DEGREE)
+    })
+
+    it('follows an axis pointing at the camera instead of giving up at 30 degrees', () => {
+      const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
+      // 80 degrees off X: nearly nose-on to the home shot, the case the old
+      // +/-30 clamp could not frame at all.
       const framed = camera.reset(pairOnAxis(80))
-      expect(framed.yaw).toBeCloseTo(-30 * DEGREE, 10)
+      expect(framed.yaw).toBeCloseTo(-80 * DEGREE, 10)
 
       const settled = camera.update(pairOnAxis(80), 1e6)
-      expect(settled.yaw).toBeCloseTo(-30 * DEGREE, 10)
+      expect(settled.yaw).toBeCloseTo(-80 * DEGREE, 10)
+
+      // The property the old test was really protecting: the shot is squared
+      // to the pair, not looking down its axis.
+      expect(onScreenSeparation(pairOnAxis(80), settled.yaw)).toBeGreaterThan(
+        onScreenSeparation(pairOnAxis(80), 0),
+      )
+    })
+
+    it('still refuses to swing past 90 degrees from the home shot', () => {
+      const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
+      camera.reset(pairOnAxis(0))
+      for (let step = 0; step < 40; step += 1) {
+        camera.update(pairOnAxis(89), 1e6)
+      }
+      expect(Math.abs(camera.update(pairOnAxis(89), 1e6).yaw)).toBeLessThanOrEqual(90 * DEGREE + 1e-9)
     })
 
     it('reads the spread as an unsigned axis: mirroring the pair through its own center cannot flip the camera to the other side', () => {
@@ -327,6 +360,27 @@ describe('ArenaCamera', () => {
       const reset = camera.reset(pairOnAxis(10))
       expect(reset.yaw).toBeCloseTo(-10 * DEGREE, 10)
       expect(camera.update(pairOnAxis(10), 0)).toEqual(reset)
+    })
+
+    it('does not flip the reference on noise around a degenerate spread', () => {
+      // Two targets a hair apart: covariance is near zero and its sign is
+      // numerically fragile. The camera must not treat that as a real axis
+      // rotation and swing.
+      const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
+      camera.reset(pairOnAxis(0))
+      const yaws: number[] = []
+      for (const epsilon of [1e-9, -1e-9, 1e-12, -1e-12, 0]) {
+        yaws.push(
+          camera.update(
+            [
+              { id: 'a', centerX: -1, centerZ: epsilon, radius: 0.5 },
+              { id: 'b', centerX: 1, centerZ: -epsilon, radius: 0.5 },
+            ],
+            0.5,
+          ).yaw,
+        )
+      }
+      for (const yaw of yaws) expect(Math.abs(yaw)).toBeLessThan(5 * DEGREE)
     })
   })
 
@@ -493,5 +547,33 @@ describe('ArenaCamera', () => {
       { id: 'b', centerX: 1, centerZ: 0, radius: 0.5 },
     ])
     expect(Object.keys(state).sort()).toEqual(['distance', 'lookTargetX', 'lookTargetZ', 'yaw'])
+  })
+})
+
+describe('yaw continuity over real bouts', () => {
+  it('never changes the desired yaw by more than 15 degrees in a tick, in any pairing', () => {
+    for (const home of homeRoster) {
+      for (const away of opponents) {
+        const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
+        let battle: BattleState = createBattle({ home, away, seed: BASELINE_TEST_SEED, combatStyles: COMBAT_STYLES })
+        const framing = (state: BattleState) => {
+          const h = fighterBySide(state, 'home')
+          const a = fighterBySide(state, 'away')
+          return [
+            { id: 'home', centerX: h.position.x, centerZ: h.position.z, radius: 0.6 },
+            { id: 'away', centerX: a.position.x, centerZ: a.position.z, radius: 0.6 },
+          ]
+        }
+        let previous = camera.reset(framing(battle)).yaw
+        let ticks = 0
+        while (battle.phase === 'running' && ticks < 3600) {
+          battle = advanceBattleTick(battle)
+          const yaw = camera.update(framing(battle), 1 / 60).yaw
+          expect(Math.abs(yaw - previous)).toBeLessThan(15 * DEGREE)
+          previous = yaw
+          ticks += 1
+        }
+      }
+    }
   })
 })

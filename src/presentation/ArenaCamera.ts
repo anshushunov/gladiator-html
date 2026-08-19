@@ -12,10 +12,12 @@
 // extent) dead zone, a 0.75s look-target damping time constant, a separate
 // 1.25s distance damping time constant, a 10% equipment-radius margin, a
 // distance clamp of 11..18 world units, and -- since the 2026-08-18
-// combat-axis amendment -- a 5 degree yaw dead zone, a 1.5s yaw damping time
-// constant, and a +/-30 degree yaw clamp. Everything else here (the look
-// dead zone's own reference measure, and the extent->distance mapping) is an
-// undocumented implementation choice, called out below where it is made.
+// combat-axis amendment -- a 5 degree yaw dead zone and a 1.5s yaw damping
+// time constant, and -- since the 2026-08-19 legibility slice -- a +/-90
+// degree yaw clamp (widened from the amendment's +/-30, made safe by the
+// continuity fix below). Everything else here (the look dead zone's own
+// reference measure, and the extent->distance mapping) is an undocumented
+// implementation choice, called out below where it is made.
 
 export interface HorizontalFramingTarget {
   id: string
@@ -63,8 +65,16 @@ const YAW_DEAD_ZONE_RADIANS = (5 * Math.PI) / 180
 /** design.md (2026-08-18 amendment): "a 1.5 s damping time constant", deliberately the slowest of the three. */
 const YAW_DAMPING_TIME_CONSTANT_SECONDS = 1.5
 
-/** design.md (2026-08-18 amendment): "clamped to +/-30 degrees from the arena's authored home shot." */
-const MAX_YAW_RADIANS = (30 * Math.PI) / 180
+/**
+ * design.md (2026-08-19 legibility slice): "+/-90 degrees from the arena's
+ * authored home shot", superseding the 2026-08-18 amendment's +/-30. The bound
+ * is not arbitrary: with the unwrap in place the peak measured offset from
+ * home across all nine pairings is exactly 90 degrees, because the axis
+ * oscillates rather than winding. So the camera tracks the axis essentially
+ * always, and where it cannot it holds at the limit instead of flipping to the
+ * far side of the arena.
+ */
+const MAX_YAW_RADIANS = (90 * Math.PI) / 180
 
 /**
  * Neither the look nor the distance dead zone has a real on-screen
@@ -149,18 +159,37 @@ function measureSpreadAxisAngle(targets: readonly HorizontalFramingTarget[]): nu
 }
 
 /**
- * The yaw that would put `targets`' spread axis straight across the frame:
+ * A spread axis has period `pi`, so `angle`, `angle + pi` and `angle - pi` all
+ * name the same axis. This returns whichever representative sits nearest
+ * `reference`, which is what makes the desired yaw a continuous function of
+ * the fighters' positions: without it, a pair rotating past the frame vertical
+ * flips the reported angle by nearly half a turn, and the damping then walks
+ * the camera through `yaw = 0` -- pointing it straight along the pair's axis.
+ */
+function nearestAxisRepresentative(angle: number, reference: number): number {
+  let candidate = angle
+  while (candidate - reference > Math.PI / 2) candidate -= Math.PI
+  while (candidate - reference < -Math.PI / 2) candidate += Math.PI
+  return candidate
+}
+
+/**
+ * The continuous yaw that would put `targets`' spread axis across the frame:
  * the spread axis negated (a camera yawed by `-theta` has its
- * screen-horizontal axis along `+theta`) and clamped to the authored swing
- * limit. The `angle === 0` branch is not a micro-optimization -- it keeps a
+ * screen-horizontal axis along `+theta`), resolved to the representative
+ * nearest `reference`. Unclamped on purpose -- the caller clamps, and keeps
+ * this unclamped value as its own reference, so that pinning at the clamp
+ * limit never drags the unwrap out of phase with the real axis.
+ *
+ * The `angle === 0` branch is not a micro-optimization -- it keeps a
  * degenerate group's yaw at `+0` instead of `-0`, so a stacked pair and a
  * pristine `reset()` produce states that are `Object.is`-identical rather
  * than merely `==`.
  */
-function measureDesiredYaw(targets: readonly HorizontalFramingTarget[]): number {
+function measureUnclampedYaw(targets: readonly HorizontalFramingTarget[], reference: number): number {
   const angle = measureSpreadAxisAngle(targets)
-  if (angle === 0) return 0
-  return clamp(-angle, -MAX_YAW_RADIANS, MAX_YAW_RADIANS)
+  if (angle === 0 && reference === 0) return 0
+  return nearestAxisRepresentative(-angle, reference)
 }
 
 /**
@@ -249,6 +278,7 @@ export class ArenaCamera {
   private framedExtentReference: number
   private distanceReference: number
   private yawReference: number
+  private unclampedYawReference: number
 
   /** Read-only by convention: only `reset()`/`update()` (below) ever assign it. */
   state: ArenaCameraState
@@ -262,6 +292,7 @@ export class ArenaCamera {
     this.framedExtentReference = 0
     this.distanceReference = initialDistance
     this.yawReference = 0
+    this.unclampedYawReference = 0
     this.state = { lookTargetX: 0, lookTargetZ: 0, distance: initialDistance, yaw: 0 }
   }
 
@@ -272,8 +303,10 @@ export class ArenaCamera {
    * `update()` to chase except genuinely new motion.
    */
   reset(targets: readonly HorizontalFramingTarget[]): ArenaCameraState {
-    const yaw = measureDesiredYaw(targets)
+    const unclamped = measureUnclampedYaw(targets, 0)
+    const yaw = clamp(unclamped, -MAX_YAW_RADIANS, MAX_YAW_RADIANS)
     const { midpointX, midpointZ, extent } = measureGroup(targets, yaw)
+    this.unclampedYawReference = unclamped
     this.yawReference = yaw
     this.lookTargetReferenceX = midpointX
     this.lookTargetReferenceZ = midpointZ
@@ -297,9 +330,10 @@ export class ArenaCamera {
     // measured through the yaw the camera *currently* holds: extent and look
     // target must describe the shot on screen right now, not the shot the
     // camera is still damping toward.
-    const desiredYaw = measureDesiredYaw(targets)
-    if (Math.abs(desiredYaw - this.yawReference) > YAW_DEAD_ZONE_RADIANS) {
-      this.yawReference = desiredYaw
+    const unclamped = measureUnclampedYaw(targets, this.unclampedYawReference)
+    if (Math.abs(unclamped - this.unclampedYawReference) > YAW_DEAD_ZONE_RADIANS) {
+      this.unclampedYawReference = unclamped
+      this.yawReference = clamp(unclamped, -MAX_YAW_RADIANS, MAX_YAW_RADIANS)
     }
     const yaw = approach(this.state.yaw, this.yawReference, YAW_DAMPING_TIME_CONSTANT_SECONDS, elapsedSeconds)
 
