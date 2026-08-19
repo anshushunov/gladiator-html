@@ -6,7 +6,14 @@ import { deriveBoutSeed } from './random'
 
 export type BoutIndex = 0 | 1 | 2
 export type SeriesPhase = 'planning' | 'fighting' | 'between-bouts' | 'summary'
-export type Assignments = [string | null, string | null, string | null]
+
+/** A slot during planning: either a chosen gladiator or still empty. */
+export type PlanningSlot = { kind: 'fighter'; fighterId: string } | null
+export type PlanningAssignments = [PlanningSlot, PlanningSlot, PlanningSlot]
+
+/** A slot after `confirmLineup`: empty is no longer possible, only forfeited. */
+export type SeriesSlot = { kind: 'fighter'; fighterId: string } | { kind: 'forfeit' }
+
 export interface SeriesScore { home: number; away: number }
 export interface BoutResult {
   boutIndex: BoutIndex
@@ -18,6 +25,10 @@ export interface BoutResult {
   durationTicks: number
   remainingHpRatio: { home: number; away: number }
 }
+export type BoutOutcome =
+  | ({ kind: 'fought' } & BoutResult)
+  | { kind: 'forfeit'; boutIndex: BoutIndex; opponentId: string }
+
 export type SeriesCommandFailure = 'lineup-locked' | 'lineup-incomplete' | 'slot-empty' | 'no-bout-pending' | 'series-not-finished'
 export type SeriesCommandResult = { ok: true; state: SeriesState } | { ok: false; state: SeriesState; reason: SeriesCommandFailure }
 
@@ -27,18 +38,21 @@ export interface SeriesState {
   opponents: readonly FighterDefinition[]
   seed: number
   combatStyles: CombatStyleCatalog
-  assignments: Assignments
+  homeStartingHpByFighterId: Readonly<Record<string, number>>
+  assignments: PlanningAssignments
+  slots: readonly SeriesSlot[]
   activeBoutIndex: BoutIndex | null
   activeBattle?: BattleState
-  results: BoutResult[]
+  results: readonly BoutOutcome[]
   score: SeriesScore
 }
 
 export interface SeriesConfig {
-  homeRoster: readonly FighterDefinition[]
+  homeRoster: readonly FighterDefinition[]     // fightable gladiators only
   opponents: readonly FighterDefinition[]
   seed: number
   combatStyles: CombatStyleCatalog
+  homeStartingHpByFighterId: Readonly<Record<string, number>>
 }
 
 export function createSeries(config: SeriesConfig): SeriesState {
@@ -48,11 +62,20 @@ export function createSeries(config: SeriesConfig): SeriesState {
     opponents: config.opponents,
     seed: config.seed,
     combatStyles: config.combatStyles,
+    homeStartingHpByFighterId: config.homeStartingHpByFighterId,
     assignments: [null, null, null],
+    slots: [],
     activeBoutIndex: null,
     results: [],
     score: { home: 0, away: 0 },
   }
+}
+
+/** How many of the three slots must actually be filled before the lineup can
+ * be confirmed: `homeRoster` carries only fightable gladiators, so a roster
+ * shorter than three bouts requires fewer assignments, not zero-filled ones. */
+export function requiredAssignmentCount(state: SeriesState): number {
+  return Math.min(3, state.homeRoster.length)
 }
 
 export function getAssignmentComparison(state: SeriesState, homeFighterId: string, boutIndex: BoutIndex): MatchupComparison {
@@ -67,10 +90,10 @@ export function assignFighter(state: SeriesState, homeFighterId: string, boutInd
   if (!state.homeRoster.some(({ id }) => id === homeFighterId)) throw new Error(`Unknown home fighter: ${homeFighterId}`)
   assertBoutIndex(boutIndex)
   const slot = boutIndex as BoutIndex
-  const assignments: Assignments = [...state.assignments]
-  const previousSlot = assignments.indexOf(homeFighterId)
+  const assignments: PlanningAssignments = [...state.assignments]
+  const previousSlot = assignments.findIndex((entry) => entry?.fighterId === homeFighterId)
   if (previousSlot !== -1) assignments[previousSlot as BoutIndex] = null
-  assignments[slot] = homeFighterId
+  assignments[slot] = { kind: 'fighter', fighterId: homeFighterId }
   return { ok: true, state: { ...state, assignments } }
 }
 
@@ -79,27 +102,68 @@ export function unassignSlot(state: SeriesState, boutIndex: number): SeriesComma
   assertBoutIndex(boutIndex)
   const slot = boutIndex as BoutIndex
   if (state.assignments[slot] === null) return { ok: false, state, reason: 'slot-empty' }
-  const assignments: Assignments = [...state.assignments]
+  const assignments: PlanningAssignments = [...state.assignments]
   assignments[slot] = null
   return { ok: true, state: { ...state, assignments } }
 }
 
+/** Freezes planning slots into committed slots: assigned gladiators stay, empty slots become forfeits. */
+function freezeSlots(assignments: PlanningAssignments): readonly SeriesSlot[] {
+  return assignments.map((slot) => slot ?? ({ kind: 'forfeit' } as const))
+}
+
+/**
+ * Walks forward from `boutIndex` over any forfeited slots, recording an away
+ * win for each, and returns the first slot that must actually be fought --
+ * or `null` when the series ends inside the walk. Pure: no battle is created
+ * here, so an all-forfeit series never constructs an encounter.
+ */
+function advancePastForfeits(state: SeriesState, from: BoutIndex): { state: SeriesState; next: BoutIndex | null } {
+  let results = [...state.results]
+  let score = { ...state.score }
+  for (let index = from; index <= 2; index += 1) {
+    const slot = state.slots[index]
+    if (slot.kind === 'fighter') {
+      return { state: { ...state, results, score }, next: index as BoutIndex }
+    }
+    results = [...results, { kind: 'forfeit', boutIndex: index as BoutIndex, opponentId: state.opponents[index].id }]
+    score = { ...score, away: score.away + 1 }
+  }
+  return { state: { ...state, results, score, phase: 'summary', activeBoutIndex: 2, activeBattle: undefined }, next: null }
+}
+
+function startBoutBattle(state: SeriesState, boutIndex: BoutIndex): BattleState {
+  const slot = state.slots[boutIndex]
+  if (slot.kind !== 'fighter') throw new Error(`Slot ${boutIndex} is not fightable`)
+  return createBattle({
+    home: homeFighter(state, slot.fighterId),
+    away: state.opponents[boutIndex],
+    seed: deriveBoutSeed(state.seed, boutIndex),
+    combatStyles: state.combatStyles,
+    startingHp: { home: state.homeStartingHpByFighterId[slot.fighterId] },
+  })
+}
+
 export function confirmLineup(state: SeriesState): SeriesCommandResult {
   if (state.phase !== 'planning') return { ok: false, state, reason: 'lineup-locked' }
-  const [first, second, third] = state.assignments
-  if (first === null || second === null || third === null) return { ok: false, state, reason: 'lineup-incomplete' }
-  const homeFighterId = state.assignments[0] as string
-  const battle = createBattle({ home: homeFighter(state, homeFighterId), away: state.opponents[0], seed: deriveBoutSeed(state.seed, 0), combatStyles: state.combatStyles })
-  return { ok: true, state: { ...state, phase: 'fighting', activeBoutIndex: 0, activeBattle: battle } }
+  const filled = state.assignments.filter((entry) => entry !== null).length
+  if (filled !== requiredAssignmentCount(state)) return { ok: false, state, reason: 'lineup-incomplete' }
+  const slots = freezeSlots(state.assignments)
+  const frozen: SeriesState = { ...state, slots }
+  const { state: walked, next } = advancePastForfeits(frozen, 0)
+  if (next === null) return { ok: true, state: walked }
+  const battle = startBoutBattle(walked, next)
+  return { ok: true, state: { ...walked, phase: 'fighting', activeBoutIndex: next, activeBattle: battle } }
 }
 
 export function startNextBout(state: SeriesState): SeriesCommandResult {
   if (state.phase !== 'between-bouts') return { ok: false, state, reason: 'no-bout-pending' }
   if (state.activeBoutIndex === null) throw new Error(`Invalid bout index: ${state.activeBoutIndex}`)
-  const boutIndex = (state.activeBoutIndex + 1) as BoutIndex
-  const homeFighterId = state.assignments[boutIndex] as string
-  const battle = createBattle({ home: homeFighter(state, homeFighterId), away: state.opponents[boutIndex], seed: deriveBoutSeed(state.seed, boutIndex), combatStyles: state.combatStyles })
-  return { ok: true, state: { ...state, phase: 'fighting', activeBoutIndex: boutIndex, activeBattle: battle } }
+  const from = (state.activeBoutIndex + 1) as BoutIndex
+  const { state: walked, next } = advancePastForfeits(state, from)
+  if (next === null) return { ok: true, state: walked }
+  const battle = startBoutBattle(walked, next)
+  return { ok: true, state: { ...walked, phase: 'fighting', activeBoutIndex: next, activeBattle: battle } }
 }
 
 export function rematch(state: SeriesState): SeriesCommandResult {
@@ -110,6 +174,7 @@ export function rematch(state: SeriesState): SeriesCommandResult {
       ...state,
       phase: 'planning',
       assignments: [null, null, null],
+      slots: [],
       activeBoutIndex: null,
       activeBattle: undefined,
       results: [],
@@ -131,8 +196,10 @@ export function advanceSeriesTicks(state: SeriesState, ticks: number, collector?
   if (battle.winnerSide === undefined || battle.finishReason === undefined) {
     throw new Error('Finished battle is missing winnerSide/finishReason')
   }
-  const result: BoutResult = {
-    boutIndex: state.activeBoutIndex,
+  const boutIndex = state.activeBoutIndex
+  const result: BoutOutcome = {
+    kind: 'fought',
+    boutIndex,
     homeFighterId: home.definition.id,
     opponentId: away.definition.id,
     winnerSide: battle.winnerSide,
@@ -148,8 +215,21 @@ export function advanceSeriesTicks(state: SeriesState, ticks: number, collector?
     home: state.score.home + (battle.winnerSide === 'home' ? 1 : 0),
     away: state.score.away + (battle.winnerSide === 'away' ? 1 : 0),
   }
-  const phase: SeriesPhase = state.activeBoutIndex === 2 ? 'summary' : 'between-bouts'
-  return { ...state, phase, activeBattle: battle, results: [...state.results, result], score }
+  const afterBout: SeriesState = { ...state, activeBattle: battle, results: [...state.results, result], score }
+  if (boutIndex === 2) return { ...afterBout, phase: 'summary' }
+
+  // Walk past any forfeited slots immediately after this one, so a series
+  // that has nobody to send out next still reaches `summary` without
+  // stopping in `between-bouts` waiting for a `startNextBout` that would
+  // have nothing to fight.
+  const { state: walked, next } = advancePastForfeits(afterBout, (boutIndex + 1) as BoutIndex)
+  if (next === null) return walked
+  // `activeBoutIndex` becomes "the last slot this walk has already accounted
+  // for" -- one behind `next` -- rather than staying at the just-fought bout.
+  // `startNextBout` recomputes `activeBoutIndex + 1` and re-walks from there;
+  // leaving this at the fought bout's own index would make that second walk
+  // re-scan (and re-record) the very forfeits this one just recorded.
+  return { ...walked, phase: 'between-bouts', activeBoutIndex: (next - 1) as BoutIndex }
 }
 
 function assertBoutIndex(boutIndex: number): void {

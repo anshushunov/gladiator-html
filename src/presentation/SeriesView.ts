@@ -1,5 +1,5 @@
 import { formatBattleFeed } from './battleFeed'
-import { getAssignmentComparison, type BoutIndex, type SeriesPhase, type SeriesState } from '../simulation/series'
+import { getAssignmentComparison, type BoutIndex, type BoutOutcome, type PlanningSlot, type SeriesPhase, type SeriesState } from '../simulation/series'
 import type { Archetype, FighterDefinition, FighterSide } from '../simulation/fighters'
 import { fighterBySide, type BattleState } from '../simulation/battle'
 
@@ -22,7 +22,15 @@ const ARCHETYPE_LABELS: Record<Archetype, string> = { heavy: 'Heavy', fast: 'Fas
 type PendingFocus = { mode: 'after-assign' } | { mode: 'after-unassign'; fighterId: string }
 
 function isLineupComplete(state: SeriesState): boolean {
-  return state.assignments.every((id) => id !== null)
+  return state.assignments.every((slot) => slot !== null)
+}
+
+/** Task 3 turned `assignments` entries from a bare fighter id into a
+ * `PlanningSlot`; this is the one place that unwraps it back to an id
+ * (or `null` for an empty slot), so every read site below stays a plain
+ * string comparison. */
+function slotFighterId(slot: PlanningSlot): string | null {
+  return slot?.fighterId ?? null
 }
 
 function fighterName(roster: readonly FighterDefinition[], id: string): string {
@@ -141,8 +149,8 @@ export class SeriesView {
       case 'remove-assignment': {
         const boutIndex = this.parseSlot(target)
         if (boutIndex === null) return
-        const returned = this.lastState?.assignments[boutIndex]
-        if (returned !== null && returned !== undefined) this.pendingFocus = { mode: 'after-unassign', fighterId: returned }
+        const returned = slotFighterId(this.lastState?.assignments[boutIndex] ?? null)
+        if (returned !== null) this.pendingFocus = { mode: 'after-unassign', fighterId: returned }
         this.onIntent({ type: 'unassign', boutIndex })
         return
       }
@@ -199,7 +207,7 @@ export class SeriesView {
       if (isLineupComplete(state)) {
         this.shell.querySelector<HTMLElement>('[data-testid="confirm-lineup"]')?.focus()
       } else {
-        const firstUnassigned = state.homeRoster.find(({ id }) => !state.assignments.includes(id))
+        const firstUnassigned = state.homeRoster.find(({ id }) => !state.assignments.some((slot) => slotFighterId(slot) === id))
         if (firstUnassigned) this.shell.querySelector<HTMLElement>(`[data-testid="fighter-${firstUnassigned.id}"]`)?.focus()
       }
     } else {
@@ -265,7 +273,7 @@ export class SeriesView {
   }
 
   private buildFighterOption(state: SeriesState, fighter: FighterDefinition): HTMLButtonElement {
-    const assignedIndex = state.assignments.indexOf(fighter.id)
+    const assignedIndex = state.assignments.findIndex((slot) => slotFighterId(slot) === fighter.id)
     const selected = this.selectedFighterId === fighter.id
     const button = el('button', {
       class: 'fighter-option',
@@ -293,7 +301,7 @@ export class SeriesView {
 
   private buildMatchupSlot(state: SeriesState, boutIndex: BoutIndex): HTMLLIElement {
     const opponent = state.opponents[boutIndex]
-    const assignedId = state.assignments[boutIndex]
+    const assignedId = slotFighterId(state.assignments[boutIndex])
     const item = el('li', { class: 'matchup-slot' })
     if (assignedId !== null) item.classList.add('matchup-slot--occupied')
 
@@ -342,12 +350,12 @@ export class SeriesView {
   private instructionText(state: SeriesState): string {
     if (this.selectedFighterId !== null) {
       const name = fighterName(state.homeRoster, this.selectedFighterId)
-      const assignedIndex = state.assignments.indexOf(this.selectedFighterId)
+      const assignedIndex = state.assignments.findIndex((slot) => slotFighterId(slot) === this.selectedFighterId)
       return assignedIndex === -1
         ? `${name} selected. Choose a bout slot, or press Escape to clear.`
         : `${name} is assigned to bout ${BOUT_NUMERALS[assignedIndex]}. Choose a different slot to move them, or press Escape to clear.`
     }
-    const assignedCount = state.assignments.filter((id) => id !== null).length
+    const assignedCount = state.assignments.filter((slot) => slot !== null).length
     return assignedCount === 0
       ? 'Select a gladiator, then choose one of the three bout slots.'
       : `${assignedCount} of 3 matchups assigned. Select a gladiator, then choose a bout slot.`
@@ -358,16 +366,25 @@ export class SeriesView {
     const section = el('section', { class: 'interstitial', 'aria-labelledby': 'interstitial-heading' })
     if (!result) return section
     const heading = el('h2', { id: 'interstitial-heading', tabindex: '-1' }, 'Between bouts')
-    const homeName = fighterName(state.homeRoster, result.homeFighterId)
-    const awayName = fighterName(state.opponents, result.opponentId)
-    const winnerName = result.winnerSide === 'home' ? homeName : awayName
-    const endedText = result.endedBy === 'defeat' ? 'by defeat' : 'on the time limit'
-    const resultLine = el('p', { class: 'interstitial__result', 'aria-live': 'polite', 'data-testid': 'bout-result-summary' }, `Bout ${BOUT_NUMERALS[result.boutIndex]}: ${winnerName} wins ${endedText}.`)
+    // Forfeited slots get a placeholder line here -- the real forfeit UI
+    // (telegraphing an empty slot, before it is even reached) is Task 8's;
+    // this only has to keep the interstitial from crashing on a result shape
+    // that has no fought fields.
+    const resultText = result.kind === 'forfeit'
+      ? `Bout ${BOUT_NUMERALS[result.boutIndex]}: forfeited, no fighter available.`
+      : (() => {
+          const homeName = fighterName(state.homeRoster, result.homeFighterId)
+          const awayName = fighterName(state.opponents, result.opponentId)
+          const winnerName = result.winnerSide === 'home' ? homeName : awayName
+          const endedText = result.endedBy === 'defeat' ? 'by defeat' : 'on the time limit'
+          return `Bout ${BOUT_NUMERALS[result.boutIndex]}: ${winnerName} wins ${endedText}.`
+        })()
+    const resultLine = el('p', { class: 'interstitial__result', 'aria-live': 'polite', 'data-testid': 'bout-result-summary' }, resultText)
     const scoreLine = el('p', { class: 'interstitial__score' }, `Series ${state.score.home}${RC.enDash}${state.score.away}`)
     const nextLine = el('p', { class: 'interstitial__next', 'data-testid': 'next-matchup' })
     const nextBoutIndex = state.results.length as BoutIndex
     const nextOpponent = state.opponents[nextBoutIndex]
-    const nextHomeId = state.assignments[nextBoutIndex]
+    const nextHomeId = slotFighterId(state.assignments[nextBoutIndex])
     if (nextOpponent && nextHomeId) {
       const comparison = getAssignmentComparison(state, nextHomeId, nextBoutIndex)
       nextLine.textContent = `Next: ${fighterName(state.homeRoster, nextHomeId)} vs ${nextOpponent.name} ${RC.emDash} ${comparison}.`
@@ -390,7 +407,13 @@ export class SeriesView {
     return section
   }
 
-  private buildSummaryBout(state: SeriesState, result: NonNullable<SeriesState['results'][number]>): HTMLLIElement {
+  private buildSummaryBout(state: SeriesState, result: BoutOutcome): HTMLLIElement {
+    // Same forfeit stub as `buildInterstitial` -- Task 8 owns the real UI.
+    if (result.kind === 'forfeit') {
+      const awayName = fighterName(state.opponents, result.opponentId)
+      return el('li', { class: 'summary__bout', 'data-testid': 'bout-result' },
+        `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} forfeited: no gladiator available to face ${awayName}.`)
+    }
     const homeName = fighterName(state.homeRoster, result.homeFighterId)
     const awayName = fighterName(state.opponents, result.opponentId)
     const winnerName = result.winnerSide === 'home' ? homeName : awayName

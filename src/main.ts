@@ -112,7 +112,11 @@ const seriesView = new SeriesView(shell, applyIntent)
 const arenaView = new ArenaView(canvas)
 const combatAudio = new CombatAudio(createBrowserAudioBackend())
 
-let series: SeriesState = createSeries({ homeRoster, opponents, seed, combatStyles: COMBAT_STYLES })
+// The season layer (Task 5) will supply per-gladiator starting HP; until then
+// every home fighter starts at full health, same as before `startingHp`
+// existed.
+const homeStartingHpByFighterId = Object.fromEntries(homeRoster.map((fighter) => [fighter.id, fighter.maxHp]))
+let series: SeriesState = createSeries({ homeRoster, opponents, seed, combatStyles: COMBAT_STYLES, homeStartingHpByFighterId })
 const runtime: RuntimeViewState = { paused: snapshotMode, speed: 1, soundEnabled: false }
 let previousFrame = performance.now()
 let lastPhase = series.phase
