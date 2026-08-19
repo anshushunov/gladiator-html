@@ -7,7 +7,6 @@ import {
   conditionIndex,
   isFightable,
   startingHpFor,
-  type FighterCondition,
 } from './condition'
 
 describe('condition ladder', () => {

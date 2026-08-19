@@ -129,7 +129,13 @@ function advancePastForfeits(state: SeriesState, from: BoutIndex): { state: Seri
     results = [...results, { kind: 'forfeit', boutIndex: index as BoutIndex, opponentId: state.opponents[index].id }]
     score = { ...score, away: score.away + 1 }
   }
-  return { state: { ...state, results, score, phase: 'summary', activeBoutIndex: 2, activeBattle: undefined }, next: null }
+  // `activeBattle` is deliberately left as-is, not cleared: on the all-forfeit
+  // path it is already `undefined` (no bout was ever started), and on the
+  // trailing-forfeit path (a series that ends by walking off the end right
+  // after the last fought bout resolves) it is the finished battle for that
+  // last fought bout -- exactly what a series that ends by an ordinary third
+  // bout leaves behind, so both ways of reaching `summary` behave the same.
+  return { state: { ...state, results, score, phase: 'summary', activeBoutIndex: 2 }, next: null }
 }
 
 function startBoutBattle(state: SeriesState, boutIndex: BoutIndex): BattleState {

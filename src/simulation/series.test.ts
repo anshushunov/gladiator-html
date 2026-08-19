@@ -4,7 +4,7 @@ import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
 import { advanceBattleTicks, fighterBySide, MAX_BOUT_TICKS } from './battle'
 import type { FighterDefinition } from './fighters'
 import { formatTraceHash } from './random'
-import { advanceSeriesTicks, assignFighter, confirmLineup, createSeries, rematch, requiredAssignmentCount, startNextBout, unassignSlot, type BoutOutcome, type PlanningSlot } from './series'
+import { advanceSeriesTicks, assignFighter, confirmLineup, createSeries, rematch, requiredAssignmentCount, startNextBout, unassignSlot, type BoutOutcome, type PlanningSlot, type SeriesState } from './series'
 
 const createMvpSeries = () => createSeries({
   homeRoster,
@@ -358,22 +358,38 @@ describe('short-handed series', () => {
     expect(confirmLineup(two).ok).toBe(true)
   })
 
+  /** Plays a short-handed series to completion, alternating `startNextBout`
+   * and `advanceSeriesTicks` exactly like `playSeries` does for full
+   * lineups -- the forfeit walk can land a series straight in `summary`
+   * without ever visiting `between-bouts`, so this loop (unlike `playSeries`)
+   * has to tolerate `fighting` finishing directly into `summary`. */
+  function playShortHandedSeries(state: SeriesState): SeriesState {
+    if (state.phase === 'fighting') state = advanceSeriesTicks(state, 20_000)
+    while (state.phase === 'between-bouts') {
+      state = advanceSeriesTicks(startNextBout(state).state, 20_000)
+    }
+    return state
+  }
+
   it('forfeits the uncovered slot and still reaches three outcomes', () => {
     let state = createSeries(twoFighterConfig())
     state = assignFighter(state, 'brutus', 0).state
     state = assignFighter(state, 'aquila', 2).state
     state = confirmLineup(state).state
-    state = advanceSeriesTicks(state, 20_000)
-    while (state.phase === 'between-bouts') {
-      state = advanceSeriesTicks(startNextBout(state).state, 20_000)
-    }
+    state = playShortHandedSeries(state)
 
     expect(state.phase).toBe('summary')
     expect(state.results).toHaveLength(3)
     const forfeited = state.results.filter((outcome) => outcome.kind === 'forfeit')
     expect(forfeited).toHaveLength(1)
     expect(forfeited[0]).toMatchObject({ boutIndex: 1, opponentId: opponents[1].id })
-    expect(state.score.away).toBeGreaterThanOrEqual(1)
+    // Every bout (fought or forfeited) contributes exactly one point, so the
+    // exact score is fully determined once the forfeit's contribution (one
+    // away point) and the two fought bouts' winners are known -- pinned here
+    // (read from the actual run, not guessed) rather than left as a >= 1
+    // lower bound, which would stay green even if a fought bout's winner
+    // silently flipped.
+    expect(state.score).toEqual({ home: 0, away: 3 })
   })
 
   it('completes a series with no fightable gladiators at all', () => {
@@ -384,6 +400,75 @@ describe('short-handed series', () => {
     expect(state.results).toHaveLength(3)
     expect(state.score).toEqual({ home: 0, away: 3 })
     expect(state.activeBattle).toBeUndefined()
+  })
+
+  it('forfeits a leading slot before any bout is fought', () => {
+    let state = createSeries(twoFighterConfig())
+    state = assignFighter(state, 'brutus', 1).state
+    state = assignFighter(state, 'aquila', 2).state
+    state = confirmLineup(state).state
+    state = playShortHandedSeries(state)
+
+    expect(state.phase).toBe('summary')
+    expect(state.results).toHaveLength(3)
+    const forfeited = state.results.filter((outcome) => outcome.kind === 'forfeit')
+    expect(forfeited).toHaveLength(1)
+    expect(forfeited[0]).toMatchObject({ boutIndex: 0, opponentId: opponents[0].id })
+    expect(state.score).toEqual({ home: 1, away: 2 })
+  })
+
+  // Regression coverage for a fix-round finding: a series that ends by
+  // walking off the end right after its *last fought* bout (rather than
+  // fighting bout index 2 itself) used to null out `activeBattle` in that
+  // branch of `advancePastForfeits`, unlike a series that ends by actually
+  // fighting bout 2. `main.ts`'s `stepBattleTick` only rebuilds its render
+  // frame when `currentBattle !== previousBattle` and both are defined, so a
+  // `summary` state with `activeBattle: undefined` silently dropped the
+  // final bout's own event batch. Asserted here by checking `activeBattle`
+  // is the finished battle for the last *fought* slot (bout 1, aquila vs
+  // `opponents[1]`), not merely that it is defined.
+  it('forfeits a trailing slot and keeps the last fought battle active', () => {
+    let state = createSeries(twoFighterConfig())
+    state = assignFighter(state, 'brutus', 0).state
+    state = assignFighter(state, 'aquila', 1).state
+    state = confirmLineup(state).state
+    state = playShortHandedSeries(state)
+
+    expect(state.phase).toBe('summary')
+    expect(state.results).toHaveLength(3)
+    const forfeited = state.results.filter((outcome) => outcome.kind === 'forfeit')
+    expect(forfeited).toHaveLength(1)
+    expect(forfeited[0]).toMatchObject({ boutIndex: 2, opponentId: opponents[2].id })
+
+    if (!state.activeBattle) throw new Error('Expected the last fought bout\'s battle to still be active')
+    expect(state.activeBattle.phase).toBe('finished')
+    const home = fighterBySide(state.activeBattle, 'home')
+    const away = fighterBySide(state.activeBattle, 'away')
+    expect(home.definition.id).toBe('aquila')
+    expect(away.definition.id).toBe(opponents[1].id)
+    expect(state.score).toEqual({ home: 0, away: 3 })
+  })
+
+  it('forfeits two consecutive slots when only one gladiator is available', () => {
+    let state = createSeries({
+      homeRoster: [brutus],
+      opponents,
+      seed: 20260815,
+      combatStyles: COMBAT_STYLES,
+      homeStartingHpByFighterId: { brutus: brutus.maxHp },
+    })
+    expect(requiredAssignmentCount(state)).toBe(1)
+    state = assignFighter(state, 'brutus', 0).state
+    state = confirmLineup(state).state
+    state = playShortHandedSeries(state)
+
+    expect(state.phase).toBe('summary')
+    expect(state.results).toHaveLength(3)
+    const forfeited = state.results.filter((outcome) => outcome.kind === 'forfeit')
+    expect(forfeited).toHaveLength(2)
+    expect(forfeited.map((outcome) => outcome.boutIndex)).toEqual([1, 2])
+    expect(forfeited.map((outcome) => outcome.opponentId)).toEqual([opponents[1].id, opponents[2].id])
+    expect(state.score).toEqual({ home: 0, away: 3 })
   })
 })
 
