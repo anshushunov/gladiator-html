@@ -368,8 +368,8 @@ describe('battle duel adapter', () => {
   })
 
   it('passes per-side starting HP through to the encounter, and changes nothing when omitted', () => {
-    const worn = createBattle({ home: brutus, away: drusus, seed: 123, combatStyles: COMBAT_STYLES, startingHp: { home: 100 } })
-    expect(fighterBySide(worn, 'home').hp).toBe(100)
+    const worn = createBattle({ home: brutus, away: drusus, seed: 123, combatStyles: COMBAT_STYLES, startingHp: { home: 60 } })
+    expect(fighterBySide(worn, 'home').hp).toBe(60)
     expect(fighterBySide(worn, 'away').hp).toBe(drusus.maxHp)
 
     const plain = createBattle({ home: brutus, away: drusus, seed: 123, combatStyles: COMBAT_STYLES })
