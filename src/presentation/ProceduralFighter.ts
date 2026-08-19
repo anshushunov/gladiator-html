@@ -318,7 +318,12 @@ function trackedGeometry<T extends THREE.BufferGeometry>(owned: Owned, geometry:
   return geometry
 }
 
-/** Adds a box mesh spanning from `joint` upward by `height`, plus a cheap rim-outline duplicate. */
+/**
+ * Adds a box mesh spanning from `joint` upward by `height`, plus a cheap
+ * rim-outline duplicate. `forwardOffset` shifts the box along local `+Z`
+ * (the rig's forward axis); it defaults to `0`, which is the Z-centred
+ * placement every caller but the foot wants.
+ */
 function addBoxSegment(
   owned: Owned,
   joint: THREE.Object3D,
@@ -327,10 +332,11 @@ function addBoxSegment(
   depth: number,
   material: THREE.Material,
   slot: string,
+  forwardOffset = 0,
 ): THREE.Mesh {
   const geometry = trackedGeometry(owned, new THREE.BoxGeometry(width, height, depth))
   const mesh = new THREE.Mesh(geometry, material)
-  mesh.position.set(0, height / 2, 0)
+  mesh.position.set(0, height / 2, forwardOffset)
   mesh.userData.slot = slot
   joint.add(mesh)
   addRimOutline(owned, joint, mesh)
@@ -437,7 +443,10 @@ function buildLeg(
   const lowerLeg = addJoint(joints, `lowerLeg.${side}`, upperLeg, -body.upperLegLength)
   addCapsuleBone(owned, lowerLeg, body.lowerLegLength, body.limbRadius * 0.85, material, 'limb')
   const foot = addJoint(joints, `foot.${side}`, lowerLeg, -body.lowerLegLength)
-  addBoxSegment(owned, foot, body.limbRadius * 1.6, body.limbRadius * 0.7, body.footLength, material, 'limb')
+  // The foot's own length, shifted so roughly three quarters of it sits ahead
+  // of the ankle. A Z-centred foot reads identically from front and back,
+  // which is half of why a back view is mistaken for a face-on view.
+  addBoxSegment(owned, foot, body.limbRadius * 1.6, body.limbRadius * 0.7, body.footLength, material, 'limb', body.footLength * 0.25)
 }
 
 function buildEquipment(
@@ -514,6 +523,16 @@ function buildEquipment(
   chest.add(hitCenter)
   anchors.set('hitCenter', hitCenter)
 
+  // Front-versus-back carried by value inside the fighter's own house colour.
+  // A third hue would compete with the red/blue that already separates the two
+  // fighters from each other.
+  const lightenedHouseColor = new THREE.Color(spec.clothColor).lerp(new THREE.Color(0xffffff), 0.35)
+  const plateGeometry = trackedGeometry(owned, new THREE.BoxGeometry(spec.body.torsoWidth * 0.72, spec.body.chestHeight * 0.62, spec.body.torsoDepth * 0.22))
+  const plate = new THREE.Mesh(plateGeometry, trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: lightenedHouseColor, metalness: 0.35, roughness: 0.45 })))
+  plate.position.set(0, spec.body.chestHeight * 0.5, spec.body.torsoDepth * 0.5)
+  plate.userData.slot = 'breastplate'
+  chest.add(plate)
+
   if (equipment.hasHelmet) {
     const domeGeometry = trackedGeometry(owned, new THREE.SphereGeometry(spec.body.headRadius * 1.15, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2))
     const dome = new THREE.Mesh(domeGeometry, bronze)
@@ -577,6 +596,15 @@ export function createProceduralFighter(options: ProceduralFighterOptions): Proc
   addBoxSegment(owned, torso, body.torsoWidth, body.chestHeight, body.torsoDepth, cloth, 'cloth')
   addCapsuleBone(owned, chest, body.neckHeight, body.limbRadius * 0.6, skin, 'skin', 1)
   addSphere(owned, head, body.headRadius, skin, 'skin')
+
+  // A dark slot across the front of the head. Deliberately geometry, not just
+  // colour: it has to read as a front at the arena's framing distance, where
+  // the whole head is a few pixels wide.
+  const visorGeometry = trackedGeometry(owned, new THREE.BoxGeometry(spec.body.headRadius * 1.5, spec.body.headRadius * 0.42, spec.body.headRadius * 0.5))
+  const visor = new THREE.Mesh(visorGeometry, trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: 0x11151c, roughness: 0.6 })))
+  visor.position.set(0, spec.body.headRadius * 0.1, spec.body.headRadius * 0.78)
+  visor.userData.slot = 'visor'
+  head.add(visor)
 
   buildLimb(owned, joints, 'L', chest, body.shoulderWidth, body.shoulderY, body, skin)
   buildLimb(owned, joints, 'R', chest, -body.shoulderWidth, body.shoulderY, body, skin)

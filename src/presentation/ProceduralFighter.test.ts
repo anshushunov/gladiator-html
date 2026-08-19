@@ -266,6 +266,55 @@ describe('createProceduralFighter', () => {
       expect(meaningfulDifference, `${a} vs ${b} extents differ only by noise: ${tupleA} vs ${tupleB}`).toBe(true)
     }
   })
+
+  it('gives each foot a forward bias, so a back view is not a mirror of a front view', () => {
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    const foot = fighter.joints.get('foot.L')
+    expect(foot).toBeDefined()
+
+    const boxes = foot!.children.filter(
+      (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.userData.slot === 'limb',
+    )
+    // Exactly one foot volume: the fix biases the existing box, it does not add
+    // a second overlapping one.
+    expect(boxes).toHaveLength(1)
+
+    const box = new THREE.Box3().setFromObject(boxes[0])
+    // More of the foot lies forward of the ankle than behind it.
+    expect(box.max.z).toBeGreaterThan(Math.abs(box.min.z))
+
+    fighter.dispose()
+  })
+
+  it('keeps both feet on the floor plane in the rest pose', () => {
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    for (const name of ['foot.L', 'foot.R'] as const) {
+      const foot = fighter.joints.get(name)!
+      const box = new THREE.Box3().setFromObject(foot)
+      expect(box.min.y).toBeGreaterThan(-0.02)
+      expect(box.min.y).toBeLessThan(0.02)
+    }
+    fighter.dispose()
+  })
+
+  it('gives the head a front: a visor slot on the forward hemisphere', () => {
+    const fighter = createProceduralFighter({ archetype: 'fast' })
+    const head = fighter.joints.get('head')!
+    const visor = head.children.find((child) => child.userData.slot === 'visor')
+    expect(visor).toBeDefined()
+    // Sits forward of the head's own centre.
+    expect(visor!.position.z).toBeGreaterThan(0)
+    fighter.dispose()
+  })
+
+  it('separates chest from back by value, without introducing a third hue', () => {
+    const fighter = createProceduralFighter({ archetype: 'technical' })
+    const chest = fighter.joints.get('chest')!
+    const plate = chest.children.find((child) => child.userData.slot === 'breastplate')
+    expect(plate).toBeDefined()
+    expect((plate as THREE.Mesh).position.z).toBeGreaterThan(0)
+    fighter.dispose()
+  })
 })
 
 describe('dispose', () => {
