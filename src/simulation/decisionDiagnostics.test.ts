@@ -63,4 +63,64 @@ describe('decision diagnostics', () => {
 
     expect(records.some((entry) => entry.kind === 'forced')).toBe(true)
   })
+
+  it('records skipped decisions with the specific reason that blocked them', () => {
+    const records: DecisionRecord[] = []
+    runBout({ record: (entry) => records.push(entry) })
+
+    const skipped = records.filter((entry) => entry.kind === 'skipped')
+    expect(skipped.length).toBeGreaterThan(0)
+    const reasons = new Set(skipped.map((entry) => (entry.kind === 'skipped' ? entry.reason : undefined)))
+    // A two-combatant duel never skips for 'inactive' (the encounter finishes
+    // the same tick a fighter dies, so a dead combatant is never decided-for
+    // again) or 'no-target' (each fighter acquires the other before its
+    // first decision-ready tick, at these starting positions). Those two
+    // reasons exist for the wider kernel -- a mass encounter can strand a
+    // combatant with no hostile in range -- not for this duel adapter.
+    expect(reasons).toEqual(new Set(['not-due', 'mid-action', 'staggered']))
+  })
+
+  it('records the deterministic fallback when no weighted candidate scores positive', () => {
+    const records: DecisionRecord[] = []
+    // aquila (fast) vs drusus (fast): unlike the home[0]/away[0] pairing
+    // `runBout` exercises above, this mirror matchup runs its authored
+    // candidate set dry at BASELINE_TEST_SEED, reaching the fallback path a
+    // typical duel does not.
+    let battle: BattleState = createBattle({
+      home: homeRoster.find((f) => f.archetype === 'fast')!,
+      away: opponents.find((f) => f.archetype === 'fast')!,
+      seed: BASELINE_TEST_SEED,
+      combatStyles: COMBAT_STYLES,
+    })
+    const collector = { record: (entry: DecisionRecord) => records.push(entry) }
+    for (let tick = 0; battle.phase === 'running' && tick < 3600; tick += 1) {
+      battle = advanceBattleTick(battle, collector)
+    }
+
+    const fallback = records.filter((entry) => entry.kind === 'fallback')
+    expect(fallback.length).toBeGreaterThan(0)
+    for (const entry of fallback) {
+      if (entry.kind !== 'fallback') continue
+      expect(['locomotion', 'action']).toContain(entry.chosen.type)
+    }
+  })
+
+  it('does not let a collector mutating its record change the decision the kernel actually takes', () => {
+    const without = runBout()
+    // A collector that corrupts the record it was handed -- flipping the
+    // reported `chosen` outcome to something else entirely -- must not be
+    // able to influence what the kernel does with its own local `decision`
+    // value. If this test ever fails, the collector has stopped being
+    // write-only.
+    const withMutatingCollector = runBout({
+      record: (entry) => {
+        if (entry.kind === 'weighted' || entry.kind === 'fallback') {
+          entry.chosen = { type: 'locomotion', locomotionIntent: 'retreat' }
+        }
+      },
+    })
+
+    expect(withMutatingCollector.traceHash).toBe(without.traceHash)
+    expect(withMutatingCollector.ticks).toBe(without.ticks)
+  })
 })

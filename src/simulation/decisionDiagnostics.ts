@@ -8,17 +8,15 @@
 // reactions as weighted rolls, which they are not.
 
 import type { CombatantId } from './encounter'
-import type { AttackActionId } from './combatActions'
-import type { LocomotionIntent } from './movement'
+import type { CombatDecision, ScoredCombatDecision } from './combatDecision'
 
-export type DecisionOutcome =
-  | { type: 'locomotion'; locomotionIntent: LocomotionIntent }
-  | { type: 'action'; actionId: AttackActionId }
-
-export interface ScoredCandidateRecord {
-  decision: DecisionOutcome
-  weight: number
-}
+// Aliased, not redeclared: `CombatDecision`/`ScoredCombatDecision` are
+// `combatDecision.ts`'s own real types for what phase 4 chooses and scores.
+// A structurally-identical-but-separate copy here would compile today and
+// silently stop matching the moment either gained a variant, quietly
+// widening (or narrowing) what this module claims to report.
+export type DecisionOutcome = CombatDecision
+export type ScoredCandidateRecord = ScoredCombatDecision
 
 export type DecisionRecord =
   /** An ordinary phase-4 weighted selection. */
@@ -34,8 +32,14 @@ export type DecisionRecord =
   | { kind: 'fallback'; tick: number; combatantId: CombatantId; chosen: DecisionOutcome }
   /** Fast's disengage or Technical's parry-counter: phase 4 is bypassed entirely, and no decision-stream draw happens. */
   | { kind: 'forced'; tick: number; combatantId: CombatantId; behaviour: 'disengage' | 'parry-counter' }
-  /** Decision-ready checks failed: not yet due, staggered, mid-action, or no valid target. */
-  | { kind: 'skipped'; tick: number; combatantId: CombatantId; reason: 'not-due' | 'no-target' }
+  /**
+   * `isDecisionReady` fails for four distinct reasons (not this combatant's
+   * status/action/stagger/schedule), and a fifth site-local check
+   * (`targetId === undefined`) reports separately as `'no-target'`. A
+   * feature whose entire purpose is explaining why a fighter did nothing
+   * must not collapse those into one label.
+   */
+  | { kind: 'skipped'; tick: number; combatantId: CombatantId; reason: 'inactive' | 'mid-action' | 'staggered' | 'not-due' | 'no-target' }
 
 export interface DecisionCollector {
   record(entry: DecisionRecord): void

@@ -67,7 +67,7 @@ import {
   TARGET_RETENTION_RADIUS,
   type IncomingThreat,
 } from './combatDecision'
-import type { DecisionCollector } from './decisionDiagnostics'
+import type { DecisionCollector, DecisionRecord } from './decisionDiagnostics'
 import type { FighterDefinition } from './fighters'
 import { compareArchetypes, comparisonDamageMultiplier, validateFighterDefinition } from './fighters'
 import type { CombatArenaDefinition, LocomotionIntent, MovementRequest, TurnStep, Vec2 } from './movement'
@@ -708,6 +708,21 @@ function isDecisionReady(combatant: Readonly<FighterCombatState>, tick: number):
   return combatant.status === 'active' && combatant.action.type === 'neutral' && combatant.staggerUntilTick <= tick && tick >= combatant.nextDecisionTick
 }
 
+/**
+ * Same four-condition order as `isDecisionReady`, but names which one
+ * actually blocked the combatant instead of collapsing all of them into one
+ * label. Only meaningful to call once `isDecisionReady` has already
+ * returned `false` (or the combatant is otherwise known to be targetless);
+ * a ready, targeted combatant never reaches this function.
+ */
+function decisionSkipReason(combatant: Readonly<FighterCombatState>, tick: number): Extract<DecisionRecord, { kind: 'skipped' }>['reason'] {
+  if (combatant.status !== 'active') return 'inactive'
+  if (combatant.action.type !== 'neutral') return 'mid-action'
+  if (combatant.staggerUntilTick > tick) return 'staggered'
+  if (tick < combatant.nextDecisionTick) return 'not-due'
+  return 'no-target'
+}
+
 // --- Phase 1: increment tick and transition expired phases -----------------
 
 /**
@@ -1086,12 +1101,7 @@ function makeCombatDecisions(
       continue
     }
     if (!isDecisionReady(self, tick) || self.targetId === undefined) {
-      collector?.record({
-        kind: 'skipped',
-        tick,
-        combatantId: id,
-        reason: self.targetId === undefined ? 'no-target' : 'not-due',
-      })
+      collector?.record({ kind: 'skipped', tick, combatantId: id, reason: decisionSkipReason(self, tick) })
       continue
     }
 
@@ -1110,13 +1120,22 @@ function makeCombatDecisions(
 
     const combatantRandom = nextRandom[id]
     const [rolls, afterDecision] = drawPair(combatantRandom.decision)
-    const scored = scoreCombatCandidates(context, style)
+    // `scoreCombatCandidates` is pure and duplicates work `chooseCombatDecision`
+    // already does internally -- worth paying only when a collector actually
+    // wants the breakdown, so it stays out of the hot (uncollected) path.
+    const scored = collector === undefined ? undefined : scoreCombatCandidates(context, style)
     const decision = chooseCombatDecision(context, style, { selection: rolls.first, interval: rolls.second })
-    collector?.record(
-      scored.length === 0
-        ? { kind: 'fallback', tick, combatantId: id, chosen: decision }
-        : { kind: 'weighted', tick, combatantId: id, candidates: scored, roll: rolls.first, chosen: decision },
-    )
+    if (collector !== undefined && scored !== undefined) {
+      // `{ ...decision }` copies rather than aliases: `decision` is read
+      // again just below to drive this tick's actual locomotion/action
+      // branch, and the collector must not be able to change that by
+      // mutating the record it was handed.
+      collector.record(
+        scored.length === 0
+          ? { kind: 'fallback', tick, combatantId: id, chosen: { ...decision } }
+          : { kind: 'weighted', tick, combatantId: id, candidates: scored, roll: rolls.first, chosen: { ...decision } },
+      )
+    }
     const nextDecisionTick = tick + decisionIntervalTicks(self.definition.archetype, rolls.second)
     nextRandom = { ...nextRandom, [id]: { ...combatantRandom, decision: afterDecision } }
 

@@ -252,10 +252,10 @@ function appendEvents(previous: readonly EncounterEvent[], tickEvents: readonly 
   return [...previous, ...tickEvents]
 }
 
-export function advanceBattleTicks(initial: BattleState, ticks: number): BattleState {
+export function advanceBattleTicks(initial: BattleState, ticks: number, collector?: DecisionCollector): BattleState {
   let state = initial
   for (let index = 0; index < ticks && state.phase === 'running'; index += 1) {
-    state = advanceBattleTick(state)
+    state = advanceBattleTick(state, collector)
   }
   return state
 }
