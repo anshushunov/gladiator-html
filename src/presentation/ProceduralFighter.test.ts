@@ -360,6 +360,43 @@ describe('createProceduralFighter', () => {
 
     fighter.dispose()
   })
+
+  // Task 7's motion-check found the front-only lightened plate correct in
+  // construction but too small a contrast to read at the arena's shipped
+  // framing distance (a fighter roughly 90px tall). The back gets the
+  // mirror-image darkening so the cue is a full light-to-dark swing rather
+  // than a one-sided nudge off the base cloth colour, and reads even when a
+  // shield is covering the front (a shield never covers the back).
+  it('darkens the back to match the front-lightened breastplate, doubling the value contrast', () => {
+    const fighter = createProceduralFighter({ archetype: 'technical' })
+    const chest = fighter.joints.get('chest')!
+    const backplate = chest.children.find(
+      (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.userData.slot === 'backplate',
+    )
+    expect(backplate).toBeDefined()
+    // Sits behind the chest's own centre -- the mirror of the breastplate.
+    expect(backplate!.position.z).toBeLessThan(0)
+
+    let houseColor: THREE.Color | undefined
+    fighter.root.traverse((object) => {
+      if (!houseColor && object instanceof THREE.Mesh && object.userData.slot === 'cloth') {
+        houseColor = (object.material as THREE.MeshStandardMaterial).color
+      }
+    })
+    expect(houseColor).toBeDefined()
+
+    const backplateColor = (backplate!.material as THREE.MeshStandardMaterial).color
+    expect(backplateColor.equals(houseColor!)).toBe(false)
+
+    const houseHsl = houseColor!.getHSL({ h: 0, s: 0, l: 0 })
+    const backplateHsl = backplateColor.getHSL({ h: 0, s: 0, l: 0 })
+    // Same hue as the source colour -- no third hue on the back either.
+    expect(Math.abs(backplateHsl.h - houseHsl.h)).toBeLessThan(0.005)
+    // Strictly darker, the mirror of the breastplate's strictly-lighter front.
+    expect(backplateHsl.l).toBeLessThan(houseHsl.l)
+
+    fighter.dispose()
+  })
 })
 
 describe('dispose', () => {

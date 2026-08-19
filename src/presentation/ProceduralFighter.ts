@@ -443,10 +443,17 @@ function buildLeg(
   const lowerLeg = addJoint(joints, `lowerLeg.${side}`, upperLeg, -body.upperLegLength)
   addCapsuleBone(owned, lowerLeg, body.lowerLegLength, body.limbRadius * 0.85, material, 'limb')
   const foot = addJoint(joints, `foot.${side}`, lowerLeg, -body.lowerLegLength)
-  // The foot's own length, shifted so roughly three quarters of it sits ahead
-  // of the ankle. A Z-centred foot reads identically from front and back,
-  // which is half of why a back view is mistaken for a face-on view.
-  addBoxSegment(owned, foot, body.limbRadius * 1.6, body.limbRadius * 0.7, body.footLength, material, 'limb', body.footLength * 0.25)
+  // Lengthened beyond the style's own footLength and shifted so the heel
+  // sits almost directly under the ankle and nearly the whole box reaches
+  // forward -- a Z-centred foot reads identically from front and back, which
+  // is half of why a back view is mistaken for a face-on view. The original
+  // (bare footLength, quarter-length offset) fix was correct in construction
+  // but too small a silhouette change to survive the arena's shipped framing
+  // distance (Task 7's motion-check finding); this is the same asymmetry,
+  // scaled up until it reads as a distinct forward-pointing shape rather
+  // than a few centred pixels.
+  const footDepth = body.footLength * 1.4
+  addBoxSegment(owned, foot, body.limbRadius * 1.7, body.limbRadius * 0.75, footDepth, material, 'limb', footDepth * 0.42)
 }
 
 function buildEquipment(
@@ -525,13 +532,24 @@ function buildEquipment(
 
   // Front-versus-back carried by value inside the fighter's own house colour.
   // A third hue would compete with the red/blue that already separates the two
-  // fighters from each other.
+  // fighters from each other. The back gets the mirror-image treatment
+  // (darkened, not left at the base cloth colour) so the two sides span a
+  // full light-to-dark range instead of a one-sided nudge -- doubling the
+  // contrast available for the same silhouette cost, and legible even when
+  // the shield hides the front (a shield never covers the back).
+  const plateGeometry = trackedGeometry(owned, new THREE.BoxGeometry(spec.body.torsoWidth * 0.72, spec.body.chestHeight * 0.62, spec.body.torsoDepth * 0.32))
   const lightenedHouseColor = new THREE.Color(spec.clothColor).lerp(new THREE.Color(0xffffff), 0.35)
-  const plateGeometry = trackedGeometry(owned, new THREE.BoxGeometry(spec.body.torsoWidth * 0.72, spec.body.chestHeight * 0.62, spec.body.torsoDepth * 0.22))
   const plate = new THREE.Mesh(plateGeometry, trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: lightenedHouseColor, metalness: 0.35, roughness: 0.45 })))
   plate.position.set(0, spec.body.chestHeight * 0.5, spec.body.torsoDepth * 0.5)
   plate.userData.slot = 'breastplate'
   chest.add(plate)
+
+  const backplateGeometry = trackedGeometry(owned, new THREE.BoxGeometry(spec.body.torsoWidth * 0.72, spec.body.chestHeight * 0.62, spec.body.torsoDepth * 0.32))
+  const darkenedHouseColor = new THREE.Color(spec.clothColor).lerp(new THREE.Color(0x000000), 0.35)
+  const backplate = new THREE.Mesh(backplateGeometry, trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: darkenedHouseColor, metalness: 0.35, roughness: 0.45 })))
+  backplate.position.set(0, spec.body.chestHeight * 0.5, -spec.body.torsoDepth * 0.5)
+  backplate.userData.slot = 'backplate'
+  chest.add(backplate)
 
   if (equipment.hasHelmet) {
     const domeGeometry = trackedGeometry(owned, new THREE.SphereGeometry(spec.body.headRadius * 1.15, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2))
@@ -599,10 +617,15 @@ export function createProceduralFighter(options: ProceduralFighterOptions): Proc
 
   // A dark slot across the front of the head. Deliberately geometry, not just
   // colour: it has to read as a front at the arena's framing distance, where
-  // the whole head is a few pixels wide.
-  const visorGeometry = trackedGeometry(owned, new THREE.BoxGeometry(spec.body.headRadius * 1.5, spec.body.headRadius * 0.42, spec.body.headRadius * 0.5))
+  // the whole head is a few pixels wide. Sized to actually punch through the
+  // head sphere's own silhouette rather than sit almost flush with it --
+  // the original box (forward face barely past the sphere's surface) was
+  // correctly built but too shallow a protrusion to survive downsampling to
+  // that size (Task 7's motion-check finding); wider (near the head's own
+  // diameter, wrapping toward both temples) and noticeably deeper fixes that.
+  const visorGeometry = trackedGeometry(owned, new THREE.BoxGeometry(spec.body.headRadius * 1.9, spec.body.headRadius * 0.6, spec.body.headRadius * 0.75))
   const visor = new THREE.Mesh(visorGeometry, trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: 0x11151c, roughness: 0.6 })))
-  visor.position.set(0, spec.body.headRadius * 0.1, spec.body.headRadius * 0.78)
+  visor.position.set(0, spec.body.headRadius * 0.05, spec.body.headRadius * 0.85)
   visor.userData.slot = 'visor'
   head.add(visor)
 
