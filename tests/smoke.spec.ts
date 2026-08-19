@@ -783,6 +783,12 @@ test('a production build renders no audio debug UI even with ?audioDebug=1, and 
     await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
     await expect(page.locator('[data-testid="audio-debug"]')).toHaveCount(0)
 
+    // Task 6: the decision trace panel is the same kind of dev-only surface
+    // as the audio debug panel above -- `?debugDecisions=1` must render
+    // nothing in a production build either.
+    await page.goto(`${baseUrl}/?debugDecisions=1&seed=20260815&snapshot`)
+    await expect(page.getByTestId('decision-panel')).toHaveCount(0)
+
     // Final-review fix #4: the base command/inspection API
     // (`getState`/`assign`/`advanceTicks`/etc.) used to be assigned
     // unconditionally, so this test previously only checked the dev-only
