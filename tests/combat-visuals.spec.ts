@@ -375,9 +375,11 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
  * bout's opening `reset()` left it -- a wide arena shot with the fighters
  * small and off-centre wherever they have walked to by the frozen tick. Four
  * seconds is past five look-target time constants (0.75 s), three distance
- * constants (1.25 s), and two and a half yaw constants (1.5 s), so every axis
- * has settled onto the framing a player would be looking at, and the capture
- * stays a pure function of the tick count rather than of wall-clock time.
+ * constants (1.25 s), and eight yaw constants (0.5 s, tightened from the
+ * 2026-08-18 amendment's 1.5 s by the 2026-08-19 legibility slice), so every
+ * axis has settled onto the framing a player would be looking at, and the
+ * capture stays a pure function of the tick count rather than of wall-clock
+ * time.
  */
 const CAMERA_SETTLE_SECONDS = 4
 

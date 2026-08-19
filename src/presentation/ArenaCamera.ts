@@ -12,12 +12,16 @@
 // extent) dead zone, a 0.75s look-target damping time constant, a separate
 // 1.25s distance damping time constant, a 10% equipment-radius margin, a
 // distance clamp of 11..18 world units, and -- since the 2026-08-18
-// combat-axis amendment -- a 5 degree yaw dead zone and a 1.5s yaw damping
-// time constant, and -- since the 2026-08-19 legibility slice -- a +/-90
-// degree yaw clamp (widened from the amendment's +/-30, made safe by the
-// continuity fix below). Everything else here (the look dead zone's own
-// reference measure, and the extent->distance mapping) is an undocumented
-// implementation choice, called out below where it is made.
+// combat-axis amendment -- a 5 degree yaw dead zone, and -- since the
+// 2026-08-19 legibility slice -- a +/-90 degree yaw clamp (widened from the
+// amendment's +/-30, made safe by the continuity fix below) and a 0.5s yaw
+// damping time constant (tightened from the amendment's 1.5s: measured
+// on-screen framing error across all nine pairings at seed 20260815 was
+// 11.2% of ticks beyond 30 degrees at 1.5s, versus 1.5% at 0.5s -- see the
+// constant's own doc comment below for the full sweep). Everything else
+// here (the look dead zone's own reference measure, and the extent->distance
+// mapping) is an undocumented implementation choice, called out below where
+// it is made.
 
 export interface HorizontalFramingTarget {
   id: string
@@ -62,8 +66,36 @@ const EQUIPMENT_MARGIN_FRACTION = 0.10
 /** design.md (2026-08-18 amendment): "only after the axis leaves a 5 degree dead zone." */
 const YAW_DEAD_ZONE_RADIANS = (5 * Math.PI) / 180
 
-/** design.md (2026-08-18 amendment): "a 1.5 s damping time constant", deliberately the slowest of the three. */
-const YAW_DAMPING_TIME_CONSTANT_SECONDS = 1.5
+/**
+ * design.md (2026-08-18 amendment) originally set this to 1.5s, deliberately
+ * the slowest of the three axes, on the theory that yaw should read as the
+ * fight turning rather than as the camera moving. Measurement after that
+ * shipped falsified the theory: even with the continuity fix in place, a
+ * 1.5s time constant lags a fast-rotating pair badly enough that the camera
+ * still spends real time looking down the fighters' own axis -- the original
+ * complaint this whole slice exists to fix. On-screen framing error (the
+ * angle between the camera's screen-horizontal axis and the pair axis,
+ * folded mod 180 degrees), measured across all nine pairings at seed
+ * 20260815:
+ *
+ *   tau 1.5s (shipped)        11.2% of ticks beyond 30 deg, 1.5% beyond 45 deg
+ *   tau 0.8s                   3.7% of ticks beyond 30 deg, 0.5% beyond 45 deg
+ *   tau 0.5s (this constant)   1.5% of ticks beyond 30 deg, 0.1% beyond 45 deg
+ *   tau 0.35s                  0.7% of ticks beyond 30 deg, 0.1% beyond 45 deg
+ *
+ * A 25-degree lag cap (snap toward the reference once the damped yaw falls
+ * more than 25 deg behind it) was also measured: it drives the error to
+ * 0.0%, but it does so with worst-case steps of ~12 deg/tick (720 deg/s),
+ * which reads as snapping rather than damping. Rejected on that basis. 0.5s
+ * is chosen instead: it recovers nearly all of the 1.5s-vs-0.35s error
+ * reduction (11.2% -> 1.5%, versus 11.2% -> 0.7% for 0.35s) while keeping
+ * the worst single-tick yaw step at 1.85 deg -- an order of magnitude below
+ * the lag-cap variant's -- so the camera still reads as damped, not
+ * snapped. The 5 degree dead zone (`YAW_DEAD_ZONE_RADIANS`, unchanged) was
+ * checked too and is not the lever: tightening it to 2 degrees only moves
+ * the 30-degree error from 1.5% to 1.3%.
+ */
+const YAW_DAMPING_TIME_CONSTANT_SECONDS = 0.5
 
 /**
  * design.md (2026-08-19 legibility slice): "+/-90 degrees from the arena's
@@ -117,11 +149,24 @@ function extentToDistance(extent: number, minDistance: number, maxDistance: numb
 }
 
 /**
- * The angle of the group's own spread axis, in radians, as an *axis* rather
- * than a direction: the principal axis of the targets' horizontal positions,
- * from the closed-form 2x2 eigen-solution `0.5 * atan2(2*Sxz, Sxx - Szz)` of
- * their covariance. Three properties matter here and all three come from
- * that form directly:
+ * Below this total horizontal variance (world units squared, i.e. roughly
+ * the square of how far apart the targets actually are), the group is
+ * treated as having no definite spread axis at all -- see
+ * `measureSpreadStats`'s doc comment for why a merely-near-zero covariance
+ * is not enough of a guard on its own. `1e-9` sits many orders of magnitude
+ * below any real fighter separation (a duel's closest legal contact range is
+ * still hundredths of a world unit, variance order `1e-4` or above) and many
+ * orders above float noise on coordinates that are themselves order `1..50`
+ * (noise-scale perturbations of `1e-9..1e-12` on the coordinates produce
+ * variances of order `1e-18..1e-24`).
+ */
+const AXIS_VARIANCE_EPSILON = 1e-9
+
+/**
+ * The group's horizontal spread statistics: the principal axis angle (as an
+ * *axis* rather than a direction, see below) and whether that axis is
+ * actually well-defined. Three properties of the angle come directly from
+ * its closed-form 2x2 eigen-solution `0.5 * atan2(2*Sxz, Sxx - Szz)`:
  *
  *   - it is built from plain sums, so it is exactly order-independent in
  *     `targets` (brief resolution #3) and needs no special case for two;
@@ -131,11 +176,22 @@ function extentToDistance(extent: number, minDistance: number, maxDistance: numb
  *     not cross the combat axis" asks for, enforced structurally rather than
  *     by a runtime guard;
  *   - a degenerate group (one target, or several exactly stacked) has zero
- *     covariance, `atan2(0, 0)` is `0`, and the camera stays on its home
- *     shot instead of picking an arbitrary angle out of float noise.
+ *     covariance, `atan2(0, 0)` is `0`.
+ *
+ * That last case is *not* the only way to be degenerate, though: a group
+ * whose targets are a hair apart (float noise, not a real spread) has
+ * `varianceX - varianceZ` and `covariance` both near zero but not exactly
+ * zero, and `atan2` of two near-zero numbers is ill-conditioned -- their
+ * *ratio*, which is all `atan2` sees, can land anywhere in the full range
+ * depending on noise in the last few bits of each coordinate. `hasAxis`
+ * catches this: it is `false` whenever total variance
+ * (`varianceX + varianceZ`) sits below `AXIS_VARIANCE_EPSILON`, so a caller
+ * can tell "no real spread, angle is meaningless noise" apart from "a real,
+ * merely axis-aligned spread" (which reports a legitimate `0` or `+/-90`
+ * with `hasAxis: true`).
  */
-function measureSpreadAxisAngle(targets: readonly HorizontalFramingTarget[]): number {
-  if (targets.length <= 1) return 0
+function measureSpreadStats(targets: readonly HorizontalFramingTarget[]): { angle: number; hasAxis: boolean } {
+  if (targets.length <= 1) return { angle: 0, hasAxis: false }
   let sumX = 0
   let sumZ = 0
   for (const target of targets) {
@@ -155,7 +211,17 @@ function measureSpreadAxisAngle(targets: readonly HorizontalFramingTarget[]): nu
     varianceZ += dz * dz
     covariance += dx * dz
   }
-  return 0.5 * Math.atan2(2 * covariance, varianceX - varianceZ)
+  const angle = 0.5 * Math.atan2(2 * covariance, varianceX - varianceZ)
+  const hasAxis = varianceX + varianceZ > AXIS_VARIANCE_EPSILON
+  return { angle, hasAxis }
+}
+
+/** The group's principal spread axis angle alone -- see `measureSpreadStats`
+ * for the full statistics, including the `hasAxis` degeneracy flag that
+ * `measureUnclampedYaw` below actually needs. Exported for tests that need
+ * to compare the camera's yaw against the true axis directly. */
+export function measureSpreadAxisAngle(targets: readonly HorizontalFramingTarget[]): number {
+  return measureSpreadStats(targets).angle
 }
 
 /**
@@ -181,14 +247,24 @@ function nearestAxisRepresentative(angle: number, reference: number): number {
  * this unclamped value as its own reference, so that pinning at the clamp
  * limit never drags the unwrap out of phase with the real axis.
  *
- * The `angle === 0` branch is not a micro-optimization -- it keeps a
- * degenerate group's yaw at `+0` instead of `-0`, so a stacked pair and a
- * pristine `reset()` produce states that are `Object.is`-identical rather
- * than merely `==`.
+ * `!hasAxis` (`measureSpreadStats`: no target, one target, or targets close
+ * enough together that the raw axis angle is float noise rather than a real
+ * spread) holds `reference` exactly rather than computing anything from
+ * `angle`. This does double duty:
+ *
+ *   - a pristine `reset()` (which always passes `reference: 0`) yields
+ *     exactly `+0`, so a stacked pair and a fresh reset are
+ *     `Object.is`-identical rather than merely `==`;
+ *   - a group that *was* spread out and rotates through a momentary
+ *     near-coincidence keeps whatever yaw the camera already held, instead
+ *     of snapping toward `reference`'s own origin story (which, before this
+ *     guard existed, meant a mid-bout near-miss could read `angle` as
+ *     exactly `0` -- two targets landing on the same float sum -- and yaw the
+ *     camera back toward the home shot out of nowhere).
  */
 function measureUnclampedYaw(targets: readonly HorizontalFramingTarget[], reference: number): number {
-  const angle = measureSpreadAxisAngle(targets)
-  if (angle === 0 && reference === 0) return 0
+  const { angle, hasAxis } = measureSpreadStats(targets)
+  if (!hasAxis) return reference
   return nearestAxisRepresentative(-angle, reference)
 }
 
@@ -282,6 +358,20 @@ export class ArenaCamera {
 
   /** Read-only by convention: only `reset()`/`update()` (below) ever assign it. */
   state: ArenaCameraState
+
+  /**
+   * The undamped desired yaw the unwrap last accepted -- the sticky
+   * reference the 5-degree dead zone gates against, before the `+/-90`
+   * degree clamp and before the damping `approach()`. This is what the
+   * continuity guarantee (nearest-representative unwrap) actually governs:
+   * `state.yaw` is the damped, clamped *output*, which moves little per
+   * tick regardless of how discontinuous the input is once the damping
+   * time constant is more than a tick or two, so asserting continuity on
+   * it proves nothing about the unwrap. Exposed read-only for tests.
+   */
+  get unwrappedYaw(): number {
+    return this.unclampedYawReference
+  }
 
   constructor(options: ArenaCameraOptions) {
     this.minDistance = options.minDistance
