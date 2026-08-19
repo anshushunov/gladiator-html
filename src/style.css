@@ -21,6 +21,16 @@ button { font: inherit; }
 :focus-visible { outline: 2px solid #f0b071; outline-offset: 2px; }
 
 #battle-ui[hidden] { display: none; }
+#series-ui[hidden] { display: none; }
+
+/* No-op wrapper around `#series-ui`/`#battle-ui` in the default (non-debug)
+   layout: `display: contents` removes `.page-body` from the box tree
+   entirely, so its children flow directly under `.game-shell` exactly as if
+   the wrapper were not there -- pixel-identical to before it existed. It
+   only becomes a real box (`.page-body--with-panel`, below) when
+   `?debugDecisions=1` needs somewhere to put the decision panel beside the
+   content instead of on top of it. */
+.page-body { display: contents; }
 
 .game-shell {
   width: min(1180px, calc(100% - 32px));
@@ -362,25 +372,48 @@ h1 span { color: #c78b4f; font-style: italic; }
 .battle-feed time { color: #6d645d; font-variant-numeric: tabular-nums; }
 
 /* Dev-only decision trace panel (`?debugDecisions=1`, `DecisionPanel.ts`).
-   `main.ts` only ever constructs one under `import.meta.env.DEV` (statically
-   eliminated from a production bundle), so these rules are dead weight in
-   production but never make the panel itself reachable there -- same split
-   as the audio debug panel's own comment below. Fixed rather than laid out
-   in `.battle-grid` flow: it used to be appended as the last child of
-   `<body>` with no styling at all, landing below the battle feed and off-
-   screen (measured `top: 769px` against a `743px` viewport). Fixed
-   positioning both fixes that and keeps it out of the arena/HUD column
-   layout regardless of how tall the row list grows. */
+   `main.ts` only ever constructs one, and only ever adds
+   `.page-body--with-panel` to `.page-body`, under `import.meta.env.DEV`
+   (statically eliminated from a production bundle) -- so these rules are
+   dead weight in production but never make the panel itself reachable there,
+   same split as the audio debug panel's own comment below.
+
+   An earlier revision used `position: fixed` pinned to the bottom-right
+   corner. That overlapped the arena and the away fighter's HP card outright
+   (measured `top: 416, left: 809, width: 440, height: 368` against a
+   ~1280x743 viewport, landing squarely on the arena's right edge and the HP
+   card beneath it) -- and before *that* it was unstyled and landed off-screen
+   entirely (`top: 769px` against a `743px` viewport). Both failures share a
+   cause: the panel was positioned independently of the content it needed to
+   avoid. `.page-body--with-panel` turns `.page-body` (normally
+   `display: contents`, see above) into a real flex row instead, so the panel
+   becomes a sibling of `#series-ui`/`#battle-ui` and shares the row's width
+   by construction rather than floating over whatever happens to be
+   underneath. `align-items: flex-start` deliberately does *not* stretch the
+   panel to match its sibling's height -- that height can grow arbitrarily as
+   the battle feed accumulates rows (`.battle-feed ol` has no cap of its
+   own) -- so the panel bounds its own height instead and scrolls its own row
+   list, which also keeps a long decision trace from growing the page's own
+   scrollbar. */
+
+.page-body--with-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.page-body--with-panel > #series-ui,
+.page-body--with-panel > #battle-ui {
+  flex: 1 1 0;
+  min-width: 0;
+}
 
 .decision-panel {
-  position: fixed;
-  z-index: 5;
-  right: 16px;
-  bottom: 16px;
+  flex: 0 0 320px;
+  align-self: flex-start;
   display: flex;
   flex-direction: column;
-  width: min(440px, calc(100% - 32px));
-  max-height: min(46vh, 420px);
+  max-height: min(70vh, 640px);
   padding: 14px 16px;
   border: 1px solid #302a2a;
   border-radius: 4px;
@@ -408,6 +441,8 @@ h1 span { color: #c78b4f; font-style: italic; }
 
 .decision-panel__list {
   display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
   gap: 4px;
   margin: 0;
   padding: 0;
@@ -428,8 +463,15 @@ h1 span { color: #c78b4f; font-style: italic; }
 
 .decision-panel__row:last-child { border-bottom: none; }
 
-@media (max-width: 560px) {
-  .decision-panel { right: 8px; bottom: 8px; left: 8px; width: auto; }
+/* Below this width the row (content, panel) does not have room for both at a
+   readable size -- stack the panel under the content instead of squeezing
+   the arena down to a sliver. `align-items: stretch` overrides the row's own
+   `flex-start` so both the content column and the panel span the full
+   available width once they are stacked; `flex-basis: auto` then lets the
+   panel size to its own content up to `max-height`. */
+@media (max-width: 900px) {
+  .page-body--with-panel { flex-direction: column; align-items: stretch; }
+  .decision-panel { flex: 0 0 auto; max-height: 320px; }
 }
 
 /* The dev/test-only audio debug panel (`?audioDebug=1`) styles itself from

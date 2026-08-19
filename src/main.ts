@@ -537,8 +537,18 @@ if (import.meta.env.DEV) {
   // what it chose, gated exactly like `?audioDebug=1` below -- absent from
   // the DOM, and its collector never attached to `advanceSeriesTicks`, unless
   // both `import.meta.env.DEV` and the query param are present.
+  //
+  // Mounted inside `.page-body` (a sibling of `#series-ui`/`#battle-ui`),
+  // not `document.body`: `.page-body--with-panel` (style.css) turns that
+  // wrapper into a flex row so the panel shares the row's width with
+  // whichever of `#series-ui`/`#battle-ui` is showing, instead of floating
+  // over it. Without the modifier class the wrapper stays `display: contents`
+  // and the panel would render full-width in normal document flow -- adding
+  // the class is what makes it a side-by-side layout at all.
   if (new URLSearchParams(window.location.search).has('debugDecisions')) {
-    decisionPanel = new DecisionPanel(document.body)
+    const pageBody = required<HTMLElement>('.page-body')
+    pageBody.classList.add('page-body--with-panel')
+    decisionPanel = new DecisionPanel(pageBody)
   }
 
   // Dev/test-only audio debug surface (brief resolution #9, design.md: "In

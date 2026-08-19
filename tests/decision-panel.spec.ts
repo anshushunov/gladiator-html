@@ -34,6 +34,69 @@ async function assignAndConfirm(page: import('@playwright/test').Page) {
   })
 }
 
+interface Rect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** Axis-aligned overlap: false for merely touching edges, which is fine -- the
+ * requirement is no *occlusion*, not a pixel of air between boxes. */
+function overlaps(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+}
+
+test('does not occlude the arena or either HP card once a bout is running', async ({ page }) => {
+  // A real viewport, not `snapshot` mode: the layout bug this guards against
+  // (the panel fixed to the bottom-right corner, on top of the arena and the
+  // away fighter's HP card) only ever showed up once the arena and cards
+  // actually had layout, i.e. mid-bout.
+  const viewport = { width: 1280, height: 743 }
+  await page.setViewportSize(viewport)
+  await page.goto('/?seed=20260815&debugDecisions=1')
+  await assignAndConfirm(page)
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(200))
+
+  const panel = page.getByTestId('decision-panel')
+  const arena = page.getByTestId('arena')
+  const home = page.getByTestId('active-home')
+  const away = page.getByTestId('active-away')
+
+  const [panelBox, arenaBox, homeBox, awayBox] = await Promise.all([
+    panel.boundingBox(),
+    arena.boundingBox(),
+    home.boundingBox(),
+    away.boundingBox(),
+  ])
+  for (const [name, box] of [
+    ['panel', panelBox],
+    ['arena', arenaBox],
+    ['home card', homeBox],
+    ['away card', awayBox],
+  ] as const) {
+    expect(box, `${name} has no layout box`).not.toBeNull()
+  }
+
+  // Every element stays fully inside the viewport -- the earlier bug that
+  // `toBeVisible()` alone missed (see the first test in this file).
+  for (const box of [panelBox, arenaBox, homeBox, awayBox]) {
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.y).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width)
+  }
+
+  // The bug this test exists to catch: the panel used to sit `position:
+  // fixed` in the bottom-right corner, landing on top of both the arena and
+  // the away HP card (measured `top: 416, left: 809, width: 440, height:
+  // 368` against this same viewport). Assert the fix directly rather than
+  // just re-checking presence, which the earlier test already covered and
+  // which would not have caught this.
+  expect(overlaps(panelBox!, arenaBox!), 'decision panel overlaps the arena').toBe(false)
+  expect(overlaps(panelBox!, homeBox!), 'decision panel overlaps the home HP card').toBe(false)
+  expect(overlaps(panelBox!, awayBox!), 'decision panel overlaps the away HP card').toBe(false)
+})
+
 test('records decisions once a bout is running, without being swamped by skipped noise', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot&debugDecisions=1')
   // Drive the bout through the existing dev test API rather than the UI --

@@ -68,6 +68,16 @@ export class SeriesView {
     this.shell.dataset.phase = state.phase
     const battleUi = this.shell.querySelector<HTMLElement>('#battle-ui')
     if (battleUi) battleUi.hidden = state.phase === 'planning' || state.phase === 'summary'
+    // `#series-ui` already ends up empty during `fighting` (`rebuildShell`
+    // below replaces its children with nothing), but nothing previously said
+    // so declaratively -- an empty, unhidden section is still a real box.
+    // That only matters now that `.page-body--with-panel` (style.css, gated
+    // on `?debugDecisions=1`) lays `#series-ui` and `#battle-ui` out as flex
+    // siblings beside the decision panel: without `hidden` here, the empty
+    // `#series-ui` would still claim its `flex-grow` share of the row width,
+    // squeezing the arena for no visible reason.
+    const seriesUi = this.shell.querySelector<HTMLElement>('#series-ui')
+    if (seriesUi) seriesUi.hidden = state.phase === 'fighting'
     if (phaseChanged || state.phase !== 'fighting') this.rebuildShell(state, runtime)
     else this.updateBattleUi(state, runtime)
     this.lastRenderedPhase = state.phase
