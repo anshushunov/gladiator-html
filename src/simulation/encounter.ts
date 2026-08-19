@@ -216,6 +216,12 @@ export interface EncounterCombatantDefinition {
   factionId: FactionId
   fighter: FighterDefinition
   startPosition: Vec2
+  /**
+   * Optional HP this combatant enters the encounter with. Omitted (the only
+   * value the duel adapter used before the season meta-loop) means `maxHp`,
+   * which is why every frozen trace hash survives this field's addition.
+   */
+  startingHp?: number
 }
 
 export interface EncounterConfig {
@@ -485,6 +491,15 @@ function requireCombatantCount(count: number): void {
   }
 }
 
+function resolveStartingHp(definition: EncounterCombatantDefinition, fighter: FighterDefinition): number {
+  if (definition.startingHp === undefined) return fighter.maxHp
+  const value = definition.startingHp
+  if (!Number.isInteger(value) || value < 1 || value > fighter.maxHp) {
+    throw new Error(`EncounterConfig combatant '${definition.id}' startingHp must be an integer between 1 and ${fighter.maxHp}`)
+  }
+  return value
+}
+
 function requireUniqueIds(combatants: readonly EncounterCombatantDefinition[]): void {
   const seen = new Set<CombatantId>()
   for (const combatant of combatants) {
@@ -541,7 +556,7 @@ function buildFighterCombatState(definition: EncounterCombatantDefinition, arena
     position,
     facing: computeStartFacing(definition.id, position, arena, positionsById),
     travelledDistance: 0,
-    hp: fighter.maxHp,
+    hp: resolveStartingHp(definition, fighter),
     status: 'active',
     locomotionIntent: 'hold-range',
     velocity: { x: 0, z: 0 },

@@ -55,6 +55,8 @@ export interface BattleConfig {
   away: FighterDefinition
   seed: number
   combatStyles: CombatStyleCatalog
+  /** Per-side HP the fighters enter with. Omitted sides start at their own `maxHp`. */
+  startingHp?: Partial<Record<FighterSide, number>>
 }
 
 export interface DuelDescriptor {
@@ -142,8 +144,8 @@ export function createBattle(config: BattleConfig): BattleState {
   const transition = createEncounter({
     seed: config.seed,
     combatants: [
-      { id: descriptor.homeId, factionId: 'home', fighter: config.home, startPosition: HOME_START_POSITION },
-      { id: descriptor.awayId, factionId: 'away', fighter: config.away, startPosition: AWAY_START_POSITION },
+      { id: descriptor.homeId, factionId: 'home', fighter: config.home, startPosition: HOME_START_POSITION, startingHp: config.startingHp?.home },
+      { id: descriptor.awayId, factionId: 'away', fighter: config.away, startPosition: AWAY_START_POSITION, startingHp: config.startingHp?.away },
     ],
     arena: duelArena(descriptor),
     hostility: { mode: 'different-factions' },
