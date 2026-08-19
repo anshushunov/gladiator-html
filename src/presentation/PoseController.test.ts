@@ -606,8 +606,8 @@ describe('PoseController weapon-arm IK', () => {
 // ---------------------------------------------------------------------------
 
 describe('PoseController idle layer', () => {
-  function neutralStandingInput(overrides: { tick: number; reducedMotion?: boolean }): PoseSampleInput {
-    const state = baseFighterState('heavy')
+  function neutralStandingInput(overrides: { tick: number; reducedMotion?: boolean; archetype?: Archetype }): PoseSampleInput {
+    const state = baseFighterState(overrides.archetype ?? 'heavy')
     return makeInput({ current: state, previous: state, currentTick: overrides.tick, alpha: 0, reducedMotion: overrides.reducedMotion ?? false })
   }
 
@@ -650,6 +650,11 @@ describe('PoseController idle layer', () => {
   })
 
   it('leaves a planted foot exactly where grounding puts it', () => {
+    // Note: this is a regression guard only, not idle coverage. `sampleIdleLayer`
+    // never writes leg/foot joints at all (see `idle.test.ts`'s own "never
+    // writes leg or foot joints" test), so this compares joints the idle
+    // layer never touches -- it would pass identically whether idle merged
+    // additively, replaced outright, or did nothing.
     const controller = new PoseController()
     const fighter = createProceduralFighter({ archetype: 'heavy' })
     const standing = neutralStandingInput({ tick: 100 })
@@ -661,6 +666,50 @@ describe('PoseController idle layer', () => {
     for (const name of ['foot.L', 'foot.R', 'upperLeg.L', 'upperLeg.R'] as const) {
       expect(second.pose[name]).toEqual(first.pose[name])
     }
+    fighter.dispose()
+  })
+
+  it('preserves the authored guard chest twist while idle sways it (Fast)', () => {
+    // Regression coverage for the bug the additive-merge fix addresses:
+    // Fast's guard chest carries an authored 0.1 rad twist (FAST_GUARD in
+    // combatPoses.ts) that is part of what makes the fighter's shoulder line
+    // read as oriented. `sampleIdleLayer` never writes a chest Y rotation
+    // (its own delta is `[breath, 0, -swing * 0.4]`), so with a correct
+    // additive merge the authored 0.1 must survive exactly regardless of
+    // idle phase. Against the old `mergeInto` (outright replace), idle would
+    // instead overwrite the whole chest transform with its own, snapping Y
+    // to 0 the instant any idle amplitude was non-zero.
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'fast' })
+    const standing = neutralStandingInput({ tick: 100, archetype: 'fast' })
+
+    const sample = controller.apply(standing, fighter)
+
+    expect(sample.pose.chest.rotation[1]).toBeCloseTo(0.1, 10)
+    fighter.dispose()
+  })
+
+  it('does not step the chest pose when a fighter stops from full gait speed to standing in one tick (Fast)', () => {
+    // With no acceleration model, velocity (and therefore idle amplitude,
+    // which is `1 - speedWeight`) can go from full speed to a standstill in
+    // a single tick -- exactly the start/stop boundary the branch's own
+    // second goal (movement reading less jerky) cares about. Before the
+    // additive-merge fix, that boundary was also the moment idle's
+    // `mergeInto` started outright replacing the chest transform, so a
+    // standing Fast fighter's chest could pop by up to the guard/idle
+    // difference (~0.13 rad, roughly 7 degrees) on the very tick it planted.
+    // With the additive merge the only possible step is idle's own small
+    // sway amplitude, independent of the guard pose it now merges on top of.
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'fast' })
+    const moving = makeInput({ current: baseFighterState('fast', { velocity: { x: 0.5, z: 0 } }), currentTick: 100, alpha: 0 })
+    const standing = makeInput({ current: baseFighterState('fast', { velocity: { x: 0, z: 0 } }), currentTick: 100, alpha: 0 })
+
+    const movingChest = controller.apply(moving, fighter).pose.chest.rotation
+    const standingChest = controller.apply(standing, fighter).pose.chest.rotation
+
+    const step = Math.hypot(standingChest[0] - movingChest[0], standingChest[1] - movingChest[1], standingChest[2] - movingChest[2])
+    expect(step).toBeLessThan(0.05)
     fighter.dispose()
   })
 })

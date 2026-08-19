@@ -15,11 +15,17 @@
 // compromise (there is no acceleration model, so start-stop remains in the
 // simulation data; this only changes how standing *reads*).
 //
-// Every layer contributes a *sparse* joint-transform record; layers are
-// merged strictly left-to-right with a later layer's joint entry replacing
-// an earlier one outright (never re-blended against it) -- this is what
-// lets `PoseController.test.ts` pin *order* rather than only a final
-// outcome (brief resolution #1).
+// Every layer contributes a *sparse* joint-transform record; layers 1
+// through 5 are merged strictly left-to-right with a later layer's joint
+// entry replacing an earlier one outright (never re-blended against it) --
+// this is what lets `PoseController.test.ts` pin *order* rather than only a
+// final outcome (brief resolution #1). Layer 1b (idle) is the one exception:
+// it is merged *additively* onto whatever the guard layer already wrote for
+// the same joint (`mergeAdditiveRotation`, not `mergeInto`), because a guard
+// stance's own authored joint values (e.g. Fast's guard chest twist) must
+// survive a standing fighter's breathing sway rather than being replaced by
+// it -- fix round 2 of the legibility slice's own review, which found the
+// original `mergeInto` erasing the authored guard pose outright.
 //
 // This module is rule-free: it never reads/writes anything under
 // `src/simulation/**` or `src/content/**`, never decides a hit/phase/event
@@ -225,6 +231,29 @@ function blendPoseJoints(a: Readonly<SparsePose>, b: Readonly<SparsePose>, t: nu
 
 function mergeInto(target: SparsePose, source: Readonly<SparsePose>): void {
   for (const key of Object.keys(source) as JointName[]) target[key] = source[key]
+}
+
+/**
+ * Adds `source`'s rotation onto whatever `target` already holds for the same
+ * joint, instead of replacing it outright -- used only by the idle layer
+ * (below), which must contribute a small sway *on top of* the guard pose
+ * `mergeInto` already wrote for `chest`/`pelvis`/`shoulder.L`/`shoulder.R`,
+ * not overwrite it. `sampleIdleLayer` never sets `position`, so this only
+ * ever needs to add rotations; a joint `target` has not written yet adds
+ * onto an implicit identity rotation, matching `lerpTransform`'s own
+ * `IDENTITY_TRANSFORM` fallback.
+ */
+function mergeAdditiveRotation(target: SparsePose, source: Readonly<SparsePose>): void {
+  for (const key of Object.keys(source) as JointName[]) {
+    const delta = source[key]!
+    const base = target[key] ?? IDENTITY_TRANSFORM
+    const rotation: [number, number, number] = [
+      base.rotation[0] + delta.rotation[0],
+      base.rotation[1] + delta.rotation[1],
+      base.rotation[2] + delta.rotation[2],
+    ]
+    target[key] = base.position ? { rotation, position: base.position } : { rotation }
+  }
 }
 
 function buildFullPose(working: Readonly<SparsePose>): Record<JointName, JointTransform> {
@@ -677,8 +706,15 @@ export class PoseController {
       isStaggered(current, currentTick) ||
       recognitionFlinchActive ||
       reaction?.contactTarget !== undefined
+    // Additive, not a replace: `sampleIdleLayer` returns a small sway on
+    // `pelvis`/`chest`/`shoulder.L`/`shoulder.R`, and `chest` is authored per
+    // style/guard (e.g. Fast's guard carries a 0.1 rad torso twist) --
+    // `mergeInto` here would silently erase that authored twist the instant
+    // any idle amplitude is non-zero, snapping it back only at full gait
+    // speed. Adding the sway on top keeps the authored pose intact at every
+    // amplitude, including the amplitude-0-to-0+ boundary at start/stop.
     const simulationTime = (currentTick + alpha) / TICKS_PER_SECOND
-    mergeInto(working, sampleIdleLayer(computeIdlePhase(simulationTime, current.definition.id), idleAmplitude(speedWeight, idleSuppressed, reducedMotion)))
+    mergeAdditiveRotation(working, sampleIdleLayer(computeIdlePhase(simulationTime, current.definition.id), idleAmplitude(speedWeight, idleSuppressed, reducedMotion)))
 
     // Layer 2: locomotion cycle (gait), derived from travelled distance.
     const travelledDistance = lerp(previous.travelledDistance, current.travelledDistance, alpha)
