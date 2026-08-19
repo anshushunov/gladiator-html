@@ -3,13 +3,14 @@ import { COMBAT_STYLES } from '../content/combatStyles'
 import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
 import { advanceBattleTick, createBattle, type BattleState } from './battle'
 import type { DecisionCollector, DecisionRecord } from './decisionDiagnostics'
+import type { FighterDefinition } from './fighters'
 
 // The collector is passed per call, never stored on `BattleState`: anything
 // living in that object risks being folded into the trace hash.
-function runBout(collector?: DecisionCollector): { traceHash: number; ticks: number } {
+function runBout(home: FighterDefinition, away: FighterDefinition, collector?: DecisionCollector): { traceHash: number; ticks: number } {
   let battle: BattleState = createBattle({
-    home: homeRoster[0],
-    away: opponents[0],
+    home,
+    away,
     seed: BASELINE_TEST_SEED,
     combatStyles: COMBAT_STYLES,
   })
@@ -22,19 +23,31 @@ function runBout(collector?: DecisionCollector): { traceHash: number; ticks: num
 }
 
 describe('decision diagnostics', () => {
-  it('does not change behaviour when a collector is attached', () => {
-    const without = runBout()
-    const records: DecisionRecord[] = []
-    const withCollector = runBout({ record: (entry) => records.push(entry) })
+  it('does not change behaviour when a collector is attached, in any of the nine pairings', () => {
+    // The with-collector path is the only one that calls
+    // `scoreCombatCandidates` a second time (once inside `chooseCombatDecision`,
+    // once again to build the candidate report) -- it is the path least
+    // covered by the three frozen hashes, which normally run without a
+    // collector at all. A single pairing proved the mechanism; looping over
+    // all nine is what actually exercises every style's own candidate set
+    // (and therefore every style's own second `scoreCombatCandidates` call)
+    // against the frozen-behaviour guarantee.
+    for (const home of homeRoster) {
+      for (const away of opponents) {
+        const without = runBout(home, away)
+        const records: DecisionRecord[] = []
+        const withCollector = runBout(home, away, { record: (entry) => records.push(entry) })
 
-    expect(withCollector.traceHash).toBe(without.traceHash)
-    expect(withCollector.ticks).toBe(without.ticks)
-    expect(records.length).toBeGreaterThan(0)
+        expect(withCollector.traceHash).toBe(without.traceHash)
+        expect(withCollector.ticks).toBe(without.ticks)
+        expect(records.length).toBeGreaterThan(0)
+      }
+    }
   })
 
   it('records every weighted decision with its candidates, roll and winner', () => {
     const records: DecisionRecord[] = []
-    runBout({ record: (entry) => records.push(entry) })
+    runBout(homeRoster[0], opponents[0], { record: (entry) => records.push(entry) })
 
     const weighted = records.filter((entry) => entry.kind === 'weighted')
     expect(weighted.length).toBeGreaterThan(0)
@@ -66,7 +79,7 @@ describe('decision diagnostics', () => {
 
   it('records skipped decisions with the specific reason that blocked them', () => {
     const records: DecisionRecord[] = []
-    runBout({ record: (entry) => records.push(entry) })
+    runBout(homeRoster[0], opponents[0], { record: (entry) => records.push(entry) })
 
     const skipped = records.filter((entry) => entry.kind === 'skipped')
     expect(skipped.length).toBeGreaterThan(0)
@@ -106,7 +119,7 @@ describe('decision diagnostics', () => {
   })
 
   it('does not let a collector mutating its record change the decision the kernel actually takes', () => {
-    const without = runBout()
+    const without = runBout(homeRoster[0], opponents[0])
     // Reassigning `entry.chosen` to a brand-new object (`entry.chosen = {...}`)
     // only rebinds the record's own property -- it proves nothing about
     // aliasing, because it would leave an old `chosen: decision` alias
@@ -119,7 +132,7 @@ describe('decision diagnostics', () => {
     // flipped intent -- shifting the trace hash. Against the fix
     // (`chosen: { ...decision }`), the collector's copy is a different
     // object, so this mutation lands on nothing the kernel ever reads.
-    const withMutatingCollector = runBout({
+    const withMutatingCollector = runBout(homeRoster[0], opponents[0], {
       record: (entry) => {
         if ((entry.kind === 'weighted' || entry.kind === 'fallback') && entry.chosen.type === 'locomotion') {
           entry.chosen.locomotionIntent = entry.chosen.locomotionIntent === 'advance' ? 'retreat' : 'advance'
