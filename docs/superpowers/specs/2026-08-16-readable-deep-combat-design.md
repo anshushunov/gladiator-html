@@ -887,6 +887,35 @@ Feet use a deterministic gait phase derived from travelled simulation distance, 
 
 Defeat uses a style-specific controlled pose. Rotating the whole group onto its side is not sufficient.
 
+### Amendment — idle pose layer inserted (approved by the plan owner on 2026-08-19, combat-legibility slice)
+
+The fixed order above has no layer covering standing still: a fighter that is neither moving nor
+mid-action is left with nothing contributing motion, so a standstill reads as frozen. That is part of
+the "movement looks jerky" defect reported after the readable-deep-combat slice shipped -- there is no
+acceleration model, so a fighter is stationary (below the smallest visible step) for roughly 67-75% of
+ticks for Heavy and Technical, and the pose layer made it worse: the gait blend is weighted by speed, so
+at zero velocity it vanishes entirely and the fighter collapses into a static guard stance.
+
+**Amended rule** (adds a layer to the fixed order above; does not change layers 1 through 5 themselves):
+
+- A new layer, **1b**, is inserted between the style guard pose (1) and the locomotion cycle (2): idle
+  sway (breathing/weight shift). It applies only when the fighter is in a neutral, un-staggered, living
+  state, and is fully suppressed during any action, defense, stagger, or defeat overlay (3/4/5's held
+  poses) -- those hold poses this layer would otherwise corrupt, including the fixture asserting an
+  impact pose is identical across ticks. Amplitude scales as `1 - speedWeight` (the same interpolated
+  speed weight the gait layer already computes); phase comes from interpolated simulation time, offset
+  per combatant id so two standing fighters are never in unison; it is exactly zero, not merely small,
+  under `prefers-reduced-motion: reduce`.
+- The layer merges **additively** onto whatever the guard layer (1) already wrote for the same joint,
+  not as a replacement. A style's authored guard pose carries real content on the joints idle sways
+  (e.g. Fast's `chest` guard value carries a `0.1` rad torso twist, part of what makes the guard read as
+  oriented rather than square-on) -- an outright-replacing idle layer would erase that the instant any
+  idle amplitude went non-zero, undercutting this slice's own first goal (mutual orientation stays
+  readable) to serve its second (standing reads as alive).
+
+Not changed: layers 2 through 5, and the closed-form "later layer replaces outright" merge semantics for
+every layer other than 1b.
+
 ## Arena, camera, and effects
 
 - Keep the current stable elevated perspective and arena plane.
@@ -946,6 +975,52 @@ Because `?snapshot` holds the runtime paused and a paused frame advances no came
 capture now first asks a dev-only hook to damp the camera by four seconds of *simulated*
 presentation time onto the frame it is showing. Without it every baseline would show the bout's
 opening wide shot no matter which tick it froze.
+
+### Amendment — yaw clamp widened, damping retuned (approved by the plan owner on 2026-08-19, combat-legibility slice)
+
+Measurement after the 2026-08-18 amendment shipped found it only partly fixed what it set out to fix.
+The unwrap-then-clamp mechanism above was implemented correctly, but the two numbers chosen with it were
+not right: the `±30°` clamp gave up on eight of nine style pairings for a large share of the bout (the
+pair's own axis exceeds 30° off world X between 33% and 69% of a bout in eight of nine pairings,
+measured at seed `20260815`), and even after widening the clamp, the `1.5 s` damping time constant lags
+a fast-rotating pair badly enough that on-screen framing error (the angle between the camera's
+screen-horizontal axis and the pair's own axis, folded mod 180°) still exceeds 30° on up to 18.9% of
+ticks in the worst pairing, 11.2% averaged across all nine. Both are the same original complaint this
+whole slice exists to fix: the camera still spends real time looking down the fighters' own axis.
+
+**Amended rules** (these supersede the two numeric values in the corresponding bullet above; the
+unwrap-then-clamp mechanism itself, and every other bullet in this amendment's parent section, are
+unchanged):
+
+- The yaw clamp widens to **`±90°`** from the arena's authored home shot (from `±30°`). With the unwrap
+  in place the peak measured offset from home across all nine pairings is exactly `90°`, because the
+  axis oscillates rather than winding, so the camera tracks the axis at essentially every heading and
+  degrades by holding at the limit instead of flipping to the far side of the arena.
+- The damping time constant tightens to **`0.5 s`** (from `1.5 s`). On-screen framing error was measured
+  directly (not inferred from clamp saturation alone) across all nine pairings at seed `20260815`:
+
+  | tuning | error > 30° | error > 45° | worst yaw step |
+  |---|---|---|---|
+  | tau 1.5s (2026-08-18 amendment) | 11.2% | 1.5% | 0.86°/tick |
+  | tau 0.8s | 3.7% | 0.5% | 1.22°/tick |
+  | tau 0.5s (this amendment) | 1.5% | 0.1% | 1.85°/tick |
+  | tau 0.35s | 0.7% | 0.1% | 2.49°/tick |
+  | tau 1.5s + 25° lag cap | 0.0% | 0.0% | 11.98°/tick |
+
+  A lag cap (snapping the damped yaw back within a fixed distance of the reference) was measured and
+  rejected: it drives the error to `0.0%`, but at the cost of ~`12°`/tick steps (`720°/s`), which reads
+  as snapping rather than damping. `0.5 s` was chosen instead as the point that recovers nearly all of
+  the achievable error reduction while keeping the worst single-tick step an order of magnitude below
+  the lag-cap variant. Yaw is now the **fastest** of the three damped axes (look `0.75 s`, distance
+  `1.25 s`, yaw `0.5 s`) — the reverse of the 2026-08-18 amendment's "deliberately the slowest" framing:
+  a fast-rotating pair needs the camera to keep up with it, not lag behind it reading as calm.
+- The `5°` yaw dead zone was checked as a possible lever and is not one: tightening it to `2°` only moves
+  the 30°-error figure from 1.5% to 1.3%.
+
+Not changed: the unwrap-then-clamp mechanism, the unsigned-axis degenerate-spread handling, fixed FOV,
+the fixed elevation/distance ratio, the `11..18` distance clamp, the 12% framing dead zone, the 10%
+equipment margin, the absence of motion lookahead, and the hard cut of all camera state at each new bout
+and on rematch.
 
 ## Combat audio
 
