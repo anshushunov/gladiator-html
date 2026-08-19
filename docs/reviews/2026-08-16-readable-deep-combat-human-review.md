@@ -187,3 +187,109 @@ If any threshold fails on a real review pass, the correct next step is to
 return to the narrow responsible task, fix it, rerun the automated checks,
 regenerate only the affected artifacts, and repeat this review -- not to
 adjust the threshold or this document's methodology.
+
+## 2026-08-19 legibility slice -- developer verification
+
+**This is ordinary developer verification, not the two-reviewer human review
+gate above.** No cell of the gate table was touched; the gate remains **not
+yet run**. This section exists because the slice's three defects (camera
+flip risk, stepped idle, damping lag) are motion artefacts that static
+screenshot baselines structurally cannot catch, so `npm run review:clips`
+was run and a set of numerically-targeted frame captures and per-tick
+instrumented sweeps were used to check them by hand ahead of the real gate.
+
+**Material produced (not committed -- gitignored under `docs/reviews/clips/`):**
+`npm run review:clips` (9 pairing clips + 3 HUD-hidden + 1 x2 series, all with
+traces), plus `docs/reviews/clips/motion-check/` -- 30+ PNG frames captured at
+numerically-identified ticks via `window.__GLADIATOR_TEST__`, and per-tick
+`{axisDeg, yawDeg}` sweep data (`*-samples.json`) for three full bouts at
+seed `20260815`.
+
+1. **Camera / mutual orientation.** Sampled the pair-axis angle
+   (`atan2(dz,dx)` folded to (-90,90]) and camera yaw every tick, whole bout,
+   for `nerva vs cassius` (technical vs technical) and `aquila vs magnus`
+   (fast vs heavy): 74.3%/47.7% and 56.3%/34.6% of ticks beyond 30/60 deg
+   respectively -- same order of magnitude as the brief's reference numbers
+   (69.4%/52.5%, 58.6%/36.1%; a single bout vs. an aggregate, so not expected
+   to match exactly). At mid-range angles (`tech-vs-tech-tick1092-mid-axis35deg.png`,
+   `fast-vs-heavy-tick932-mid-axis41deg.png`) both fighters read as clearly
+   separate, oriented toward each other, weapons presented at one another.
+   At the axis peak (~90 deg, `tech-vs-tech-tick538-peak-axis90deg.png`,
+   `fast-vs-heavy-tick1272-peak-axis90deg.png`) the two silhouettes crowd
+   close together or partly overlap, but cross-checking against the battle
+   feed confirms this coincides with genuine melee-range exchanges, not a
+   framing failure -- the same pair at the same axis angle but wider spacing
+   (`heavy-vs-heavy-tick769-peak-axis36deg.png`) stays clearly separated. No
+   frame showed a fighter facing the viewer instead of the opponent.
+2. **No camera flip.** Same whole-bout sweeps: largest per-tick camera yaw
+   change observed was **0.585 deg** (`fast vs heavy`, tick 1799), 0.486 deg
+   (`technical vs technical`, tick 429), 0.167 deg (`heavy vs heavy`, tick
+   456) -- three orders of magnitude below anything that would read as a
+   snap to the far side of the arena. Three-frame sequences straddling the
+   axis peak (`tech-vs-tech-tick508-pre-peak-axis72deg.png` /
+   `-tick538-peak-axis90deg.png` / `-tick568-post-peak-axis90deg.png`, and
+   the equivalent `fast-vs-heavy` tick1242/1272/1302 set) are visually
+   indistinguishable in framing from one another -- a smooth pan through the
+   zone, not a jump.
+3. **Rig directionality at the shipped framing distance -- open question,
+   answered plainly: not legible.** At the camera distances the arena
+   actually uses (`heavy-vs-heavy-neutral-idle-a-tick60-full-hires.png` and
+   every other full-viewport, non-cropped capture in this set), fighters
+   occupy roughly 50-90px of a 1280x820 frame. At that size the visor,
+   breastplate and forward foot called out in Task 2 are **not** identifiable
+   -- only a coarse silhouette lean and which side the weapon/shield arm is
+   on register at a glance. Those specific cues only become visible after
+   artificially cropping and 3x-supersampling a frame
+   (`tech-vs-tech-mid-tick1092-closeup.png`,
+   `fast-vs-heavy-mid-tick932-closeup.png`) -- confirming the geometry and
+   materials exist and are correctly authored, not that a player watching the
+   shipped view can read them. This matches the baseline-diff evidence cited
+   in the brief (<0.15% of pixels moved) and should be treated as a real,
+   open finding against Task 2's legibility goal, not a formality to check
+   off.
+4. **Idle and start-stop.** In `brutus vs magnus` (heavy vs heavy), the
+   longest mutual-neutral (non-attacking) window ran ticks 1-136. Two frames
+   six ticks apart inside it (`heavy-vs-heavy-neutral-idle-a-tick60-closeup.png`
+   / `-idle-b-tick66-closeup.png`) show a visibly different shield/torso
+   lean -- continuous sway, not a frozen pose. (An earlier pair of captures
+   at ticks 181/187 turned out to fall inside post-attack recovery, not
+   idle, and showed a larger, misleading arm-drop change; the neutral-window
+   pair above is the correct idle-vs-idle comparison and is what the
+   headline numbers above use.) No stepping/quantization was visible at
+   this resolution, consistent with `sampleIdleLayer` driving a continuous
+   sine of `(currentTick + alpha) / TICKS_PER_SECOND` rather than a
+   tick-quantized lookup.
+5. **Reduced motion.** With `reducedMotion: 'reduce'` emulated, the same
+   neutral-window pair (`reduced-motion-neutral-idle-a-tick60.png` /
+   `-idle-b-tick66.png`) is **pixel-identical** -- confirmed both visually
+   and by source (`idleAmplitude` returns `0` whenever `reducedMotion` is
+   true). Across the same bout's `heavy-cleave` exchange, windup
+   (`reduced-motion-windup-tick150.png`, weapon raised overhead -- clear
+   anticipation), contact (`reduced-motion-contact-tick171.png`, HP drop and
+   weapons meeting, "Magnus deals 36" in the feed) and recovery
+   (`reduced-motion-recovery-tick190.png`) all stayed readable.
+6. **Decision panel against a real bout.** Ran `aquila vs drusus` (fast vs
+   fast) to tick 1600 with `?seed=20260815&debugDecisions=1` and read the
+   rendered `[data-testid="decision-panel-row"]` rows against the real event
+   trace. Exact match: the panel's weighted record at `t1503`
+   (`"t1503 away.drusus: roll 0.526 -> fast-burst-lunge [circle-left 21%,
+   circle-right 21%, retreat 7%, fast-burst-lunge 52%]"`) lines up with the
+   real `action-started` event at tick 1503 for `away.drusus` /
+   `fast-burst-lunge`; the listed candidates (circle-left/circle-right/
+   retreat/fast-burst-lunge) are exactly the locomotion/attack options a
+   fast archetype has live at range. After that lunge resolves
+   (`damage-dealt` at 1521, `fighter-staggered` at 1521), the panel logs
+   `forced disengage (no roll)` starting at `t1545`, matching the real
+   `movement-intent-changed` event (`burst-in` -> `disengage`) at the same
+   tick to the tick -- i.e. immediately after `fast-burst-lunge`'s
+   18-windup/3-impact/20-recovery finishes. The trace explains what
+   happened; nothing in the panel was unaccounted for.
+
+**Net assessment:** points 1, 2, 4, 5 and 6 check out against the numbers
+above -- no camera flip observed anywhere in three full-bout sweeps, idle
+reads as alive and is fully suppressed under reduced motion, and the
+decision panel's records are traceable one-for-one against real encounter
+events. Point 3 is the one open item this task was designed to surface: rig
+directionality cues exist and are correctly built, but are not legible at
+the arena's actual shipped framing distance -- that belongs back with
+whichever task owns Task 2's cue sizing/placement, not fixed here.
