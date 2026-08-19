@@ -68,16 +68,15 @@ export class SeriesView {
     this.shell.dataset.phase = state.phase
     const battleUi = this.shell.querySelector<HTMLElement>('#battle-ui')
     if (battleUi) battleUi.hidden = state.phase === 'planning' || state.phase === 'summary'
-    // `#series-ui` already ends up empty during `fighting` (`rebuildShell`
-    // below replaces its children with nothing), but nothing previously said
-    // so declaratively -- an empty, unhidden section is still a real box.
-    // That only matters now that `.page-body--with-panel` (style.css, gated
-    // on `?debugDecisions=1`) lays `#series-ui` and `#battle-ui` out as flex
-    // siblings beside the decision panel: without `hidden` here, the empty
-    // `#series-ui` would still claim its `flex-grow` share of the row width,
-    // squeezing the arena for no visible reason.
-    const seriesUi = this.shell.querySelector<HTMLElement>('#series-ui')
-    if (seriesUi) seriesUi.hidden = state.phase === 'fighting'
+    // `.battle-feed` used to be a child of `#battle-ui` and inherited its
+    // `hidden` state for free. It now lives in `.below-arena-row` instead (a
+    // sibling of `#battle-ui`, style.css) so the dev-only decision panel
+    // (`?debugDecisions=1`) can share that row with it without the panel
+    // itself being forced to live -- and disappear -- inside `#battle-ui`,
+    // where it would be invisible before a bout starts. Mirroring the same
+    // condition here keeps the feed hidden/shown exactly when it always was.
+    const battleFeed = this.shell.querySelector<HTMLElement>('.battle-feed')
+    if (battleFeed) battleFeed.hidden = state.phase === 'planning' || state.phase === 'summary'
     if (phaseChanged || state.phase !== 'fighting') this.rebuildShell(state, runtime)
     else this.updateBattleUi(state, runtime)
     this.lastRenderedPhase = state.phase

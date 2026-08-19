@@ -21,19 +21,29 @@ button { font: inherit; }
 :focus-visible { outline: 2px solid #f0b071; outline-offset: 2px; }
 
 #battle-ui[hidden] { display: none; }
-#series-ui[hidden] { display: none; }
 
-/* No-op wrapper around `#series-ui`/`#battle-ui` in the default (non-debug)
-   layout: `display: contents` removes `.page-body` from the box tree
-   entirely, so its children flow directly under `.game-shell` exactly as if
-   the wrapper were not there -- pixel-identical to before it existed. It
-   only becomes a real box (`.page-body--with-panel`, below) when
-   `?debugDecisions=1` needs somewhere to put the decision panel beside the
-   content instead of on top of it. */
+/* No-op wrapper around `#series-ui`/`#battle-ui`/`.below-arena-row` in the
+   default (non-debug) layout: `display: contents` removes `.page-body` from
+   the box tree entirely, so its children flow directly under `.game-shell`
+   exactly as if the wrapper were not there -- pixel-identical to before it
+   existed. Existing purely so `.below-arena-row` (below) has somewhere to
+   sit as a sibling of `#battle-ui` instead of a child of it. */
 .page-body { display: contents; }
 
+/* `100vw`, not `100%`: `%` here resolves against `body`'s width, which
+   shrinks by the scrollbar's own width the instant the page needs to
+   scroll -- and the decision panel (`.decision-panel`, `?debugDecisions=1`)
+   is tall enough that its row routinely pushes the page past the viewport
+   height. Sizing from `100vw` instead (always the full viewport, scrollbar
+   or not) keeps this box, and everything inside it -- crucially
+   `.battle-grid`'s arena and both HP cards -- exactly the same width whether
+   or not a scrollbar is showing. `margin: 0 auto` still centres it correctly
+   in both cases: the box's own width is scrollbar-independent, but the
+   auto-margins that centre it are computed against the (possibly
+   scrollbar-narrowed) parent, so they simply absorb the difference instead
+   of ever overflowing past the visible area. */
 .game-shell {
-  width: min(1180px, calc(100% - 32px));
+  width: min(1180px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 34px 0 40px;
 }
@@ -352,6 +362,15 @@ h1 span { color: #c78b4f; font-style: italic; }
 .fighter-card--home .health i { background: #b34d3a; }
 .fighter-card--away .health i { background: #4383a0; }
 
+/* No-op wrapper around `.battle-feed` (default; `display: contents`, same
+   trick as `.page-body` above), for the same reason: `.decision-panel` needs
+   somewhere to sit as a sibling of `.battle-feed`, not a child of it, so the
+   panel keeps rendering even while the feed itself is `hidden`. See the
+   decision-panel comment block below for why. */
+.below-arena-row { display: contents; }
+
+.battle-feed[hidden] { display: none; }
+
 .battle-feed {
   display: grid;
   grid-template-columns: 150px 1fr;
@@ -373,47 +392,60 @@ h1 span { color: #c78b4f; font-style: italic; }
 
 /* Dev-only decision trace panel (`?debugDecisions=1`, `DecisionPanel.ts`).
    `main.ts` only ever constructs one, and only ever adds
-   `.page-body--with-panel` to `.page-body`, under `import.meta.env.DEV`
-   (statically eliminated from a production bundle) -- so these rules are
-   dead weight in production but never make the panel itself reachable there,
-   same split as the audio debug panel's own comment below.
+   `.below-arena-row--with-panel` to `.below-arena-row`, under
+   `import.meta.env.DEV` (statically eliminated from a production bundle) --
+   so these rules are dead weight in production but never make the panel
+   itself reachable there, same split as the audio debug panel's own comment
+   below.
 
-   An earlier revision used `position: fixed` pinned to the bottom-right
-   corner. That overlapped the arena and the away fighter's HP card outright
-   (measured `top: 416, left: 809, width: 440, height: 368` against a
-   ~1280x743 viewport, landing squarely on the arena's right edge and the HP
-   card beneath it) -- and before *that* it was unstyled and landed off-screen
-   entirely (`top: 769px` against a `743px` viewport). Both failures share a
-   cause: the panel was positioned independently of the content it needed to
-   avoid. `.page-body--with-panel` turns `.page-body` (normally
-   `display: contents`, see above) into a real flex row instead, so the panel
-   becomes a sibling of `#series-ui`/`#battle-ui` and shares the row's width
-   by construction rather than floating over whatever happens to be
-   underneath. `align-items: flex-start` deliberately does *not* stretch the
-   panel to match its sibling's height -- that height can grow arbitrarily as
-   the battle feed accumulates rows (`.battle-feed ol` has no cap of its
-   own) -- so the panel bounds its own height instead and scrolls its own row
+   Two earlier revisions both failed by positioning the panel independently
+   of the content it needed to avoid: `position: fixed` pinned to the
+   bottom-right corner overlapped the arena and the away fighter's HP card
+   outright (measured `top: 416, left: 809, width: 440, height: 368` against
+   a ~1280x743 viewport); before that it was unstyled and landed off-screen
+   entirely. The next attempt fixed the overlap by giving the panel its own
+   column beside `#series-ui`/`#battle-ui` -- which stopped the overlap but
+   shrank the arena to make room, and at 1038px wide the arena collapsed to
+   an unwatchably narrow strip (~200x520) with its title clipped mid-word.
+   The arena's rendered size must be identical with the panel present or
+   absent, at every width -- not just non-overlapping with it.
+
+   This version puts the panel in `.below-arena-row` instead, sharing that
+   row with `.battle-feed` (a sibling of `#battle-ui`, not a child of it, see
+   above). `.battle-grid` -- the arena and both HP cards -- lives entirely
+   inside `#battle-ui`, untouched by this row's contents, so its geometry
+   cannot depend on whether the panel exists. `align-items: flex-start`
+   deliberately does not stretch the panel to match the feed's height (the
+   feed has no row cap of its own and can grow arbitrarily tall over a long
+   bout) -- the panel bounds its own height instead and scrolls its own row
    list, which also keeps a long decision trace from growing the page's own
-   scrollbar. */
+   scrollbar (a page scrollbar from the *arena's* own height is fine; an
+   arena too narrow to watch is not). */
 
-.page-body--with-panel {
+.below-arena-row--with-panel {
   display: flex;
   align-items: flex-start;
   gap: 18px;
+  /* Replaces `.battle-feed`'s own `margin-top: 14px`, below: once this row
+     is a real flex container the feed's margin no longer collapses with the
+     arena above it (flex items don't margin-collapse with anything outside
+     their container), so the row supplies that gap itself instead. */
+  margin-top: 14px;
 }
 
-.page-body--with-panel > #series-ui,
-.page-body--with-panel > #battle-ui {
-  flex: 1 1 0;
-  min-width: 0;
+.below-arena-row--with-panel > .battle-feed {
+  margin-top: 0;
+  flex: 1 1 340px;
+  min-width: 220px;
 }
 
 .decision-panel {
-  flex: 0 0 320px;
+  flex: 1 1 420px;
+  max-width: 560px;
   align-self: flex-start;
   display: flex;
   flex-direction: column;
-  max-height: min(70vh, 640px);
+  max-height: min(60vh, 480px);
   padding: 14px 16px;
   border: 1px solid #302a2a;
   border-radius: 4px;
@@ -463,15 +495,15 @@ h1 span { color: #c78b4f; font-style: italic; }
 
 .decision-panel__row:last-child { border-bottom: none; }
 
-/* Below this width the row (content, panel) does not have room for both at a
-   readable size -- stack the panel under the content instead of squeezing
-   the arena down to a sliver. `align-items: stretch` overrides the row's own
-   `flex-start` so both the content column and the panel span the full
-   available width once they are stacked; `flex-basis: auto` then lets the
-   panel size to its own content up to `max-height`. */
-@media (max-width: 900px) {
-  .page-body--with-panel { flex-direction: column; align-items: stretch; }
-  .decision-panel { flex: 0 0 auto; max-height: 320px; }
+/* Below this width the feed and the panel no longer both fit at a readable
+   size side by side -- stack the panel under the feed instead. This never
+   touches the arena either way: `.battle-grid` has its own, older breakpoint
+   (820px, below) that reflows the arena/HP cards independently of this one.
+   `align-items: stretch` overrides the row's own `flex-start` so both the
+   feed and the panel span the full available width once stacked. */
+@media (max-width: 720px) {
+  .below-arena-row--with-panel { flex-direction: column; align-items: stretch; }
+  .decision-panel { flex: 0 0 auto; max-width: none; max-height: 320px; }
 }
 
 /* The dev/test-only audio debug panel (`?audioDebug=1`) styles itself from
@@ -490,7 +522,7 @@ h1 span { color: #c78b4f; font-style: italic; }
 }
 
 @media (max-width: 560px) {
-  .game-shell { width: min(100% - 20px, 1180px); padding-top: 20px; }
+  .game-shell { width: min(100vw - 20px, 1180px); padding-top: 20px; }
   .masthead { align-items: start; flex-direction: column; }
   .arena { min-height: 360px; }
   .battle-feed { grid-template-columns: 1fr; }

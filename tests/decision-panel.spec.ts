@@ -47,55 +47,78 @@ function overlaps(a: Rect, b: Rect): boolean {
   return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
 }
 
-test('does not occlude the arena or either HP card once a bout is running', async ({ page }) => {
-  // A real viewport, not `snapshot` mode: the layout bug this guards against
-  // (the panel fixed to the bottom-right corner, on top of the arena and the
-  // away fighter's HP card) only ever showed up once the arena and cards
-  // actually had layout, i.e. mid-bout.
-  const viewport = { width: 1280, height: 743 }
-  await page.setViewportSize(viewport)
-  await page.goto('/?seed=20260815&debugDecisions=1')
+async function startSeededBoutAndMeasure(page: import('@playwright/test').Page, url: string) {
+  await page.goto(url)
   await assignAndConfirm(page)
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(200))
+  const box = async (testId: string) => page.getByTestId(testId).boundingBox()
+  return { arena: await box('arena'), home: await box('active-home'), away: await box('active-away') }
+}
 
-  const panel = page.getByTestId('decision-panel')
-  const arena = page.getByTestId('arena')
-  const home = page.getByTestId('active-home')
-  const away = page.getByTestId('active-away')
+// A first revision fixed non-overlap by giving the panel its own column
+// beside `#series-ui`/`#battle-ui`, which shares the arena's *row* and so
+// shrinks the arena to make room for the panel. That passed a pure
+// non-overlap check at 1280px, where it degrades gracefully -- but at
+// 1038px wide the arena collapsed to an unwatchably narrow strip (~200x520)
+// with its own title clipped mid-word. Non-overlap alone does not catch a
+// panel that fits only by starving the arena, so this checks the stronger
+// property directly: the panel must not take width from the arena at any
+// width, which a same-width with/without comparison proves and a mere
+// non-overlap assertion does not.
+for (const width of [1024, 1280, 1440]) {
+  test(`arena keeps its exact geometry with the decision panel present, at ${width}px`, async ({ page }) => {
+    const viewport = { width, height: 743 }
+    await page.setViewportSize(viewport)
 
-  const [panelBox, arenaBox, homeBox, awayBox] = await Promise.all([
-    panel.boundingBox(),
-    arena.boundingBox(),
-    home.boundingBox(),
-    away.boundingBox(),
-  ])
-  for (const [name, box] of [
-    ['panel', panelBox],
-    ['arena', arenaBox],
-    ['home card', homeBox],
-    ['away card', awayBox],
-  ] as const) {
-    expect(box, `${name} has no layout box`).not.toBeNull()
-  }
+    const without = await startSeededBoutAndMeasure(page, '/?seed=20260815')
+    const withPanel = await startSeededBoutAndMeasure(page, '/?seed=20260815&debugDecisions=1')
 
-  // Every element stays fully inside the viewport -- the earlier bug that
-  // `toBeVisible()` alone missed (see the first test in this file).
-  for (const box of [panelBox, arenaBox, homeBox, awayBox]) {
-    expect(box!.x).toBeGreaterThanOrEqual(0)
-    expect(box!.y).toBeGreaterThanOrEqual(0)
-    expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width)
-  }
+    for (const [name, box] of [
+      ['arena', withPanel.arena],
+      ['home card', withPanel.home],
+      ['away card', withPanel.away],
+    ] as const) {
+      expect(box, `${name} has no layout box`).not.toBeNull()
+    }
 
-  // The bug this test exists to catch: the panel used to sit `position:
-  // fixed` in the bottom-right corner, landing on top of both the arena and
-  // the away HP card (measured `top: 416, left: 809, width: 440, height:
-  // 368` against this same viewport). Assert the fix directly rather than
-  // just re-checking presence, which the earlier test already covered and
-  // which would not have caught this.
-  expect(overlaps(panelBox!, arenaBox!), 'decision panel overlaps the arena').toBe(false)
-  expect(overlaps(panelBox!, homeBox!), 'decision panel overlaps the home HP card').toBe(false)
-  expect(overlaps(panelBox!, awayBox!), 'decision panel overlaps the away HP card').toBe(false)
-})
+    // The core requirement: the panel must not take width from the arena (or
+    // move the HP cards) at all, at any width -- not merely avoid overlapping
+    // it. A tiny epsilon absorbs sub-pixel rounding, not a real size change.
+    for (const key of ['arena', 'home', 'away'] as const) {
+      const a = without[key]!
+      const b = withPanel[key]!
+      expect(b.x, `${key}.x changed with the panel present`).toBeCloseTo(a.x, 0)
+      expect(b.y, `${key}.y changed with the panel present`).toBeCloseTo(a.y, 0)
+      expect(b.width, `${key}.width changed with the panel present`).toBeCloseTo(a.width, 0)
+      expect(b.height, `${key}.height changed with the panel present`).toBeCloseTo(a.height, 0)
+    }
+
+    const panel = page.getByTestId('decision-panel')
+    const panelBox = await panel.boundingBox()
+    expect(panelBox, 'decision panel has no layout box').not.toBeNull()
+
+    // Every element stays fully inside the viewport -- the earlier bug that
+    // `toBeVisible()` alone missed (see the first test in this file).
+    for (const box of [panelBox, withPanel.arena, withPanel.home, withPanel.away]) {
+      expect(box!.x).toBeGreaterThanOrEqual(0)
+      expect(box!.y).toBeGreaterThanOrEqual(0)
+      expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width)
+    }
+
+    // No pair among the panel, the arena, and both HP cards may occlude
+    // another -- the bug an earlier `position: fixed` revision had (measured
+    // `top: 416, left: 809, width: 440, height: 368` against a ~1280x743
+    // viewport, landing on the arena and the away HP card).
+    expect(overlaps(panelBox!, withPanel.arena!), 'decision panel overlaps the arena').toBe(false)
+    expect(overlaps(panelBox!, withPanel.home!), 'decision panel overlaps the home HP card').toBe(false)
+    expect(overlaps(panelBox!, withPanel.away!), 'decision panel overlaps the away HP card').toBe(false)
+
+    // The bout title must not be clipped -- the visible symptom of the
+    // column-width revision's arena collapse ("ut I . Brutus vs Drus").
+    const titleOverflow = await page.getByTestId('battle-status').evaluate((el) => el.scrollWidth > el.clientWidth + 1)
+    expect(titleOverflow, 'bout title is clipped').toBe(false)
+  })
+}
 
 test('records decisions once a bout is running, without being swamped by skipped noise', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot&debugDecisions=1')

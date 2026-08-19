@@ -538,17 +538,22 @@ if (import.meta.env.DEV) {
   // the DOM, and its collector never attached to `advanceSeriesTicks`, unless
   // both `import.meta.env.DEV` and the query param are present.
   //
-  // Mounted inside `.page-body` (a sibling of `#series-ui`/`#battle-ui`),
-  // not `document.body`: `.page-body--with-panel` (style.css) turns that
-  // wrapper into a flex row so the panel shares the row's width with
-  // whichever of `#series-ui`/`#battle-ui` is showing, instead of floating
-  // over it. Without the modifier class the wrapper stays `display: contents`
-  // and the panel would render full-width in normal document flow -- adding
-  // the class is what makes it a side-by-side layout at all.
+  // Mounted inside `.below-arena-row` (a sibling of `.battle-feed`), not
+  // `document.body` and not beside `#series-ui`/`#battle-ui`: an earlier
+  // revision put it in a column next to the arena, which shared the arena's
+  // row and so shrank the arena to make room -- fine at 1280px wide, but at
+  // 1038px the arena collapsed to an unwatchably narrow strip. Putting it
+  // below the arena instead, sharing the row with the battle feed, means the
+  // arena and both HP cards (`.battle-grid`, untouched by this row) keep
+  // their exact geometry at every width; only the feed and the panel ever
+  // trade space. `.below-arena-row--with-panel` (style.css) turns that row
+  // into a flex container so the two share it; without the modifier class
+  // the row stays `display: contents` and the feed alone renders exactly as
+  // it always did.
   if (new URLSearchParams(window.location.search).has('debugDecisions')) {
-    const pageBody = required<HTMLElement>('.page-body')
-    pageBody.classList.add('page-body--with-panel')
-    decisionPanel = new DecisionPanel(pageBody)
+    const belowArenaRow = required<HTMLElement>('.below-arena-row')
+    belowArenaRow.classList.add('below-arena-row--with-panel')
+    decisionPanel = new DecisionPanel(belowArenaRow)
   }
 
   // Dev/test-only audio debug surface (brief resolution #9, design.md: "In

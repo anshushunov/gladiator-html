@@ -20,8 +20,10 @@
             <div class="arena" data-testid="arena"><canvas aria-label="3D gladiator arena"></canvas><h2 class="arena__status" tabindex="-1" aria-live="polite" data-testid="battle-status"></h2></div>
             <article data-testid="active-away"></article>
           </div>
-          <section class="battle-feed" aria-label="Battle feed"><div><strong>Battle feed</strong></div><ol aria-live="off" data-testid="battle-feed"></ol></section>
         </section>
+        <div class="below-arena-row" data-testid="below-arena-row">
+          <section class="battle-feed" aria-label="Battle feed" hidden><div><strong>Battle feed</strong></div><ol aria-live="off" data-testid="battle-feed"></ol></section>
+        </div>
       </div>
     </main>
     <script type="module" src="/src/main.ts"></script>
