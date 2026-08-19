@@ -12,8 +12,8 @@ watched the shipped build and reported three defects:
 3. the log never says *why* a fighter chose an action.
 
 All three were reproduced by measurement before any design work. This document
-covers the fixes. It is a presentation-and-tooling slice: the simulation is not
-touched, and the frozen `traceHash` is the guard that proves it.
+covers the fixes. It is a presentation-and-tooling slice: combat *behaviour* is
+frozen, and the frozen trace hashes are the guard that proves it.
 
 ## Measured diagnosis
 
@@ -54,10 +54,28 @@ clean pairing is heavy vs heavy, where two slow fighters barely circle at all
 (16° maximum).
 
 That alone would read as an odd camera. It reads as *"both fighters are facing
-the viewer"* because of a second, independent cause: the rig is symmetric front
-to back. A box torso, capsule limbs, and a dome helmet look the same from
-behind as from the front, so a back view is indistinguishable from a face-on
-view. Both causes must be fixed; either one alone leaves the report standing.
+the viewer"* because of a second, independent cause: the rig is near-symmetric
+front to back. A box torso, capsule limbs, a dome helmet and a Z-centred foot
+box look much the same from behind as from the front, so a back view is hard to
+tell from a face-on view. Both causes must be fixed; either one alone leaves
+the report standing.
+
+### The desired yaw is discontinuous
+
+`measureSpreadAxisAngle` returns `0.5 * atan2(2·cov, varX − varZ)`, which lands
+in `(−90°, +90°]`. A spread axis has period `180°`, so `θ`, `θ + 180°` and
+`θ − 180°` all name the same axis — and as the pair rotates past the frame
+vertical, the value falls off one end of that interval and reappears at the
+other. The desired yaw jumps by nearly half a turn.
+
+Measured: **2 to 4 jumps of 179° per bout** in three of the nine pairings, and
+the pair spends up to **36% of ticks within 10° of that boundary**. Today's
+`±30°` clamp hides the jump by squashing both ends into one narrow band.
+Widening the clamp without fixing the discontinuity would put the defect on
+screen: `yawReference` compares a plain difference, so a near-180° change blows
+straight through the `5°` dead zone, and the `1.5 s` damping then walks the
+camera through `yaw = 0` — which points it directly along the pair's axis, the
+exact framing this slice exists to remove.
 
 ### Movement is binary, not jerky-by-reversal
 
@@ -83,16 +101,16 @@ motion punctuated by freezes.
 `action-interrupted`, `defense-started`, `defense-declined`, `defense-failed`,
 `attack-missed`, `attack-evaded`, `attack-blocked`, `attack-parried`, and
 `movement-intent-changed`. None carries a reason. `combatDecision.ts` builds a
-context, filters legal actions, weights the candidates, and rolls — then
-discards all of it, emitting only the winner.
+context, filters legal candidates, weights them, and rolls — then discards all
+of it, emitting only the winner.
 
 ## Goals
 
 - The fighters' mutual orientation is readable at every moment of every bout.
 - A standing fighter reads as alive rather than frozen.
-- Any decision the kernel makes can be inspected: candidates, weights, roll,
-  winner, and why the losers were excluded.
-- The simulation is unchanged, proven by an unchanged `traceHash`.
+- Every decision the kernel makes can be inspected, each in a form honest about
+  how that decision was actually reached.
+- Combat behaviour is unchanged, proven by unchanged frozen hashes.
 
 ## Non-goals
 
@@ -105,146 +123,250 @@ discards all of it, emitting only the winner.
 - New combat mechanics, perks, or a mass-combat mode.
 - Running the human review gate. That still needs two outside reviewers.
 
+## The frozen boundary, stated precisely
+
+"Do not touch the simulation" is the intent; taken literally as "do not edit
+any file under `src/simulation/**`" it would force this slice into a worse
+design (see "Decision trace", below). The boundary this slice actually holds:
+
+- **Combat behaviour is frozen.** No change to state, event content or
+  ordering, the number or order of random draws, or any tick phase's effect.
+- **A behaviourally neutral diagnostic seam is allowed** — a channel that
+  reports what a phase already computed, without altering it, and that is inert
+  unless a caller opts in.
+- **Proof is three hashes, not one.** The duel hash `dc635911`
+  (`battle.test.ts`), the 100-combatant fixture hash
+  (`encounterCapacity.test.ts`), and the Chromium-side duel hash
+  (`tests/combat-visuals.spec.ts`) must all be unchanged — *and* unchanged with
+  the diagnostic channel switched on, which is a separate assertion from
+  unchanged with it off.
+
+An unchanged hash alone does not prove a file was not edited; it proves
+behaviour did not change, which is the property that matters here.
+
 ## Design
 
-### 1. Camera yaw clamp: 30° → 90°
+### 1. Camera yaw: continuity first, then a wider clamp
 
-`MAX_YAW_RADIANS` becomes `90°`. The bound is exact rather than a guess: the
-pair-axis offset is an *unsigned* angle between a line and an axis, so it lies
-in `0°..90°` by construction. A `±90°` clamp therefore covers every reachable
-configuration with nothing left over, and the "beyond the clamp" column above
-goes to zero for all nine pairings.
+Two changes, in this order. The order is not stylistic — widening the clamp
+without fixing continuity ships a regression.
 
-The `5°` dead zone and the `1.5 s` damping time constant stay as they are —
-they are what makes the move read as the fight turning rather than the camera
-moving. Nothing else about the camera changes: fixed FOV, fixed elevation, the
-existing look-target and distance behaviour.
+1. **Continuity.** Before clamping, resolve the axis to whichever
+   representative (modulo `180°`) is nearest the yaw the camera already holds.
+   Measured effect: the largest tick-to-tick change in the desired yaw drops
+   from `179°` to between `0.6°` and `10.2°` across all nine pairings.
+2. **Clamp to `±90°`.** With continuity in place, the peak offset from the home
+   shot never exceeds `90°` in any pairing (`16°`–`90°` measured), because the
+   axis oscillates rather than winding. The clamp still bounds how far the
+   camera may leave home, and it now degrades by holding at the limit instead
+   of flipping to the far side of the arena.
 
-Known risk, to be measured rather than pre-solved: at large angles, slow
-damping means the camera visibly lags a quickly rotating pair. If that shows
-up, the fix is a **larger dead zone**, not faster damping — a camera that lags
-is easier to watch than one that snaps.
+Because the unwrapped angle is re-clamped every tick it cannot accumulate: the
+camera never winds around the arena, which the naive "just follow the axis"
+variant would do — measured at up to `981°` of accumulated travel in a
+34-second fast-vs-fast bout.
+
+Two hazards to handle explicitly rather than discover later:
+
+- **Degenerate covariance.** At exactly coincident or exactly symmetric
+  positions the covariance is zero and the branch is numerically unstable.
+  The existing `angle === 0` early return covers the exact case; the unwrap
+  must not turn near-zero noise into a reference flip.
+- **Reference tracking.** `yawReference` currently compares a plain difference.
+  It must compare against the *unwrapped* desired yaw, or the dead zone will
+  keep seeing phantom near-180° changes.
+
+**This replaces an existing guarantee, and that is in scope.**
+`ArenaCamera.test.ts` currently asserts `yaw === −30°` for an axis at 80°,
+under the name *"clamps to 30 degrees, so an axis pointing at the camera never
+swings the shot around the fight"*. That test encodes the old policy and will
+fail. It is rewritten, not deleted: the property worth keeping — the camera
+never crosses to the other side of the fight — is now guaranteed structurally
+by the unsigned axis plus nearest-representative unwrap, and gets its own test.
+
+The `5°` dead zone and the `1.5 s` damping constant are unchanged. Fixed FOV,
+fixed elevation, existing look-target and distance behaviour are unchanged.
+
+If the camera visibly lags a fast-rotating pair, the remedy is a **larger dead
+zone**, not faster damping — but note that a larger dead zone raises the
+steady-state framing error it permits, so it trades one legibility cost for
+another and must be judged on screen, not in the abstract.
 
 ### 2. Rig directionality
 
-Three additions to `ProceduralFighter`, all meshes hung on joints that already
-exist. The skeleton, the joint list, and the anchor/worn-decoration split are
-untouched, so pose fixtures keep working.
+Three changes in `ProceduralFighter`, all on joints that already exist. The
+skeleton, the joint list, and the anchor/worn-decoration split are untouched.
 
 - **Visor.** A dark slot across the front hemisphere of the head, giving the
   head an unambiguous front.
 - **Chest-versus-back contrast.** A light breastplate on the front of the
   chest, a dark back. This is the one that keeps working when the head is too
   small to read and when the camera is high. It must not compete with the
-  existing house colours: the fighters are already told apart by red versus
-  blue, so front-versus-back is carried by *value* (light against dark) within
-  each fighter's own colour, never by a third hue.
-- **Feet.** Meshes on the existing `foot.L` / `foot.R` joints, toes forward.
-  Feet read as direction from any angle, including from above, and the legs are
-  currently bare capsules that end at the ankle. The grounding layer already
-  pins a planted foot to its guard value; the new mesh must sit on the floor
-  plane in that pinned pose, so no foot sinks through the sand or floats.
+  existing house colours: fighters are already told apart by red versus blue,
+  so front-versus-back is carried by *value* (light against dark) within each
+  fighter's own colour, never by a third hue.
+- **Feet — modify, do not add.** `buildLeg` already creates `foot.L`/`foot.R`
+  and already hangs a box of `body.footLength` on each. The defect is that this
+  box is centred on Z, so it reads the same forwards and backwards. The fix is
+  to bias the existing box forward (or give it a toe cap), *not* to add a
+  second mesh — a second overlapping mesh would double the volume and make the
+  floor contact harder to guarantee.
 
-Every addition must be visible at the arena's shipped framing distance, not
-only in a close-up. Colour alone is not enough for the visor and the feet:
-they carry silhouette as well.
+All three must be legible at the arena's shipped framing distance, not only in
+a close-up. Colour alone is not enough for the visor and the foot: they carry
+silhouette too.
 
 ### 3. Idle pose layer
 
-A layer between the style guard stance and the gait cycle: weight shift,
-breathing, and a small shuffle. Its amplitude is `1 − speedWeight`, so it
-appears exactly when the fighter stops and disappears as it moves — it can
-never fight the gait blend for control.
+A layer adding weight shift, breathing, and a small shuffle when a fighter is
+standing. The naive form of this fights three existing systems, so its scope is
+bounded up front.
 
-Two hard constraints:
+**When it applies.** Only when the fighter is in a neutral, un-staggered,
+living state. Speed alone is the wrong gate: a fighter is also motionless
+during a stationary windup, contact, impact, stagger, and defeat, and breathing
+through those would corrupt held action poses — including the fixture that
+asserts an impact pose is identical across ticks. Action, defense, stagger and
+defeat overlays fully suppress the layer.
 
-- **Phase comes from the simulation tick, never wall-clock time.** Pose
-  baselines and the key-pose fixtures are captured at fixed ticks; a wall-clock
-  idle would make every one of them flaky.
-- **Phase is offset per combatant id**, so two fighters never sway in unison
-  (which reads as a bug, not as life).
+**How it blends.** Amplitude rises as `1 − speedWeight`, but that alone does
+not prevent a fight with the gait layer at intermediate speeds, where both are
+non-zero and may write the same joints. The layer therefore either owns a
+disjoint joint set or crossfades against gait explicitly; partial-speed
+behaviour is tested, not assumed.
 
-Under `prefers-reduced-motion: reduce` the layer is damped to near zero,
-consistent with how trails and contact flashes are already handled.
+**Grounding wins.** The grounding layer runs after and pins a planted foot back
+to its guard value. A shuffle written into a planted leg is silently erased.
+The layer's leg contribution must be defined in terms of the *unplanted* leg,
+or the shuffle must be dropped and the layer restricted to torso and arms.
 
-The layer only writes pose joints. It does not touch the root — the existing
+**Phase source.** Interpolated simulation time —
+`previousTick`, `currentTick` and the existing render `alpha` — not the integer
+tick. An integer-tick phase would step at 60 Hz instead of moving smoothly, and
+wall-clock time would make every fixed-tick pose baseline flaky. Phase is
+offset per combatant id so two standing fighters never sway in unison.
+
+**Reduced motion.** Exactly zero, not "near zero". The acceptance criterion is
+that the pose is *identical* between ticks under
+`prefers-reduced-motion: reduce`, and "near zero" would fail it.
+
+The layer writes pose joints only; it never touches the root, so the existing
 rule that presentation may render the root only at
 `lerp(previousTick, currentTick, alpha)` is unaffected.
 
-### 4. Decision trace panel (`?debugDecisions=1`)
+### 4. Decision trace (`?debugDecisions=1`)
 
-The panel recomputes decisions from outside the kernel instead of instrumenting
-it. This is possible because `combatDecision.ts` is already built from pure
-functions — context construction, legal-action filtering, weighting, weighted
-selection — and each combatant carries its own RNG state. Given the encounter
-snapshot from before a tick, the panel can call the same exported functions and
-obtain the same candidates, the same weights, and the same roll.
+**The external-recompute approach was considered and rejected.** It looked
+attractive — `combatDecision.ts` is built from pure functions, and each
+combatant carries its own RNG state, with the decision stream separate from the
+contact stream — but it does not survive contact with the tick order. Phase 4
+does not receive the state a caller can snapshot before the tick; it receives
+the state left by phase 1 (expired-phase transitions), phase 2 (cleanup and
+forced behaviours) and phase 3 (pre-movement spatial hash and target refresh).
+A target that entered recovery in phase 1 changes the candidate weights in
+phase 4. Reproducing that outside the kernel means reproducing a third of the
+tick in the presentation layer — a second copy of the game rules that would
+drift from the first. Rejected on that basis.
 
-The consequence that matters: **no simulation file changes.** No new event type,
-no new state field, no change to event ordering, no change to how many rolls
-are drawn. `traceHash` cannot move, because nothing it folds over exists any
-differently.
+**Instead: a behaviourally neutral diagnostic seam.** Phase 4 returns the
+explanation it already computed, through an optional collector supplied by the
+caller. Absent a collector nothing is allocated and nothing changes; the
+explanation never enters `EncounterState` or the event log, so no hash folds
+over it. The three-hash proof above covers this, including the assertion that
+hashes are identical with the collector attached.
 
-The approach is self-checking. A test replays a bout, recomputes each decision
-externally, and asserts the recomputed winner matches the winner the kernel
-actually chose. If the panel ever drifts from the kernel, that test fails —
-a debugging tool that silently lies is worse than no tool.
+**Not every decision is a weighted roll, and the panel must not pretend
+otherwise.** Four distinct paths reach an action, and each gets its own record
+shape:
 
-Per decision the panel shows: tick, combatant, every candidate with its weight
-as a percentage, the roll that was drawn, the winner, and the exclusion reason
-for each rejected candidate (out of range, outside the facing sector, on
-cooldown).
+| Path | What is shown |
+|---|---|
+| Weighted phase-4 decision | candidates with weights, the roll, the winner |
+| Deterministic fallback | that the candidate set was empty or degenerate, and what was chosen instead |
+| Forced behaviour (Fast disengage, Technical parry-counter) | which behaviour fired and its trigger — no roll happens |
+| Defense reaction | the reaction roll and its outcome, from the defense batch, not from phase 4 |
 
-The panel follows the conventions the existing debug surfaces already use: it
-lives behind a query parameter, is gated on `import.meta.env.DEV`, and is
-statically absent from a production build, exactly like `?audioDebug=1` and
-`window.__GLADIATOR_TEST__`.
+**Exclusion reasons must match the real gates.** The gates on an attack
+candidate are: the forced-action tag, `startMaxRange` against current distance,
+`contactRange.min` against the farthest reachable contact, and
+`contactRange.max` against distance minus `rootTravel`. There is no
+facing-sector gate and no cooldown at candidate-selection time — an earlier
+draft of this document invented both. Locomotion candidates have their own
+gates: burst and backstep range, circle-facing capability, the arena path
+filter, and anti-stall suppression. Each reason is emitted where its gate is
+applied; nothing is inferred after the fact.
+
+The panel follows existing debug conventions: query-parameter gated,
+`import.meta.env.DEV` only, statically absent from production, exactly like
+`?audioDebug=1` and `window.__GLADIATOR_TEST__`. Its history clears on each new
+bout and on rematch.
 
 ## Module boundaries
 
 | Change | File | Kind |
 |---|---|---|
-| Yaw clamp | `src/presentation/ArenaCamera.ts` | one constant |
-| Visor, chest/back contrast, feet | `src/presentation/ProceduralFighter.ts` | meshes on existing joints |
+| Yaw unwrap, widened clamp, reference tracking | `src/presentation/ArenaCamera.ts` | new pure helper plus constant |
+| Visor, chest/back contrast, forward-biased foot | `src/presentation/ProceduralFighter.ts` | geometry on existing joints |
 | Idle layer | `src/presentation/PoseController.ts`, `src/presentation/poses/` | new pose layer |
-| Decision panel | `src/main.ts` plus a new presentation/dev module | dev-only, reads exported pure functions |
-| Nothing | `src/simulation/**`, `src/content/**` | unchanged, enforced by `traceHash` |
+| Decision panel | `src/main.ts` plus a new dev-only presentation module | reads the diagnostic collector |
+| Diagnostic collector | `src/simulation/encounter.ts` | opt-in, inert when absent, behaviour frozen |
+| Nothing | `src/content/**`, rest of `src/simulation/**` | unchanged |
 
 ## Acceptance
 
-- **Orientation.** Across all nine ordered pairings at the baseline seed, the
-  share of ticks where the *desired* yaw is cut by the clamp is `0%`. This is
-  the precise criterion, and it is the one to test. It is deliberately not
-  "the axis is across the frame on every tick": the dead zone and the `1.5 s`
-  damping mean the camera trails a rotating pair by design, and demanding an
-  exact instantaneous framing would be demanding that the damping be removed.
-- **Directionality.** At the shipped framing distance, front and back views of
-  a fighter are distinguishable in a still frame — checked on the regenerated
-  screenshot baselines.
-- **Idle.** With velocity at zero, the sampled pose differs between consecutive
-  ticks; under reduced motion it does not; two fighters standing at the same
-  time are out of phase; at full speed the idle contribution is zero.
-- **Trace fidelity.** For a full bout, every externally recomputed decision
-  matches the kernel's actual choice.
-- **Simulation untouched.** `traceHash` equals `dc635911`, the value frozen in
-  `battle.test.ts` and cross-checked from Chromium in
-  `tests/combat-visuals.spec.ts`. This is the slice's boundary condition: if it
-  moves, the work went out of scope.
+- **Yaw continuity.** Across all nine pairings at the baseline seed, the
+  desired yaw never changes by more than `15°` between consecutive ticks
+  (measured worst case after the fix: `10.2°`). Additionally, synthetic
+  sequences crossing the boundary — `89° → 90° → 91°`, the reverse, and jitter
+  around zero covariance — produce no reference flip.
+- **On-screen framing error.** Per tick, the angle between the camera's
+  screen-horizontal axis and the pair axis, normalised modulo `180°`, is
+  reported over whole bouts, with dead-zone and damping lag distinguished from
+  discontinuity. This — not "the clamp never clipped" — is the criterion that
+  tracks the original complaint. Clipping is kept as secondary diagnostics.
+- **Directionality.** Dedicated front-view and back-view fixtures of the same
+  fighter at the shipped framing distance are visibly distinguishable, on both
+  OS baseline sets.
+- **Idle.** Standing in a neutral state, the pose differs between consecutive
+  ticks; under reduced motion it is identical; two fighters standing
+  simultaneously are out of phase; at full speed the idle contribution is zero;
+  during action, stagger and defeat overlays it is fully suppressed; a planted
+  foot is unmoved.
+- **Decision trace.** Every decision a bout makes is recorded under one of the
+  four record shapes, with exclusion reasons drawn from the real gates.
+- **Behaviour frozen.** All three hashes unchanged, both with the diagnostic
+  collector attached and without it.
+- **Production cleanliness.** A production preview with `?debugDecisions=1`
+  renders no panel and exposes no hooks.
 
 ## Checks
 
-`npm test` for the new unit tests (camera clamp across 0–90° axis offsets, the
-idle layer's four properties, decision-recompute fidelity), then
+`npm test` for the new unit tests: yaw continuity across the wrap boundary and
+over recorded bouts, the rewritten camera-side test, foot geometry (single
+assembly, correct parent, positive forward-Z extent, lowest point on the floor
+plane, disposal), the idle layer's suppression and blending properties, and
+decision-trace coverage.
+
 `npm run test:e2e` with regenerated screenshot baselines for both `win32` and
 `linux` — the Linux set through the container recipe in `AGENTS.md`, since CI
 compares against it. Every regenerated PNG is reviewed by eye before commit.
+New fixtures: the front/back pair, and a `?debugDecisions=1` dev case plus a
+production-preview case asserting its absence.
+
+**Static screenshots cannot catch this slice's defects.** A camera flip, a
+stepped idle, and damping lag are all motion artefacts. Before handoff,
+re-record at least the representative `×1` clips with `npm run review:clips`
+and watch the vertical-axis crossings, the start/stop rhythm and the idle. This
+is ordinary developer verification, not the two-reviewer human gate, which
+remains out of scope.
 
 ## Work order
 
-1. Camera yaw clamp — loudest defect, smallest change.
-2. Rig directionality — the other half of the same defect.
+1. Camera yaw — unwrap and reference tracking first, clamp widening second,
+   rewriting the old 30° test as part of the same step.
+2. Rig directionality.
 3. Idle layer.
-4. Decision trace panel.
+4. Diagnostic collector, then the panel on top of it.
 
 Baselines are regenerated once, after step 3, so the same PNGs are not
-rewritten three times.
+rewritten three times. Clips are re-recorded and watched after step 4.
