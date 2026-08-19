@@ -54,6 +54,22 @@ export type JointName =
   | 'lowerLeg.R'
   | 'foot.R'
 
+/**
+ * `'root'` stays in this vocabulary (a future imported skeletal model's own
+ * root bone can still be addressed by the same name) but is deliberately
+ * *not* a key of any built `ProceduralFighter.joints` map -- see
+ * `createProceduralFighter`'s comment at the `root` `Group` below for why.
+ * Every pose-application loop elsewhere (`ArenaView.applyPoseToJoints`,
+ * `PoseController.applyPoseToRig`) already does `fighter.joints.get(name)`
+ * followed by `if (!joint) continue`, so omitting `'root'` from the joints
+ * map -- rather than special-casing it in every one of those loops -- makes
+ * "a pose silently overwrites the rig's world facing" structurally
+ * impossible: there is no joint object left for any pose data to reach.
+ * This was exactly how the facing bug happened (Task 19 human-review
+ * finding): `applyPoseToJoints` zeroed the root's yaw the instant it hit
+ * `'root'` in this list, once per frame, because `root` used to be both the
+ * rig's world-placement `Group` *and* a joint entry pose data could write.
+ */
 export const SEMANTIC_JOINT_NAMES: readonly JointName[] = [
   'root',
   'pelvis',
@@ -115,6 +131,14 @@ export interface ProceduralFighterOptions {
 }
 
 export interface ProceduralFighter {
+  /**
+   * World placement (position + facing yaw) only -- owned exclusively by
+   * `ArenaView`, which derives it every frame from `lerp(previousTick,
+   * currentTick, alpha)` (design.md). Deliberately not reachable via `joints`
+   * (see `SEMANTIC_JOINT_NAMES`'s doc comment): a pose describes body
+   * configuration, never world placement, so nothing that samples a pose by
+   * semantic joint name should be able to touch this transform at all.
+   */
   root: THREE.Group
   joints: ReadonlyMap<JointName, THREE.Object3D>
   anchors: ReadonlyMap<EquipmentAnchorName, THREE.Object3D>
@@ -318,7 +342,12 @@ function trackedGeometry<T extends THREE.BufferGeometry>(owned: Owned, geometry:
   return geometry
 }
 
-/** Adds a box mesh spanning from `joint` upward by `height`, plus a cheap rim-outline duplicate. */
+/**
+ * Adds a box mesh spanning from `joint` upward by `height`, plus a cheap
+ * rim-outline duplicate. `forwardOffset` shifts the box along local `+Z`
+ * (the rig's forward axis); it defaults to `0`, which is the Z-centred
+ * placement every caller but the foot wants.
+ */
 function addBoxSegment(
   owned: Owned,
   joint: THREE.Object3D,
@@ -327,10 +356,11 @@ function addBoxSegment(
   depth: number,
   material: THREE.Material,
   slot: string,
+  forwardOffset = 0,
 ): THREE.Mesh {
   const geometry = trackedGeometry(owned, new THREE.BoxGeometry(width, height, depth))
   const mesh = new THREE.Mesh(geometry, material)
-  mesh.position.set(0, height / 2, 0)
+  mesh.position.set(0, height / 2, forwardOffset)
   mesh.userData.slot = slot
   joint.add(mesh)
   addRimOutline(owned, joint, mesh)
@@ -437,7 +467,17 @@ function buildLeg(
   const lowerLeg = addJoint(joints, `lowerLeg.${side}`, upperLeg, -body.upperLegLength)
   addCapsuleBone(owned, lowerLeg, body.lowerLegLength, body.limbRadius * 0.85, material, 'limb')
   const foot = addJoint(joints, `foot.${side}`, lowerLeg, -body.lowerLegLength)
-  addBoxSegment(owned, foot, body.limbRadius * 1.6, body.limbRadius * 0.7, body.footLength, material, 'limb')
+  // Lengthened beyond the style's own footLength and shifted so the heel
+  // sits almost directly under the ankle and nearly the whole box reaches
+  // forward -- a Z-centred foot reads identically from front and back, which
+  // is half of why a back view is mistaken for a face-on view. The original
+  // (bare footLength, quarter-length offset) fix was correct in construction
+  // but too small a silhouette change to survive the arena's shipped framing
+  // distance (Task 7's motion-check finding); this is the same asymmetry,
+  // scaled up until it reads as a distinct forward-pointing shape rather
+  // than a few centred pixels.
+  const footDepth = body.footLength * 1.4
+  addBoxSegment(owned, foot, body.limbRadius * 1.7, body.limbRadius * 0.75, footDepth, material, 'limb', footDepth * 0.42)
 }
 
 function buildEquipment(
@@ -514,6 +554,27 @@ function buildEquipment(
   chest.add(hitCenter)
   anchors.set('hitCenter', hitCenter)
 
+  // Front-versus-back carried by value inside the fighter's own house colour.
+  // A third hue would compete with the red/blue that already separates the two
+  // fighters from each other. The back gets the mirror-image treatment
+  // (darkened, not left at the base cloth colour) so the two sides span a
+  // full light-to-dark range instead of a one-sided nudge -- doubling the
+  // contrast available for the same silhouette cost, and legible even when
+  // the shield hides the front (a shield never covers the back).
+  const plateGeometry = trackedGeometry(owned, new THREE.BoxGeometry(spec.body.torsoWidth * 0.72, spec.body.chestHeight * 0.62, spec.body.torsoDepth * 0.32))
+  const lightenedHouseColor = new THREE.Color(spec.clothColor).lerp(new THREE.Color(0xffffff), 0.35)
+  const plate = new THREE.Mesh(plateGeometry, trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: lightenedHouseColor, metalness: 0.35, roughness: 0.45 })))
+  plate.position.set(0, spec.body.chestHeight * 0.5, spec.body.torsoDepth * 0.5)
+  plate.userData.slot = 'breastplate'
+  chest.add(plate)
+
+  const backplateGeometry = trackedGeometry(owned, new THREE.BoxGeometry(spec.body.torsoWidth * 0.72, spec.body.chestHeight * 0.62, spec.body.torsoDepth * 0.32))
+  const darkenedHouseColor = new THREE.Color(spec.clothColor).lerp(new THREE.Color(0x000000), 0.35)
+  const backplate = new THREE.Mesh(backplateGeometry, trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: darkenedHouseColor, metalness: 0.35, roughness: 0.45 })))
+  backplate.position.set(0, spec.body.chestHeight * 0.5, -spec.body.torsoDepth * 0.5)
+  backplate.userData.slot = 'backplate'
+  chest.add(backplate)
+
   if (equipment.hasHelmet) {
     const domeGeometry = trackedGeometry(owned, new THREE.SphereGeometry(spec.body.headRadius * 1.15, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2))
     const dome = new THREE.Mesh(domeGeometry, bronze)
@@ -563,7 +624,17 @@ export function createProceduralFighter(options: ProceduralFighterOptions): Proc
 
   const root = new THREE.Group()
   root.name = 'root'
-  joints.set('root', root)
+  // Deliberately never `joints.set('root', root)`: the root Group carries
+  // this fighter's world placement (position + facing), which `ArenaView`
+  // sets every frame from interpolated simulation state, never from pose
+  // data. Registering it as an ordinary semantic joint used to make it
+  // reachable from `SEMANTIC_JOINT_NAMES`-driven pose-application loops,
+  // which zeroed the facing every frame the instant any pose sample walked
+  // that list (no authored pose in `poses/combatPoses.ts` defines a `root`
+  // entry, so `PoseController.buildFullPose` always filled it with the
+  // identity transform). `'root'` stays in `SEMANTIC_JOINT_NAMES` itself
+  // (see that constant's own comment) as vocabulary only; this rig simply
+  // has no joint object under that name for any pose to reach.
 
   const groundY = body.upperLegLength + body.lowerLegLength
   const pelvis = addJoint(joints, 'pelvis', root, groundY)
@@ -577,6 +648,20 @@ export function createProceduralFighter(options: ProceduralFighterOptions): Proc
   addBoxSegment(owned, torso, body.torsoWidth, body.chestHeight, body.torsoDepth, cloth, 'cloth')
   addCapsuleBone(owned, chest, body.neckHeight, body.limbRadius * 0.6, skin, 'skin', 1)
   addSphere(owned, head, body.headRadius, skin, 'skin')
+
+  // A dark slot across the front of the head. Deliberately geometry, not just
+  // colour: it has to read as a front at the arena's framing distance, where
+  // the whole head is a few pixels wide. Sized to actually punch through the
+  // head sphere's own silhouette rather than sit almost flush with it --
+  // the original box (forward face barely past the sphere's surface) was
+  // correctly built but too shallow a protrusion to survive downsampling to
+  // that size (Task 7's motion-check finding); wider (near the head's own
+  // diameter, wrapping toward both temples) and noticeably deeper fixes that.
+  const visorGeometry = trackedGeometry(owned, new THREE.BoxGeometry(spec.body.headRadius * 1.9, spec.body.headRadius * 0.6, spec.body.headRadius * 0.75))
+  const visor = new THREE.Mesh(visorGeometry, trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: 0x11151c, roughness: 0.6 })))
+  visor.position.set(0, spec.body.headRadius * 0.05, spec.body.headRadius * 0.85)
+  visor.userData.slot = 'visor'
+  head.add(visor)
 
   buildLimb(owned, joints, 'L', chest, body.shoulderWidth, body.shoulderY, body, skin)
   buildLimb(owned, joints, 'R', chest, -body.shoulderWidth, body.shoulderY, body, skin)

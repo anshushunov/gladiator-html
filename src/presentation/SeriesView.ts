@@ -68,6 +68,15 @@ export class SeriesView {
     this.shell.dataset.phase = state.phase
     const battleUi = this.shell.querySelector<HTMLElement>('#battle-ui')
     if (battleUi) battleUi.hidden = state.phase === 'planning' || state.phase === 'summary'
+    // `.battle-feed` used to be a child of `#battle-ui` and inherited its
+    // `hidden` state for free. It now lives in `.below-arena-row` instead (a
+    // sibling of `#battle-ui`, style.css) so the dev-only decision panel
+    // (`?debugDecisions=1`) can share that row with it without the panel
+    // itself being forced to live -- and disappear -- inside `#battle-ui`,
+    // where it would be invisible before a bout starts. Mirroring the same
+    // condition here keeps the feed hidden/shown exactly when it always was.
+    const battleFeed = this.shell.querySelector<HTMLElement>('.battle-feed')
+    if (battleFeed) battleFeed.hidden = state.phase === 'planning' || state.phase === 'summary'
     if (phaseChanged || state.phase !== 'fighting') this.rebuildShell(state, runtime)
     else this.updateBattleUi(state, runtime)
     this.lastRenderedPhase = state.phase

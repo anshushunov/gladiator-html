@@ -5,6 +5,10 @@ test-results/
 debug.log
 .DS_Store
 
+# Playwright MCP tool's own scratch output (page snapshots, console logs,
+# ad hoc verification screenshots) -- not project artifacts.
+.playwright-mcp/
+
 # Worktree directory
 .worktrees/
 

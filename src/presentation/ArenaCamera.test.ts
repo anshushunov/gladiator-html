@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { ArenaCamera, type HorizontalFramingTarget } from './ArenaCamera'
+import { ArenaCamera, measureSpreadAxisAngle, type HorizontalFramingTarget } from './ArenaCamera'
+import { COMBAT_STYLES } from '../content/combatStyles'
+import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
+import { advanceBattleTick, createBattle, fighterBySide, type BattleState } from '../simulation/battle'
 
 const DEGREE = Math.PI / 180
 
@@ -248,14 +251,44 @@ describe('ArenaCamera', () => {
       expect(onScreenSeparation(targets, 0)).toBeLessThan(2.9)
     })
 
-    it('clamps to 30 degrees, so an axis pointing at the camera never swings the shot around the fight', () => {
+    it('stays continuous when the pair axis crosses the frame vertical', () => {
+      // The raw principal axis is reported in (-90, +90] degrees, so 91 degrees
+      // comes back as -89. Without an unwrap the desired yaw jumps ~180 degrees
+      // here and the damping then walks the camera through yaw=0 -- straight
+      // down the pair's own axis, the exact shot this whole slice removes.
       const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
-      // 80 degrees off X: nearly nose-on to the home shot, the worst case.
+      camera.reset(pairOnAxis(89))
+
+      const before = camera.update(pairOnAxis(89), 1e6).yaw
+      const across = camera.update(pairOnAxis(91), 1e6).yaw
+
+      expect(Math.abs(across - before)).toBeLessThan(15 * DEGREE)
+    })
+
+    it('follows an axis pointing at the camera instead of giving up at 30 degrees', () => {
+      const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
+      // 80 degrees off X: nearly nose-on to the home shot, the case the old
+      // +/-30 clamp could not frame at all.
       const framed = camera.reset(pairOnAxis(80))
-      expect(framed.yaw).toBeCloseTo(-30 * DEGREE, 10)
+      expect(framed.yaw).toBeCloseTo(-80 * DEGREE, 10)
 
       const settled = camera.update(pairOnAxis(80), 1e6)
-      expect(settled.yaw).toBeCloseTo(-30 * DEGREE, 10)
+      expect(settled.yaw).toBeCloseTo(-80 * DEGREE, 10)
+
+      // The property the old test was really protecting: the shot is squared
+      // to the pair, not looking down its axis.
+      expect(onScreenSeparation(pairOnAxis(80), settled.yaw)).toBeGreaterThan(
+        onScreenSeparation(pairOnAxis(80), 0),
+      )
+    })
+
+    it('still refuses to swing past 90 degrees from the home shot', () => {
+      const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
+      camera.reset(pairOnAxis(0))
+      for (let step = 0; step < 40; step += 1) {
+        camera.update(pairOnAxis(89), 1e6)
+      }
+      expect(Math.abs(camera.update(pairOnAxis(89), 1e6).yaw)).toBeLessThanOrEqual(90 * DEGREE + 1e-9)
     })
 
     it('reads the spread as an unsigned axis: mirroring the pair through its own center cannot flip the camera to the other side', () => {
@@ -281,16 +314,17 @@ describe('ArenaCamera', () => {
       expect(outside.update(pairOnAxis(6), 10).yaw).toBeLessThan(0)
     })
 
-    it('moves ~63% of the way after exactly one 1.5s time constant -- the slowest of the three axes', () => {
+    it('moves ~63% of the way after exactly one 0.5s time constant -- now the fastest of the three axes (tightened from the 2026-08-18 amendment\'s 1.5s; see the constant\'s doc comment for the measurement)', () => {
       const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
       camera.reset(pairOnAxis(0))
 
-      const oneConstant = camera.update(pairOnAxis(30), 1.5).yaw
+      const oneConstant = camera.update(pairOnAxis(30), 0.5).yaw
       expect(oneConstant).toBeCloseTo(-30 * DEGREE * (1 - Math.exp(-1)), 10)
 
-      // Same elapsed time on the look target's own 0.75s clock is already
-      // twice as many time constants along: the axes really do damp on
-      // separate clocks, and yaw is the laziest of them.
+      // Same elapsed time on the look target's own 0.75s clock is not yet a
+      // full time constant along: yaw is now the quickest of the three axes,
+      // the reverse of the amendment's original "deliberately the slowest"
+      // intent -- a fast-rotating pair needs the camera to keep up with it.
       const look = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
       look.reset([
         { id: 'a', centerX: 0, centerZ: 0, radius: 0.5 },
@@ -302,9 +336,9 @@ describe('ArenaCamera', () => {
             { id: 'a', centerX: 10, centerZ: 0, radius: 0.5 },
             { id: 'b', centerX: 10, centerZ: 0, radius: 0.5 },
           ],
-          1.5,
+          0.5,
         ).lookTargetX / 10
-      expect(lookProgress).toBeGreaterThan(1 - Math.exp(-1))
+      expect(lookProgress).toBeLessThan(1 - Math.exp(-1))
     })
 
     it('holds the home shot for a degenerate group instead of reading an angle out of float noise', () => {
@@ -327,6 +361,41 @@ describe('ArenaCamera', () => {
       const reset = camera.reset(pairOnAxis(10))
       expect(reset.yaw).toBeCloseTo(-10 * DEGREE, 10)
       expect(camera.update(pairOnAxis(10), 0)).toEqual(reset)
+    })
+
+    it('does not flip the reference on noise around a genuinely degenerate spread', () => {
+      // Regression note: the original version of this test placed targets at
+      // X = -1/+1 (2 units apart, variance order 1) and perturbed only Z by
+      // the epsilon. That pair has a firmly established, non-degenerate
+      // horizontal axis (varianceX - varianceZ stays close to its unperturbed
+      // value of 4), so the epsilon barely nudges the *reported* angle away
+      // from 0 -- it never exercised the zero-covariance path the test was
+      // named for at all.
+      //
+      // This version first establishes a real non-zero yaw (30 degrees, so a
+      // reference-snapping bug can be told apart from a merely-idle one),
+      // then feeds targets that are genuinely coincident (variance exactly
+      // zero) plus tiny *opposing* perturbations on *both* coordinates --
+      // which makes `varianceX - varianceZ` and `covariance` both float-noise
+      // scale, so their ratio (all `atan2` sees) is not merely small, it is
+      // arbitrary. Both the camera's actual yaw and the undamped reference
+      // must hold at the established 30 degrees throughout.
+      const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
+      camera.reset(pairOnAxis(30))
+      const established = camera.state.yaw
+      expect(Math.abs(established)).toBeGreaterThan(20 * DEGREE)
+
+      for (const epsilon of [1e-9, -1e-9, 1e-12, -1e-12, 0]) {
+        const state = camera.update(
+          [
+            { id: 'a', centerX: 5 + epsilon, centerZ: -3 + epsilon, radius: 0.5 },
+            { id: 'b', centerX: 5 - epsilon, centerZ: -3 - epsilon, radius: 0.5 },
+          ],
+          0.5,
+        )
+        expect(state.yaw).toBe(established)
+        expect(camera.unwrappedYaw).toBe(established)
+      }
     })
   })
 
@@ -493,5 +562,106 @@ describe('ArenaCamera', () => {
       { id: 'b', centerX: 1, centerZ: 0, radius: 0.5 },
     ])
     expect(Object.keys(state).sort()).toEqual(['distance', 'lookTargetX', 'lookTargetZ', 'yaw'])
+  })
+})
+
+/** Folds the difference between two axis angles (period `pi`, i.e. `angle`
+ * and `angle +/- pi` name the same axis) into `[0, pi/2]` radians -- the true
+ * "how far off is this axis from that one" measure, independent of which
+ * `pi`-periodic representative either angle happens to be reported as. */
+function axisAngleDelta(a: number, b: number): number {
+  let diff = (a - b) % Math.PI
+  if (diff < 0) diff += Math.PI
+  if (diff > Math.PI / 2) diff = Math.PI - diff
+  return diff
+}
+
+describe('yaw continuity over real bouts', () => {
+  it('never changes the *undamped desired* yaw by more than 15 degrees in a tick, in any pairing', () => {
+    // Regression note: this used to assert on `camera.update(...).yaw`, the
+    // damped, dead-zoned, clamped *output*. At any damping time constant of
+    // more than a tick or two that output barely moves per tick no matter
+    // how discontinuous its input is, so the 15-degree bound passed almost
+    // automatically and proved nothing about the unwrap. `unwrappedYaw`
+    // (`ArenaCamera`'s own doc comment) is the undamped, unclamped reference
+    // the continuity fix actually governs.
+    for (const home of homeRoster) {
+      for (const away of opponents) {
+        const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
+        let battle: BattleState = createBattle({ home, away, seed: BASELINE_TEST_SEED, combatStyles: COMBAT_STYLES })
+        const framing = (state: BattleState) => {
+          const h = fighterBySide(state, 'home')
+          const a = fighterBySide(state, 'away')
+          return [
+            { id: 'home', centerX: h.position.x, centerZ: h.position.z, radius: 0.6 },
+            { id: 'away', centerX: a.position.x, centerZ: a.position.z, radius: 0.6 },
+          ]
+        }
+        camera.reset(framing(battle))
+        let previous = camera.unwrappedYaw
+        let ticks = 0
+        while (battle.phase === 'running' && ticks < 3600) {
+          battle = advanceBattleTick(battle)
+          camera.update(framing(battle), 1 / 60)
+          const yaw = camera.unwrappedYaw
+          expect(Math.abs(yaw - previous)).toBeLessThan(15 * DEGREE)
+          previous = yaw
+          ticks += 1
+        }
+      }
+    }
+  })
+
+  it('keeps the on-screen framing error (camera screen-axis vs. pair axis) bounded across all nine pairings', () => {
+    // This is the criterion that actually tracks the original complaint --
+    // "the camera cannot show the fighters facing each other" -- not desired-
+    // yaw continuity by itself. Per tick: the angle between the camera's
+    // screen-horizontal axis at its *actual* (damped, dead-zoned, clamped)
+    // yaw and the pair's own spread axis, folded mod 180 degrees into 0..90.
+    //
+    // Measured at seed 20260815 across all nine pairings, share of ticks with
+    // error > 30 degrees:
+    //   tau 1.5s (shipped before this fix)   11.2%  (up to 18.9% fast-vs-technical)
+    //   tau 0.5s (current YAW_DAMPING_TIME_CONSTANT_SECONDS)   1.5%
+    // The 4% bound below sits between those two: comfortably above 1.5% to
+    // absorb measurement noise, but well below what a regression toward the
+    // old 1.5s damping (11.2%) would produce, so it fails if that regresses.
+    const FRAMING_ERROR_BOUND_FRACTION = 0.04
+    let overThreshold = 0
+    let total = 0
+
+    for (const home of homeRoster) {
+      for (const away of opponents) {
+        const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
+        let battle: BattleState = createBattle({ home, away, seed: BASELINE_TEST_SEED, combatStyles: COMBAT_STYLES })
+        const framing = (state: BattleState) => {
+          const h = fighterBySide(state, 'home')
+          const a = fighterBySide(state, 'away')
+          return [
+            { id: 'home', centerX: h.position.x, centerZ: h.position.z, radius: 0.6 },
+            { id: 'away', centerX: a.position.x, centerZ: a.position.z, radius: 0.6 },
+          ]
+        }
+        camera.reset(framing(battle))
+        let ticks = 0
+        while (battle.phase === 'running' && ticks < 3600) {
+          battle = advanceBattleTick(battle)
+          const targets = framing(battle)
+          const { yaw } = camera.update(targets, 1 / 60)
+          const axis = measureSpreadAxisAngle(targets)
+          // A camera yawed by `-axis` has its screen-horizontal axis along
+          // `+axis` (ArenaCamera.ts's own `measureUnclampedYaw` doc comment),
+          // so the ideal yaw is `-axis` and the error is the axis delta
+          // between `axis` and `-yaw`.
+          const error = axisAngleDelta(axis, -yaw)
+          if (error > 30 * DEGREE) overThreshold += 1
+          total += 1
+          ticks += 1
+        }
+      }
+    }
+
+    expect(total).toBeGreaterThan(0)
+    expect(overThreshold / total).toBeLessThanOrEqual(FRAMING_ERROR_BOUND_FRACTION)
   })
 })

@@ -32,6 +32,7 @@ import {
   type FighterCombatState,
 } from './encounter'
 import type { CombatStyleCatalog } from './combatActions'
+import type { DecisionCollector } from './decisionDiagnostics'
 import type { FighterDefinition, FighterSide } from './fighters'
 import type { CombatArenaDefinition, Vec2 } from './movement'
 import { derivedUnitValue, foldTraceHash } from './random'
@@ -166,11 +167,11 @@ export function createBattle(config: BattleConfig): BattleState {
  * never called twice. Otherwise the duel time-limit policy above applies,
  * appending its own `encounter-finished` event to this tick's batch.
  */
-export function advanceBattleTick(previous: BattleState): BattleState {
+export function advanceBattleTick(previous: BattleState, collector?: DecisionCollector): BattleState {
   if (previous.phase === 'finished') return previous
 
   const { descriptor } = previous
-  const { state: afterTick, events: tickEvents } = advanceEncounterTickOnce(previous.encounter)
+  const { state: afterTick, events: tickEvents } = advanceEncounterTickOnce(previous.encounter, collector)
 
   let encounter = afterTick
   let events = tickEvents
@@ -251,10 +252,10 @@ function appendEvents(previous: readonly EncounterEvent[], tickEvents: readonly 
   return [...previous, ...tickEvents]
 }
 
-export function advanceBattleTicks(initial: BattleState, ticks: number): BattleState {
+export function advanceBattleTicks(initial: BattleState, ticks: number, collector?: DecisionCollector): BattleState {
   let state = initial
   for (let index = 0; index < ticks && state.phase === 'running'; index += 1) {
-    state = advanceBattleTick(state)
+    state = advanceBattleTick(state, collector)
   }
   return state
 }

@@ -49,16 +49,32 @@ describe('createProceduralFighter', () => {
   it.each(ARCHETYPES)('builds the exact semantic joint hierarchy for %s', (archetype) => {
     const fighter = createProceduralFighter({ archetype })
 
-    expect([...fighter.joints.keys()].sort()).toEqual([...SEMANTIC_JOINT_NAMES].sort())
+    // `'root'` is deliberately the one name in `SEMANTIC_JOINT_NAMES` with no
+    // corresponding entry in `fighter.joints` -- see that constant's own
+    // comment in `ProceduralFighter.ts`. World placement lives only on
+    // `fighter.root` itself, unreachable by joint-name lookup, so no
+    // pose-application loop keyed off this vocabulary can ever overwrite it.
+    const jointNamesExcludingRoot = SEMANTIC_JOINT_NAMES.filter((name) => name !== 'root')
+    expect([...fighter.joints.keys()].sort()).toEqual([...jointNamesExcludingRoot].sort())
     expect([...fighter.anchors.keys()].sort()).toEqual([...EQUIPMENT_ANCHOR_NAMES].sort())
     expect(fighter.root.parent).toBeNull()
-    expect(fighter.joints.get('root')).toBe(fighter.root)
+    expect(fighter.joints.get('root')).toBeUndefined()
+    expect(fighter.joints.has('root')).toBe(false)
 
     for (const [name, parentName] of Object.entries(EXPECTED_PARENT) as [JointName, JointName | null][]) {
+      if (name === 'root') {
+        // `'root'` has no joints-map entry of its own; its identity (no
+        // parent) is asserted directly against `fighter.root` above.
+        continue
+      }
       const joint = fighter.joints.get(name)
       expect(joint, `missing joint '${name}'`).toBeDefined()
       if (parentName === null) {
         expect(joint!.parent).toBeNull()
+      } else if (parentName === 'root') {
+        // `pelvis`'s authored parent is the root Group itself, not a
+        // joints-map lookup (which would be `undefined` now).
+        expect(joint!.parent).toBe(fighter.root)
       } else {
         expect(joint!.parent).toBe(fighter.joints.get(parentName))
       }
@@ -104,7 +120,10 @@ describe('createProceduralFighter', () => {
     const distinctKeys = new Set(
       [...worldPositions.values()].map((v) => `${v.x.toFixed(6)},${v.y.toFixed(6)},${v.z.toFixed(6)}`),
     )
-    const expectedDistinctCount = SEMANTIC_JOINT_NAMES.length - INTENDED_COINCIDENCES.length
+    // Derived from `fighter.joints.size` (which `worldPositions` was built
+    // from), not `SEMANTIC_JOINT_NAMES.length`, since `'root'` is in the
+    // latter but deliberately absent from the former.
+    const expectedDistinctCount = fighter.joints.size - INTENDED_COINCIDENCES.length
     expect(distinctKeys.size).toBe(expectedDistinctCount)
 
     fighter.dispose()
@@ -265,6 +284,137 @@ describe('createProceduralFighter', () => {
       const meaningfulDifference = tupleA.some((value, index) => Math.abs(value - tupleB[index]) > 0.03)
       expect(meaningfulDifference, `${a} vs ${b} extents differ only by noise: ${tupleA} vs ${tupleB}`).toBe(true)
     }
+  })
+
+  it('gives each foot a forward bias, so a back view is not a mirror of a front view', () => {
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    const foot = fighter.joints.get('foot.L')
+    expect(foot).toBeDefined()
+
+    const boxes = foot!.children.filter(
+      (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.userData.slot === 'limb',
+    )
+    // Exactly one foot volume: the fix biases the existing box, it does not add
+    // a second overlapping one.
+    expect(boxes).toHaveLength(1)
+
+    const box = new THREE.Box3().setFromObject(boxes[0])
+    // More of the foot lies forward of the ankle than behind it.
+    expect(box.max.z).toBeGreaterThan(Math.abs(box.min.z))
+
+    fighter.dispose()
+  })
+
+  it('keeps both feet on the floor plane in the rest pose', () => {
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    for (const name of ['foot.L', 'foot.R'] as const) {
+      const foot = fighter.joints.get(name)!
+      const box = new THREE.Box3().setFromObject(foot)
+      expect(box.min.y).toBeGreaterThan(-0.02)
+      expect(box.min.y).toBeLessThan(0.02)
+    }
+    fighter.dispose()
+  })
+
+  it('gives the head a front: a visor slot on the forward hemisphere', () => {
+    const fighter = createProceduralFighter({ archetype: 'fast' })
+    const head = fighter.joints.get('head')!
+    const visor = head.children.find(
+      (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.userData.slot === 'visor',
+    )
+    expect(visor).toBeDefined()
+    // Sits forward of the head's own centre.
+    expect(visor!.position.z).toBeGreaterThan(0)
+
+    // It must be real protruding geometry, not just a dark colour: that is
+    // the stated reason it exists as a separate mesh at all (legible even
+    // where the head is only a few pixels wide).
+    const headSphere = head.children.find(
+      (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.userData.slot === 'skin',
+    )
+    expect(headSphere).toBeDefined()
+    const sphereBox = new THREE.Box3().setFromObject(headSphere!)
+    const visorBox = new THREE.Box3().setFromObject(visor!)
+    const visorSize = new THREE.Vector3()
+    visorBox.getSize(visorSize)
+    expect(visorSize.x).toBeGreaterThan(0.01)
+    expect(visorSize.y).toBeGreaterThan(0.01)
+    expect(visorSize.z).toBeGreaterThan(0.01)
+    // Protrudes forward of the head sphere's own surface, not sunk inside it.
+    expect(visorBox.max.z).toBeGreaterThan(sphereBox.max.z)
+
+    fighter.dispose()
+  })
+
+  it('separates chest from back by value, without introducing a third hue', () => {
+    const fighter = createProceduralFighter({ archetype: 'technical' })
+    const chest = fighter.joints.get('chest')!
+    const plate = chest.children.find(
+      (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.userData.slot === 'breastplate',
+    )
+    expect(plate).toBeDefined()
+    expect(plate!.position.z).toBeGreaterThan(0)
+
+    // Must be derived from the fighter's own house/cloth colour (lightened),
+    // never a hard-coded literal and never a third hue that would compete
+    // with the red/blue/green that already separates the three styles.
+    let houseColor: THREE.Color | undefined
+    fighter.root.traverse((object) => {
+      if (!houseColor && object instanceof THREE.Mesh && object.userData.slot === 'cloth') {
+        houseColor = (object.material as THREE.MeshStandardMaterial).color
+      }
+    })
+    expect(houseColor).toBeDefined()
+
+    const plateColor = (plate!.material as THREE.MeshStandardMaterial).color
+    // Not a literal copy of the house colour -- it must actually be lightened.
+    expect(plateColor.equals(houseColor!)).toBe(false)
+
+    const houseHsl = houseColor!.getHSL({ h: 0, s: 0, l: 0 })
+    const plateHsl = plateColor.getHSL({ h: 0, s: 0, l: 0 })
+    // Same hue as the source colour (within float rounding) -- no third hue.
+    expect(Math.abs(plateHsl.h - houseHsl.h)).toBeLessThan(0.005)
+    // Strictly lighter -- value, not hue, carries the front/back contrast.
+    expect(plateHsl.l).toBeGreaterThan(houseHsl.l)
+
+    fighter.dispose()
+  })
+
+  // Task 7's motion-check found the front-only lightened plate correct in
+  // construction but too small a contrast to read at the arena's shipped
+  // framing distance (a fighter roughly 90px tall). The back gets the
+  // mirror-image darkening so the cue is a full light-to-dark swing rather
+  // than a one-sided nudge off the base cloth colour, and reads even when a
+  // shield is covering the front (a shield never covers the back).
+  it('darkens the back to match the front-lightened breastplate, doubling the value contrast', () => {
+    const fighter = createProceduralFighter({ archetype: 'technical' })
+    const chest = fighter.joints.get('chest')!
+    const backplate = chest.children.find(
+      (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.userData.slot === 'backplate',
+    )
+    expect(backplate).toBeDefined()
+    // Sits behind the chest's own centre -- the mirror of the breastplate.
+    expect(backplate!.position.z).toBeLessThan(0)
+
+    let houseColor: THREE.Color | undefined
+    fighter.root.traverse((object) => {
+      if (!houseColor && object instanceof THREE.Mesh && object.userData.slot === 'cloth') {
+        houseColor = (object.material as THREE.MeshStandardMaterial).color
+      }
+    })
+    expect(houseColor).toBeDefined()
+
+    const backplateColor = (backplate!.material as THREE.MeshStandardMaterial).color
+    expect(backplateColor.equals(houseColor!)).toBe(false)
+
+    const houseHsl = houseColor!.getHSL({ h: 0, s: 0, l: 0 })
+    const backplateHsl = backplateColor.getHSL({ h: 0, s: 0, l: 0 })
+    // Same hue as the source colour -- no third hue on the back either.
+    expect(Math.abs(backplateHsl.h - houseHsl.h)).toBeLessThan(0.005)
+    // Strictly darker, the mirror of the breastplate's strictly-lighter front.
+    expect(backplateHsl.l).toBeLessThan(houseHsl.l)
+
+    fighter.dispose()
   })
 })
 

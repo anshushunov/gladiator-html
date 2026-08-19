@@ -62,10 +62,12 @@ import {
   processDefenseBatch,
   resolveForcedParryCounterStart,
   retainTarget,
+  scoreCombatCandidates,
   TARGET_ACQUISITION_RADIUS,
   TARGET_RETENTION_RADIUS,
   type IncomingThreat,
 } from './combatDecision'
+import type { DecisionCollector, DecisionRecord } from './decisionDiagnostics'
 import type { FighterDefinition } from './fighters'
 import { compareArchetypes, comparisonDamageMultiplier, validateFighterDefinition } from './fighters'
 import type { CombatArenaDefinition, LocomotionIntent, MovementRequest, TurnStep, Vec2 } from './movement'
@@ -706,6 +708,21 @@ function isDecisionReady(combatant: Readonly<FighterCombatState>, tick: number):
   return combatant.status === 'active' && combatant.action.type === 'neutral' && combatant.staggerUntilTick <= tick && tick >= combatant.nextDecisionTick
 }
 
+/**
+ * Same four-condition order as `isDecisionReady`, but names which one
+ * actually blocked the combatant instead of collapsing all of them into one
+ * label. Only meaningful to call once `isDecisionReady` has already
+ * returned `false` (or the combatant is otherwise known to be targetless);
+ * a ready, targeted combatant never reaches this function.
+ */
+function decisionSkipReason(combatant: Readonly<FighterCombatState>, tick: number): Extract<DecisionRecord, { kind: 'skipped' }>['reason'] {
+  if (combatant.status !== 'active') return 'inactive'
+  if (combatant.action.type !== 'neutral') return 'mid-action'
+  if (combatant.staggerUntilTick > tick) return 'staggered'
+  if (tick < combatant.nextDecisionTick) return 'not-due'
+  return 'no-target'
+}
+
 // --- Phase 1: increment tick and transition expired phases -----------------
 
 /**
@@ -1057,6 +1074,7 @@ function makeCombatDecisions(
   spatialHash: SpatialHash,
   cursor: EventIdCursor,
   forcedActionActorIds: ReadonlySet<CombatantId>,
+  collector: DecisionCollector | undefined,
 ): {
   combatants: Record<CombatantId, FighterCombatState>
   randomByCombatant: Record<CombatantId, CombatantRandomState>
@@ -1073,8 +1091,19 @@ function makeCombatDecisions(
     // Forced behavior (Fast's disengage wired in phase 2; Technical's
     // parry-counter start resolved just above this phase) bypasses weighted
     // selection entirely: no decision-stream draw, no candidate scoring.
-    if (self.forcedDisengageStartTick !== undefined || forcedActionActorIds.has(id)) continue
-    if (!isDecisionReady(self, tick) || self.targetId === undefined) continue
+    if (self.forcedDisengageStartTick !== undefined || forcedActionActorIds.has(id)) {
+      collector?.record({
+        kind: 'forced',
+        tick,
+        combatantId: id,
+        behaviour: self.forcedDisengageStartTick !== undefined ? 'disengage' : 'parry-counter',
+      })
+      continue
+    }
+    if (!isDecisionReady(self, tick) || self.targetId === undefined) {
+      collector?.record({ kind: 'skipped', tick, combatantId: id, reason: decisionSkipReason(self, tick) })
+      continue
+    }
 
     const nearbyIds = queryRadius(spatialHash, self.position, TARGET_RETENTION_RADIUS)
     const context = buildCombatDecisionContext({
@@ -1091,7 +1120,22 @@ function makeCombatDecisions(
 
     const combatantRandom = nextRandom[id]
     const [rolls, afterDecision] = drawPair(combatantRandom.decision)
+    // `scoreCombatCandidates` is pure and duplicates work `chooseCombatDecision`
+    // already does internally -- worth paying only when a collector actually
+    // wants the breakdown, so it stays out of the hot (uncollected) path.
+    const scored = collector === undefined ? undefined : scoreCombatCandidates(context, style)
     const decision = chooseCombatDecision(context, style, { selection: rolls.first, interval: rolls.second })
+    if (collector !== undefined && scored !== undefined) {
+      // `{ ...decision }` copies rather than aliases: `decision` is read
+      // again just below to drive this tick's actual locomotion/action
+      // branch, and the collector must not be able to change that by
+      // mutating the record it was handed.
+      collector.record(
+        scored.length === 0
+          ? { kind: 'fallback', tick, combatantId: id, chosen: { ...decision } }
+          : { kind: 'weighted', tick, combatantId: id, candidates: scored, roll: rolls.first, chosen: { ...decision } },
+      )
+    }
     const nextDecisionTick = tick + decisionIntervalTicks(self.definition.archetype, rolls.second)
     nextRandom = { ...nextRandom, [id]: { ...combatantRandom, decision: afterDecision } }
 
@@ -2139,7 +2183,7 @@ function resolveNoHostilePairsCompletion(state: EncounterState): EncounterTransi
  * identity, empty event batch) -- a finished encounter is inert. Never
  * mutates `previous` or anything reachable from it.
  */
-export function advanceEncounterTick(previous: EncounterState): EncounterTransition {
+export function advanceEncounterTick(previous: EncounterState, collector?: DecisionCollector): EncounterTransition {
   if (previous.phase !== 'running') {
     return { state: previous, events: [] }
   }
@@ -2185,6 +2229,7 @@ export function advanceEncounterTick(previous: EncounterState): EncounterTransit
     preMovementHash,
     cursor,
     forcedActionActorIds,
+    collector,
   )
   combatants = decisions.combatants
   randomByCombatant = decisions.randomByCombatant
@@ -2257,11 +2302,11 @@ export function advanceEncounterTick(previous: EncounterState): EncounterTransit
  * this one aggregating caller (the kernel itself never accumulates an event
  * log).
  */
-export function advanceEncounterTicks(initial: EncounterState, ticks: number): EncounterTransition {
+export function advanceEncounterTicks(initial: EncounterState, ticks: number, collector?: DecisionCollector): EncounterTransition {
   let state = initial
   const events: EncounterEvent[] = []
   for (let index = 0; index < ticks && state.phase === 'running'; index += 1) {
-    const next = advanceEncounterTick(state)
+    const next = advanceEncounterTick(state, collector)
     state = next.state
     events.push(...next.events)
   }

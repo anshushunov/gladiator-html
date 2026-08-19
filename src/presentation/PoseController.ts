@@ -9,11 +9,23 @@
 //      reaction overlay;
 //   5. foot grounding and capped weapon-arm IK.
 //
-// Every layer contributes a *sparse* joint-transform record; layers are
-// merged strictly left-to-right with a later layer's joint entry replacing
-// an earlier one outright (never re-blended against it) -- this is what
-// lets `PoseController.test.ts` pin *order* rather than only a final
-// outcome (brief resolution #1).
+// Task 3 adds one layer design.md's list above doesn't carry: 1b, idle sway
+// (breathing/weight shift) while standing, inserted between 1 and 2 and
+// suppressed under any of 3/4/5's held poses -- a deliberate, recorded
+// compromise (there is no acceleration model, so start-stop remains in the
+// simulation data; this only changes how standing *reads*).
+//
+// Every layer contributes a *sparse* joint-transform record; layers 1
+// through 5 are merged strictly left-to-right with a later layer's joint
+// entry replacing an earlier one outright (never re-blended against it) --
+// this is what lets `PoseController.test.ts` pin *order* rather than only a
+// final outcome (brief resolution #1). Layer 1b (idle) is the one exception:
+// it is merged *additively* onto whatever the guard layer already wrote for
+// the same joint (`mergeAdditiveRotation`, not `mergeInto`), because a guard
+// stance's own authored joint values (e.g. Fast's guard chest twist) must
+// survive a standing fighter's breathing sway rather than being replaced by
+// it -- fix round 2 of the legibility slice's own review, which found the
+// original `mergeInto` erasing the authored guard pose outright.
 //
 // This module is rule-free: it never reads/writes anything under
 // `src/simulation/**` or `src/content/**`, never decides a hit/phase/event
@@ -42,6 +54,8 @@ import {
 } from './poses/combatPoses'
 import { SEMANTIC_JOINT_NAMES, type JointName, type ProceduralFighter } from './ProceduralFighter'
 import { classifyGaitPhase, computeGaitPhase } from './poses/gait'
+import { computeIdlePhase, idleAmplitude, sampleIdleLayer } from './poses/idle'
+import { TICKS_PER_SECOND } from '../simulation/movement'
 
 // ---------------------------------------------------------------------------
 // Public contract (brief Step 2)
@@ -206,7 +220,7 @@ function lerpTransform(a: JointTransform | undefined, b: JointTransform | undefi
   return { rotation }
 }
 
-type SparsePose = Partial<Record<JointName, JointTransform>>
+export type SparsePose = Partial<Record<JointName, JointTransform>>
 
 function blendPoseJoints(a: Readonly<SparsePose>, b: Readonly<SparsePose>, t: number): SparsePose {
   const keys = new Set<JointName>([...Object.keys(a), ...Object.keys(b)] as JointName[])
@@ -219,6 +233,40 @@ function mergeInto(target: SparsePose, source: Readonly<SparsePose>): void {
   for (const key of Object.keys(source) as JointName[]) target[key] = source[key]
 }
 
+/**
+ * Adds `source`'s rotation onto whatever `target` already holds for the same
+ * joint, instead of replacing it outright -- used only by the idle layer
+ * (below), which must contribute a small sway *on top of* the guard pose
+ * `mergeInto` already wrote for `chest`/`pelvis`/`shoulder.L`/`shoulder.R`,
+ * not overwrite it. `sampleIdleLayer` never sets `position`, so this only
+ * ever needs to add rotations; a joint `target` has not written yet adds
+ * onto an implicit identity rotation, matching `lerpTransform`'s own
+ * `IDENTITY_TRANSFORM` fallback.
+ */
+function mergeAdditiveRotation(target: SparsePose, source: Readonly<SparsePose>): void {
+  for (const key of Object.keys(source) as JointName[]) {
+    const delta = source[key]!
+    const base = target[key] ?? IDENTITY_TRANSFORM
+    const rotation: [number, number, number] = [
+      base.rotation[0] + delta.rotation[0],
+      base.rotation[1] + delta.rotation[1],
+      base.rotation[2] + delta.rotation[2],
+    ]
+    target[key] = base.position ? { rotation, position: base.position } : { rotation }
+  }
+}
+
+/**
+ * Builds a full `Record<JointName, JointTransform>` for every name in
+ * `SEMANTIC_JOINT_NAMES`, including `'root'` -- but that `pose.root` entry
+ * is inert by construction, not merely unused: no layer above ever writes
+ * `working.root` (no authored pose in `poses/combatPoses.ts` defines a
+ * `root` entry), and even if one did, `ProceduralFighter`'s `joints` map has
+ * no entry under `'root'` for `applyPoseToJoints`/`applyPoseToRig` to apply
+ * it to (see `SEMANTIC_JOINT_NAMES`'s own comment). Kept as a real key here
+ * rather than special-cased out so `Record<JointName, JointTransform>`
+ * stays an honest, total map over the whole vocabulary.
+ */
 function buildFullPose(working: Readonly<SparsePose>): Record<JointName, JointTransform> {
   const result = {} as Record<JointName, JointTransform>
   for (const name of SEMANTIC_JOINT_NAMES) result[name] = working[name] ?? IDENTITY_TRANSFORM
@@ -480,6 +528,12 @@ function worldToActorLocal(worldPoint: Readonly<Vec2>, actorPosition: Readonly<V
 
 function applyPoseToRig(fighter: ProceduralFighter, pose: Readonly<Record<JointName, JointTransform>>): void {
   for (const name of SEMANTIC_JOINT_NAMES) {
+    // `fighter.joints` deliberately has no `'root'` entry (see
+    // `SEMANTIC_JOINT_NAMES`'s comment in `ProceduralFighter.ts`), so this
+    // guard -- already required for any name a given rig doesn't build --
+    // also permanently keeps `pose.root` from ever reaching `fighter.root`'s
+    // world transform, which this IK scratch pass saves/restores around
+    // itself and must never leak a pose-driven rotation into.
     const joint = fighter.joints.get(name)
     if (!joint) continue
     const transform = pose[name]
@@ -651,11 +705,37 @@ export class PoseController {
     // Layer 1: style guard.
     mergeInto(working, stylePoses.guard.joints)
 
+    // Interpolated speed weight: full at `GAIT_FULL_SPEED_REFERENCE`, zero at
+    // a standstill. Shared by the idle layer below (which wants the opposite
+    // sense -- full weight while standing) and by the gait layer (Layer 2),
+    // so the two hand off smoothly across one binding instead of computing it
+    // twice.
+    const velocity = lerpVec2(previous.velocity, current.velocity, alpha)
+    const speedWeight = clamp01(vecLength(velocity) / GAIT_FULL_SPEED_REFERENCE)
+
+    // Layer 1b: idle. Suppressed whenever a later layer owns the body --
+    // an action, a defensive reaction, stagger or defeat -- because those
+    // hold poses that a breathing overlay would corrupt, including the
+    // impact hold the fixtures assert is identical across ticks.
+    const idleSuppressed =
+      current.action.type !== 'neutral' ||
+      current.status !== 'active' ||
+      isStaggered(current, currentTick) ||
+      recognitionFlinchActive ||
+      reaction?.contactTarget !== undefined
+    // Additive, not a replace: `sampleIdleLayer` returns a small sway on
+    // `pelvis`/`chest`/`shoulder.L`/`shoulder.R`, and `chest` is authored per
+    // style/guard (e.g. Fast's guard carries a 0.1 rad torso twist) --
+    // `mergeInto` here would silently erase that authored twist the instant
+    // any idle amplitude is non-zero, snapping it back only at full gait
+    // speed. Adding the sway on top keeps the authored pose intact at every
+    // amplitude, including the amplitude-0-to-0+ boundary at start/stop.
+    const simulationTime = (currentTick + alpha) / TICKS_PER_SECOND
+    mergeAdditiveRotation(working, sampleIdleLayer(computeIdlePhase(simulationTime, current.definition.id), idleAmplitude(speedWeight, idleSuppressed, reducedMotion)))
+
     // Layer 2: locomotion cycle (gait), derived from travelled distance.
     const travelledDistance = lerp(previous.travelledDistance, current.travelledDistance, alpha)
     const gaitPhase = computeGaitPhase(travelledDistance, archetype)
-    const velocity = lerpVec2(previous.velocity, current.velocity, alpha)
-    const speedWeight = clamp01(vecLength(velocity) / GAIT_FULL_SPEED_REFERENCE)
     applyGaitLayer(working, stylePoses, gaitPhase, speedWeight)
 
     // Layer 3: action key-pose curve (this fighter's own attack only).

@@ -200,9 +200,12 @@ describe('PoseController fixed layer order', () => {
     const staggerChest = COMBAT_POSES.styles.heavy.stagger.joints.chest!.rotation
     const defeatChest = COMBAT_POSES.styles.heavy.defeat.joints.chest!.rotation
 
-    // (a) baseline neutral: guard only.
+    // (a) baseline neutral: guard only. `reducedMotion: true` isolates this
+    // from the idle layer's own breathing sway (Task 3) -- exactly zero
+    // under reduced motion -- since this case is about layer *order*, not
+    // idle.
     const neutral = baseFighterState('heavy')
-    const baseline = controller.apply(makeInput({ current: neutral, currentTick: 0 }), fighter)
+    const baseline = controller.apply(makeInput({ current: neutral, currentTick: 0, reducedMotion: true }), fighter)
     expect(baseline.pose.chest.rotation).toEqual(guardChest)
 
     // (b) recognition-flinch overlay active.
@@ -289,7 +292,10 @@ describe('PoseController fixed layer order', () => {
     const duringFlinch = flinched.apply(makeInput({ current: neutral, currentTick: 5, reaction: { defenseDeclinedTick: 5 } }), fighter)
     expect(duringFlinch.pose.chest.rotation).not.toEqual(guardChest) // the flinch really is visible on this controller
 
-    const after = new PoseController().apply(makeInput({ current: neutral, currentTick: 6 }), fighter)
+    // `reducedMotion: true` isolates this from idle sway (Task 3) for the
+    // same reason as the baseline case above: this asserts the flinch window
+    // itself resets, not anything about idle.
+    const after = new PoseController().apply(makeInput({ current: neutral, currentTick: 6, reducedMotion: true }), fighter)
     expect(after.pose.chest.rotation).toEqual(guardChest)
     fighter.dispose()
   })
@@ -525,7 +531,12 @@ describe('PoseController weapon-arm IK', () => {
     fighter.root.position.set(0, 0, 0)
     fighter.root.quaternion.identity()
     for (const name of SEMANTIC_JOINT_NAMES) {
-      const joint = fighter.joints.get(name)!
+      // `'root'` deliberately has no `fighter.joints` entry (see
+      // `ProceduralFighter.ts`'s `SEMANTIC_JOINT_NAMES` comment) -- this
+      // mirrors the same `if (!joint) continue` guard every production
+      // pose-application loop uses.
+      const joint = fighter.joints.get(name)
+      if (!joint) continue
       const transform = pose[name]
       joint.rotation.set(transform.rotation[0], transform.rotation[1], transform.rotation[2])
       if (transform.position) joint.position.set(transform.position[0], transform.position[1], transform.position[2])
@@ -591,6 +602,125 @@ describe('PoseController weapon-arm IK', () => {
     const sample = controller.apply(makeInput({ current, currentTick: 21, alpha: 0, reaction: { contactTarget: nearTarget } }), fighter)
 
     expect(sample.pose.root).toEqual({ rotation: [0, 0, 0] })
+    fighter.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Idle layer: keeps a standing fighter alive between ticks
+// ---------------------------------------------------------------------------
+
+describe('PoseController idle layer', () => {
+  function neutralStandingInput(overrides: { tick: number; reducedMotion?: boolean; archetype?: Archetype }): PoseSampleInput {
+    const state = baseFighterState(overrides.archetype ?? 'heavy')
+    return makeInput({ current: state, previous: state, currentTick: overrides.tick, alpha: 0, reducedMotion: overrides.reducedMotion ?? false })
+  }
+
+  function impactHoldInput(overrides: { tick: number }): PoseSampleInput {
+    const state = baseFighterState('heavy', { action: impactAction('heavy-cleave', 40, 6) })
+    return makeInput({ current: state, previous: state, currentTick: overrides.tick, alpha: 0 })
+  }
+
+  it('keeps a standing fighter alive between ticks', () => {
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    const standing = neutralStandingInput({ tick: 100 })
+    const later = neutralStandingInput({ tick: 130 })
+
+    const first = controller.apply(standing, fighter)
+    const second = controller.apply(later, fighter)
+
+    expect(second.pose).not.toEqual(first.pose)
+    fighter.dispose()
+  })
+
+  it('is perfectly still under reduced motion', () => {
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    const first = controller.apply(neutralStandingInput({ tick: 100, reducedMotion: true }), fighter)
+    const second = controller.apply(neutralStandingInput({ tick: 130, reducedMotion: true }), fighter)
+
+    expect(second.pose).toEqual(first.pose)
+    fighter.dispose()
+  })
+
+  it('does not breathe through a held impact pose', () => {
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    const first = controller.apply(impactHoldInput({ tick: 100 }), fighter)
+    const second = controller.apply(impactHoldInput({ tick: 130 }), fighter)
+
+    expect(second.pose).toEqual(first.pose)
+    fighter.dispose()
+  })
+
+  it('leaves a planted foot exactly where grounding puts it', () => {
+    // Note: this is a regression guard only, not idle coverage. `sampleIdleLayer`
+    // never writes leg/foot joints at all (see `idle.test.ts`'s own "never
+    // writes leg or foot joints" test), so this compares joints the idle
+    // layer never touches -- it would pass identically whether idle merged
+    // additively, replaced outright, or did nothing.
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    const standing = neutralStandingInput({ tick: 100 })
+    const later = neutralStandingInput({ tick: 130 })
+
+    const first = controller.apply(standing, fighter)
+    const second = controller.apply(later, fighter)
+
+    for (const name of ['foot.L', 'foot.R', 'upperLeg.L', 'upperLeg.R'] as const) {
+      expect(second.pose[name]).toEqual(first.pose[name])
+    }
+    fighter.dispose()
+  })
+
+  it('preserves the authored guard chest twist while idle sways it (Fast)', () => {
+    // Regression coverage for the bug the additive-merge fix addresses:
+    // Fast's guard chest carries an authored 0.1 rad twist (FAST_GUARD in
+    // combatPoses.ts) that is part of what makes the fighter's shoulder line
+    // read as oriented. `sampleIdleLayer` never writes a chest Y rotation
+    // (its own delta is `[breath, 0, -swing * 0.4]`), so with a correct
+    // additive merge the authored 0.1 must survive exactly regardless of
+    // idle phase. Against the old `mergeInto` (outright replace), idle would
+    // instead overwrite the whole chest transform with its own, snapping Y
+    // to 0 the instant any idle amplitude was non-zero.
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'fast' })
+    const standing = neutralStandingInput({ tick: 100, archetype: 'fast' })
+
+    const sample = controller.apply(standing, fighter)
+
+    expect(sample.pose.chest.rotation[1]).toBeCloseTo(0.1, 10)
+    // The Y assertion alone would pass identically if the idle layer were
+    // deleted outright, since `sampleIdleLayer` never writes Y. Prove idle
+    // actually ran by checking its Z contribution (`-swing * 0.4`): FAST_GUARD
+    // authors chest Z as exactly `0`, so any non-zero Z here can only be the
+    // idle sway, not the guard pose.
+    expect(Math.abs(sample.pose.chest.rotation[2])).toBeGreaterThan(1e-4)
+    fighter.dispose()
+  })
+
+  it('does not step the chest pose when a fighter stops from full gait speed to standing in one tick (Fast)', () => {
+    // With no acceleration model, velocity (and therefore idle amplitude,
+    // which is `1 - speedWeight`) can go from full speed to a standstill in
+    // a single tick -- exactly the start/stop boundary the branch's own
+    // second goal (movement reading less jerky) cares about. Before the
+    // additive-merge fix, that boundary was also the moment idle's
+    // `mergeInto` started outright replacing the chest transform, so a
+    // standing Fast fighter's chest could pop by up to the guard/idle
+    // difference (~0.13 rad, roughly 7 degrees) on the very tick it planted.
+    // With the additive merge the only possible step is idle's own small
+    // sway amplitude, independent of the guard pose it now merges on top of.
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'fast' })
+    const moving = makeInput({ current: baseFighterState('fast', { velocity: { x: 0.5, z: 0 } }), currentTick: 100, alpha: 0 })
+    const standing = makeInput({ current: baseFighterState('fast', { velocity: { x: 0, z: 0 } }), currentTick: 100, alpha: 0 })
+
+    const movingChest = controller.apply(moving, fighter).pose.chest.rotation
+    const standingChest = controller.apply(standing, fighter).pose.chest.rotation
+
+    const step = Math.hypot(standingChest[0] - movingChest[0], standingChest[1] - movingChest[1], standingChest[2] - movingChest[2])
+    expect(step).toBeLessThan(0.05)
     fighter.dispose()
   })
 })

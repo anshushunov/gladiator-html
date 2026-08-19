@@ -1,5 +1,6 @@
 import { advanceBattleTicks, createBattle, fighterBySide, type BattleFinishReason, type BattleState } from './battle'
 import type { CombatStyleCatalog } from './combatActions'
+import type { DecisionCollector } from './decisionDiagnostics'
 import { compareArchetypes, type FighterDefinition, type FighterSide, type MatchupComparison } from './fighters'
 import { deriveBoutSeed } from './random'
 
@@ -117,12 +118,12 @@ export function rematch(state: SeriesState): SeriesCommandResult {
   }
 }
 
-export function advanceSeriesTicks(state: SeriesState, ticks: number): SeriesState {
+export function advanceSeriesTicks(state: SeriesState, ticks: number, collector?: DecisionCollector): SeriesState {
   if (!Number.isInteger(ticks) || ticks < 0) throw new Error('Tick count must be a non-negative integer')
   if (state.phase !== 'fighting') return state
   if (state.activeBoutIndex === null || !state.activeBattle) return state
 
-  const battle = advanceBattleTicks(state.activeBattle, ticks)
+  const battle = advanceBattleTicks(state.activeBattle, ticks, collector)
   if (battle.phase !== 'finished') return { ...state, activeBattle: battle }
 
   const home = fighterBySide(battle, 'home')

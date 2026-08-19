@@ -9,6 +9,7 @@ import {
   type FootstepThreshold,
 } from './presentation/CombatAudio'
 import { collectFootstepThresholds, type PlantedFootByCombatant } from './presentation/footstepThresholds'
+import { DecisionPanel } from './presentation/DecisionPanel'
 import { COMBAT_STYLES } from './content/combatStyles'
 import { homeRoster, opponents } from './content/mvpSeries'
 import {
@@ -148,6 +149,13 @@ let forcePresentationThrowOnce = false
 /** `undefined` whenever no bout is active; see `RenderSnapshot`'s doc comment. */
 let renderFrame: RenderSnapshot | undefined
 
+/** Dev-only decision trace panel (`?debugDecisions=1`, Task 6); `undefined`
+ * whenever the query param is absent or in a production build, in which case
+ * `stepBattleTick`'s `advanceSeriesTicks` call below simply passes no
+ * collector -- phase 4's diagnostics are opt-in from the kernel's side too
+ * (`decisionDiagnostics.ts`), so leaving this `undefined` costs nothing. */
+let decisionPanel: DecisionPanel | undefined
+
 /**
  * Every event emitted by `stepBattleTick` since `syncArena` last actually
  * handed a batch to `ArenaView` -- appended to there, consumed-and-reset
@@ -222,6 +230,9 @@ function resetRenderFrame(battle: BattleState | undefined): void {
   lastPlantedFoot.clear()
   nextFootstepId = 0
   combatAudio.resetBout()
+  // The decision trace describes one bout, not a session -- clear it at the
+  // same boundary everything else above resets at (new bout and rematch).
+  decisionPanel?.clear()
 }
 
 /**
@@ -239,7 +250,7 @@ function resetRenderFrame(battle: BattleState | undefined): void {
 function stepBattleTick(): void {
   const previousSeries = series
   const previousBattle = series.activeBattle
-  const nextSeries = advanceSeriesTicks(series, 1)
+  const nextSeries = advanceSeriesTicks(series, 1, decisionPanel)
   if (nextSeries === previousSeries) return
   series = nextSeries
   const currentBattle = series.activeBattle
@@ -337,6 +348,10 @@ function renderDom(): void {
   }
   seriesView.render(series, runtime)
   syncArena()
+  // Once per render, after this frame's ticks (and their decisions, if any)
+  // have already been recorded above -- a presentation read, never a write
+  // back into the collector or the simulation.
+  decisionPanel?.render()
 }
 
 function handleArenaPhaseChange(): void {
@@ -515,6 +530,30 @@ if (import.meta.env.DEV) {
   // Final-review fix #1's own test hook -- see `forcePresentationThrowOnce`'s doc comment above.
   window.__GLADIATOR_TEST__.forcePresentationThrowOnce = () => {
     forcePresentationThrowOnce = true
+  }
+
+  // Dev-only decision trace panel (Task 6, `?debugDecisions=1`): renders the
+  // phase-4 collector's records so a reviewer can see why a fighter chose
+  // what it chose, gated exactly like `?audioDebug=1` below -- absent from
+  // the DOM, and its collector never attached to `advanceSeriesTicks`, unless
+  // both `import.meta.env.DEV` and the query param are present.
+  //
+  // Mounted inside `.below-arena-row` (a sibling of `.battle-feed`), not
+  // `document.body` and not beside `#series-ui`/`#battle-ui`: an earlier
+  // revision put it in a column next to the arena, which shared the arena's
+  // row and so shrank the arena to make room -- fine at 1280px wide, but at
+  // 1038px the arena collapsed to an unwatchably narrow strip. Putting it
+  // below the arena instead, sharing the row with the battle feed, means the
+  // arena and both HP cards (`.battle-grid`, untouched by this row) keep
+  // their exact geometry at every width; only the feed and the panel ever
+  // trade space. `.below-arena-row--with-panel` (style.css) turns that row
+  // into a flex container so the two share it; without the modifier class
+  // the row stays `display: contents` and the feed alone renders exactly as
+  // it always did.
+  if (new URLSearchParams(window.location.search).has('debugDecisions')) {
+    const belowArenaRow = required<HTMLElement>('.below-arena-row')
+    belowArenaRow.classList.add('below-arena-row--with-panel')
+    decisionPanel = new DecisionPanel(belowArenaRow)
   }
 
   // Dev/test-only audio debug surface (brief resolution #9, design.md: "In
