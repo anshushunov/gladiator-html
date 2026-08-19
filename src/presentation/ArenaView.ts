@@ -48,6 +48,17 @@ export interface BattleRenderFrame {
  */
 export interface ArenaDebugSnapshot {
   rootPositions: Readonly<Record<CombatantId, Vec2>>
+  /**
+   * Each rig's actual rendered world-facing yaw (`fighter.root.rotation.y`),
+   * read directly off the root `Group` rather than through `jointRotations`
+   * below -- `'root'` is deliberately absent from `fighter.joints` (see
+   * `ProceduralFighter.SEMANTIC_JOINT_NAMES`'s comment), so
+   * `jointRotations[id].root` always reads the harmless `[0, 0, 0]` fallback
+   * and cannot answer "did the pose layer clobber facing this frame?". This
+   * field is what a fixture compares against `atan2(facing.x, facing.z)`
+   * from the interpolated simulation state to prove it did not.
+   */
+  rootYaw: Readonly<Record<CombatantId, number>>
   jointTransformsFinite: boolean
   jointRotations: Readonly<Record<CombatantId, Readonly<Record<JointName, readonly [number, number, number]>>>>
   activeEffectIds: readonly string[]
@@ -116,6 +127,13 @@ function lerpVec2(a: Readonly<Vec2>, b: Readonly<Vec2>, t: number): Vec2 {
 /** Applies a fully-built `HumanoidPose` (every semantic joint present, per `PoseController.apply`'s contract) onto a rig's live `Object3D` graph. `PoseController` itself never mutates the persistent rig -- it only borrows `fighter.root` as a scratch FK buffer for the IK sub-step and restores it -- so the caller (this module) owns actually applying the sampled pose every frame. */
 function applyPoseToJoints(fighter: ProceduralFighter, pose: Readonly<Record<JointName, JointTransform>>): void {
   for (const name of SEMANTIC_JOINT_NAMES) {
+    // `fighter.joints` deliberately excludes `'root'` (see
+    // `SEMANTIC_JOINT_NAMES`'s comment in `ProceduralFighter.ts`), so this
+    // lookup returning `undefined` for it is what keeps `sample.pose.root`
+    // (always the identity transform -- no authored pose ever sets it) from
+    // ever overwriting the world facing `applyFrame` set on `fighter.root`
+    // moments earlier from interpolated simulation state. Previously `root`
+    // *was* a joint here, and this loop zeroed that facing every frame.
     const joint = fighter.joints.get(name)
     if (!joint) continue
     const transform = pose[name]
@@ -840,12 +858,14 @@ function buildArenaDebugSnapshot(
   eventCursor: number,
 ): ArenaDebugSnapshot {
   const rootPositions: Record<CombatantId, Vec2> = {}
+  const rootYaw: Record<CombatantId, number> = {}
   const jointRotations: Record<CombatantId, Record<JointName, readonly [number, number, number]>> = {}
   const trailPointCounts: Record<CombatantId, number> = {}
   let jointTransformsFinite = true
 
   for (const [id, rig] of rigs) {
     rootPositions[id] = { x: rig.fighter.root.position.x, z: rig.fighter.root.position.z }
+    rootYaw[id] = rig.fighter.root.rotation.y
     const rotationsForRig = {} as Record<JointName, readonly [number, number, number]>
     for (const name of SEMANTIC_JOINT_NAMES) {
       const joint = rig.fighter.joints.get(name)
@@ -863,6 +883,7 @@ function buildArenaDebugSnapshot(
 
   return {
     rootPositions,
+    rootYaw,
     jointTransformsFinite,
     jointRotations,
     activeEffectIds: flashes.activeEffectIds(),

@@ -49,16 +49,32 @@ describe('createProceduralFighter', () => {
   it.each(ARCHETYPES)('builds the exact semantic joint hierarchy for %s', (archetype) => {
     const fighter = createProceduralFighter({ archetype })
 
-    expect([...fighter.joints.keys()].sort()).toEqual([...SEMANTIC_JOINT_NAMES].sort())
+    // `'root'` is deliberately the one name in `SEMANTIC_JOINT_NAMES` with no
+    // corresponding entry in `fighter.joints` -- see that constant's own
+    // comment in `ProceduralFighter.ts`. World placement lives only on
+    // `fighter.root` itself, unreachable by joint-name lookup, so no
+    // pose-application loop keyed off this vocabulary can ever overwrite it.
+    const jointNamesExcludingRoot = SEMANTIC_JOINT_NAMES.filter((name) => name !== 'root')
+    expect([...fighter.joints.keys()].sort()).toEqual([...jointNamesExcludingRoot].sort())
     expect([...fighter.anchors.keys()].sort()).toEqual([...EQUIPMENT_ANCHOR_NAMES].sort())
     expect(fighter.root.parent).toBeNull()
-    expect(fighter.joints.get('root')).toBe(fighter.root)
+    expect(fighter.joints.get('root')).toBeUndefined()
+    expect(fighter.joints.has('root')).toBe(false)
 
     for (const [name, parentName] of Object.entries(EXPECTED_PARENT) as [JointName, JointName | null][]) {
+      if (name === 'root') {
+        // `'root'` has no joints-map entry of its own; its identity (no
+        // parent) is asserted directly against `fighter.root` above.
+        continue
+      }
       const joint = fighter.joints.get(name)
       expect(joint, `missing joint '${name}'`).toBeDefined()
       if (parentName === null) {
         expect(joint!.parent).toBeNull()
+      } else if (parentName === 'root') {
+        // `pelvis`'s authored parent is the root Group itself, not a
+        // joints-map lookup (which would be `undefined` now).
+        expect(joint!.parent).toBe(fighter.root)
       } else {
         expect(joint!.parent).toBe(fighter.joints.get(parentName))
       }
@@ -104,7 +120,10 @@ describe('createProceduralFighter', () => {
     const distinctKeys = new Set(
       [...worldPositions.values()].map((v) => `${v.x.toFixed(6)},${v.y.toFixed(6)},${v.z.toFixed(6)}`),
     )
-    const expectedDistinctCount = SEMANTIC_JOINT_NAMES.length - INTENDED_COINCIDENCES.length
+    // Derived from `fighter.joints.size` (which `worldPositions` was built
+    // from), not `SEMANTIC_JOINT_NAMES.length`, since `'root'` is in the
+    // latter but deliberately absent from the former.
+    const expectedDistinctCount = fighter.joints.size - INTENDED_COINCIDENCES.length
     expect(distinctKeys.size).toBe(expectedDistinctCount)
 
     fighter.dispose()

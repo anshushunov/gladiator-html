@@ -54,6 +54,22 @@ export type JointName =
   | 'lowerLeg.R'
   | 'foot.R'
 
+/**
+ * `'root'` stays in this vocabulary (a future imported skeletal model's own
+ * root bone can still be addressed by the same name) but is deliberately
+ * *not* a key of any built `ProceduralFighter.joints` map -- see
+ * `createProceduralFighter`'s comment at the `root` `Group` below for why.
+ * Every pose-application loop elsewhere (`ArenaView.applyPoseToJoints`,
+ * `PoseController.applyPoseToRig`) already does `fighter.joints.get(name)`
+ * followed by `if (!joint) continue`, so omitting `'root'` from the joints
+ * map -- rather than special-casing it in every one of those loops -- makes
+ * "a pose silently overwrites the rig's world facing" structurally
+ * impossible: there is no joint object left for any pose data to reach.
+ * This was exactly how the facing bug happened (Task 19 human-review
+ * finding): `applyPoseToJoints` zeroed the root's yaw the instant it hit
+ * `'root'` in this list, once per frame, because `root` used to be both the
+ * rig's world-placement `Group` *and* a joint entry pose data could write.
+ */
 export const SEMANTIC_JOINT_NAMES: readonly JointName[] = [
   'root',
   'pelvis',
@@ -115,6 +131,14 @@ export interface ProceduralFighterOptions {
 }
 
 export interface ProceduralFighter {
+  /**
+   * World placement (position + facing yaw) only -- owned exclusively by
+   * `ArenaView`, which derives it every frame from `lerp(previousTick,
+   * currentTick, alpha)` (design.md). Deliberately not reachable via `joints`
+   * (see `SEMANTIC_JOINT_NAMES`'s doc comment): a pose describes body
+   * configuration, never world placement, so nothing that samples a pose by
+   * semantic joint name should be able to touch this transform at all.
+   */
   root: THREE.Group
   joints: ReadonlyMap<JointName, THREE.Object3D>
   anchors: ReadonlyMap<EquipmentAnchorName, THREE.Object3D>
@@ -600,7 +624,17 @@ export function createProceduralFighter(options: ProceduralFighterOptions): Proc
 
   const root = new THREE.Group()
   root.name = 'root'
-  joints.set('root', root)
+  // Deliberately never `joints.set('root', root)`: the root Group carries
+  // this fighter's world placement (position + facing), which `ArenaView`
+  // sets every frame from interpolated simulation state, never from pose
+  // data. Registering it as an ordinary semantic joint used to make it
+  // reachable from `SEMANTIC_JOINT_NAMES`-driven pose-application loops,
+  // which zeroed the facing every frame the instant any pose sample walked
+  // that list (no authored pose in `poses/combatPoses.ts` defines a `root`
+  // entry, so `PoseController.buildFullPose` always filled it with the
+  // identity transform). `'root'` stays in `SEMANTIC_JOINT_NAMES` itself
+  // (see that constant's own comment) as vocabulary only; this rig simply
+  // has no joint object under that name for any pose to reach.
 
   const groundY = body.upperLegLength + body.lowerLegLength
   const pelvis = addJoint(joints, 'pelvis', root, groundY)

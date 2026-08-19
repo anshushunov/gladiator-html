@@ -256,6 +256,17 @@ function mergeAdditiveRotation(target: SparsePose, source: Readonly<SparsePose>)
   }
 }
 
+/**
+ * Builds a full `Record<JointName, JointTransform>` for every name in
+ * `SEMANTIC_JOINT_NAMES`, including `'root'` -- but that `pose.root` entry
+ * is inert by construction, not merely unused: no layer above ever writes
+ * `working.root` (no authored pose in `poses/combatPoses.ts` defines a
+ * `root` entry), and even if one did, `ProceduralFighter`'s `joints` map has
+ * no entry under `'root'` for `applyPoseToJoints`/`applyPoseToRig` to apply
+ * it to (see `SEMANTIC_JOINT_NAMES`'s own comment). Kept as a real key here
+ * rather than special-cased out so `Record<JointName, JointTransform>`
+ * stays an honest, total map over the whole vocabulary.
+ */
 function buildFullPose(working: Readonly<SparsePose>): Record<JointName, JointTransform> {
   const result = {} as Record<JointName, JointTransform>
   for (const name of SEMANTIC_JOINT_NAMES) result[name] = working[name] ?? IDENTITY_TRANSFORM
@@ -517,6 +528,12 @@ function worldToActorLocal(worldPoint: Readonly<Vec2>, actorPosition: Readonly<V
 
 function applyPoseToRig(fighter: ProceduralFighter, pose: Readonly<Record<JointName, JointTransform>>): void {
   for (const name of SEMANTIC_JOINT_NAMES) {
+    // `fighter.joints` deliberately has no `'root'` entry (see
+    // `SEMANTIC_JOINT_NAMES`'s comment in `ProceduralFighter.ts`), so this
+    // guard -- already required for any name a given rig doesn't build --
+    // also permanently keeps `pose.root` from ever reaching `fighter.root`'s
+    // world transform, which this IK scratch pass saves/restores around
+    // itself and must never leak a pose-driven rotation into.
     const joint = fighter.joints.get(name)
     if (!joint) continue
     const transform = pose[name]

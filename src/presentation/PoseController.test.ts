@@ -531,7 +531,12 @@ describe('PoseController weapon-arm IK', () => {
     fighter.root.position.set(0, 0, 0)
     fighter.root.quaternion.identity()
     for (const name of SEMANTIC_JOINT_NAMES) {
-      const joint = fighter.joints.get(name)!
+      // `'root'` deliberately has no `fighter.joints` entry (see
+      // `ProceduralFighter.ts`'s `SEMANTIC_JOINT_NAMES` comment) -- this
+      // mirrors the same `if (!joint) continue` guard every production
+      // pose-application loop uses.
+      const joint = fighter.joints.get(name)
+      if (!joint) continue
       const transform = pose[name]
       joint.rotation.set(transform.rotation[0], transform.rotation[1], transform.rotation[2])
       if (transform.position) joint.position.set(transform.position[0], transform.position[1], transform.position[2])

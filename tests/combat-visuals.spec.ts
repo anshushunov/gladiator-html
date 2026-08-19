@@ -152,6 +152,71 @@ test('interpolates presentation without advancing simulation', async ({ page }) 
 })
 
 // ---------------------------------------------------------------------------
+// Root-yaw regression (2026-08-19 combat-legibility follow-up).
+//
+// `ProceduralFighter.ts` used to register the rig's world-placement root
+// `Group` as an ordinary semantic joint (`joints.set('root', root)`, with
+// `'root'` first in `SEMANTIC_JOINT_NAMES`). `ArenaView.applyFrame` sets the
+// correct facing on `rig.fighter.root.rotation` from interpolated simulation
+// state, then immediately calls `applyPoseToJoints`, which walks
+// `SEMANTIC_JOINT_NAMES` and does `joint.rotation.set(...)` for every entry
+// it finds a joint for -- including, back then, `'root'`. No authored pose
+// in `poses/combatPoses.ts` defines a `root` entry, so that pose sample's
+// `root` transform was always the identity, and every fighter's yaw was
+// silently zeroed back to world `+Z` on every rendered frame regardless of
+// which way the simulation actually had it facing. This is the actual root
+// cause behind the "fighters always face the camera" playtest report. The
+// fix stops registering `root` as a joint at all (see that file's own
+// comment), so `applyPoseToJoints`'s existing `if (!joint) continue` guard
+// now permanently -- not just for this pose set -- excludes it.
+//
+// `renderActiveBattleAtAlpha(1)` (the same dev-only hook the key-pose
+// captures below use) forces a full-alpha render, so the rendered facing is
+// exactly `currState.facing` with no interpolation gap against the raw
+// simulation state read alongside it in the same atomic `page.evaluate`.
+// ---------------------------------------------------------------------------
+
+test("keeps each rig's rendered root yaw locked to its simulation facing, never zeroed by the pose layer", async ({ page }) => {
+  await startBoutZeroWith(page, 'brutus')
+  const cursor = { current: 0 }
+
+  // A spread of ticks already established deterministic by this file's own
+  // Step 2 fixtures (mid-windup, post-contact, post-stagger, later exchanges)
+  // -- reused here rather than arbitrary numbers so this test's ticks are
+  // independently known to land mid-combat, not just at the bout's opening
+  // approach where both fighters might coincidentally already face +Z.
+  const ticks = [40, 245, 256, 329, 1123, 2106]
+
+  for (const tick of ticks) {
+    await advanceToTick(page, tick, cursor)
+
+    // One atomic `evaluate` call for the same race-avoidance reason
+    // `captureFrame`/the alpha-interpolation test above document: a
+    // background `requestAnimationFrame` loop keeps calling `syncArena()`
+    // with its own (paused-pegged) alpha even in `?snapshot` mode, so
+    // setting alpha=1 and reading the snapshot back must happen in one
+    // synchronous callback to guarantee they observe the same render.
+    const { combatants, snapshot } = await page.evaluate(() => {
+      window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha!(1)
+      return {
+        combatants: window.__GLADIATOR_TEST__.getState().activeBattle!.encounter.combatants,
+        snapshot: window.__GLADIATOR_TEST__.getArenaDebugSnapshot!()!,
+      }
+    })
+
+    for (const id of Object.keys(combatants)) {
+      const facing = combatants[id].facing
+      const expectedYaw = Math.atan2(facing.x, facing.z)
+      const actualYaw = snapshot.rootYaw[id]
+      expect(
+        actualYaw,
+        `t${tick} ${id}: rendered root yaw ${actualYaw} should match simulation facing yaw ${expectedYaw} (facing ${JSON.stringify(facing)})`,
+      ).toBeCloseTo(expectedYaw, 5)
+    }
+  }
+})
+
+// ---------------------------------------------------------------------------
 // Step 2: deterministic key-pose fixtures.
 //
 // Every tick below was read from a real, reproducible run of the seeded
