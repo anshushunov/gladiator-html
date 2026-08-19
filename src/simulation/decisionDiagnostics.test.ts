@@ -107,15 +107,22 @@ describe('decision diagnostics', () => {
 
   it('does not let a collector mutating its record change the decision the kernel actually takes', () => {
     const without = runBout()
-    // A collector that corrupts the record it was handed -- flipping the
-    // reported `chosen` outcome to something else entirely -- must not be
-    // able to influence what the kernel does with its own local `decision`
-    // value. If this test ever fails, the collector has stopped being
-    // write-only.
+    // Reassigning `entry.chosen` to a brand-new object (`entry.chosen = {...}`)
+    // only rebinds the record's own property -- it proves nothing about
+    // aliasing, because it would leave an old `chosen: decision` alias
+    // untouched too (the kernel's `decision` binding still points at the
+    // original object either way). To actually distinguish "the collector
+    // was handed the kernel's live object" from "the collector was handed a
+    // copy," the mutation has to go *through* the reference: flip a field on
+    // the object in place. Against the old aliasing code that changes what
+    // `decision.locomotionIntent` reads as, and the kernel commits the
+    // flipped intent -- shifting the trace hash. Against the fix
+    // (`chosen: { ...decision }`), the collector's copy is a different
+    // object, so this mutation lands on nothing the kernel ever reads.
     const withMutatingCollector = runBout({
       record: (entry) => {
-        if (entry.kind === 'weighted' || entry.kind === 'fallback') {
-          entry.chosen = { type: 'locomotion', locomotionIntent: 'retreat' }
+        if ((entry.kind === 'weighted' || entry.kind === 'fallback') && entry.chosen.type === 'locomotion') {
+          entry.chosen.locomotionIntent = entry.chosen.locomotionIntent === 'advance' ? 'retreat' : 'advance'
         }
       },
     })
