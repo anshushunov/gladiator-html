@@ -65,8 +65,10 @@ export class DecisionPanel {
     const heading = document.createElement('h2')
     heading.textContent = 'Decision trace'
     this.skippedSummary = document.createElement('p')
+    this.skippedSummary.className = 'decision-panel__skipped'
     this.skippedSummary.dataset.testid = 'decision-panel-skipped-count'
     this.list = document.createElement('ol')
+    this.list.className = 'decision-panel__list'
     this.root.append(heading, this.skippedSummary, this.list)
     parent.append(this.root)
   }
@@ -110,6 +112,7 @@ export class DecisionPanel {
   render(): void {
     const rowElements = this.rows.map((row) => {
       const li = document.createElement('li')
+      li.className = 'decision-panel__row'
       li.dataset.testid = 'decision-panel-row'
       li.textContent = describeRecord(row.record, row.repeatCount)
       return li

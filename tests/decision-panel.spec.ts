@@ -1,11 +1,28 @@
 import { expect, test } from '@playwright/test'
 
-test('shows the decision panel only when asked for', async ({ page }) => {
+test('shows the decision panel only when asked for, actually within the viewport', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await expect(page.getByTestId('decision-panel')).toHaveCount(0)
 
+  const viewport = { width: 1280, height: 800 }
+  await page.setViewportSize(viewport)
   await page.goto('/?seed=20260815&snapshot&debugDecisions=1')
-  await expect(page.getByTestId('decision-panel')).toBeVisible()
+  const panel = page.getByTestId('decision-panel')
+  await expect(panel).toBeVisible()
+
+  // `toBeVisible()` alone only proves the element has layout (non-zero size,
+  // not `display: none`/`visibility: hidden`) -- it does not prove a player
+  // could actually see it on screen. Before this panel had any CSS at all it
+  // was `toBeVisible()` in exactly that sense while still rendering below the
+  // battle feed, off the bottom of the viewport (measured `top: 769px`
+  // against a `743px` viewport). Assert the bounding box is fully contained
+  // in the viewport instead, which that unstyled state would fail.
+  const box = await panel.boundingBox()
+  expect(box, 'decision panel has no layout box').not.toBeNull()
+  expect(box!.x).toBeGreaterThanOrEqual(0)
+  expect(box!.y).toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width)
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height)
 })
 
 async function assignAndConfirm(page: import('@playwright/test').Page) {

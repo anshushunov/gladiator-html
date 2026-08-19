@@ -361,6 +361,77 @@ h1 span { color: #c78b4f; font-style: italic; }
 .battle-feed li { display: grid; grid-template-columns: 42px 1fr; gap: 8px; }
 .battle-feed time { color: #6d645d; font-variant-numeric: tabular-nums; }
 
+/* Dev-only decision trace panel (`?debugDecisions=1`, `DecisionPanel.ts`).
+   `main.ts` only ever constructs one under `import.meta.env.DEV` (statically
+   eliminated from a production bundle), so these rules are dead weight in
+   production but never make the panel itself reachable there -- same split
+   as the audio debug panel's own comment below. Fixed rather than laid out
+   in `.battle-grid` flow: it used to be appended as the last child of
+   `<body>` with no styling at all, landing below the battle feed and off-
+   screen (measured `top: 769px` against a `743px` viewport). Fixed
+   positioning both fixes that and keeps it out of the arena/HUD column
+   layout regardless of how tall the row list grows. */
+
+.decision-panel {
+  position: fixed;
+  z-index: 5;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  width: min(440px, calc(100% - 32px));
+  max-height: min(46vh, 420px);
+  padding: 14px 16px;
+  border: 1px solid #302a2a;
+  border-radius: 4px;
+  color: #a99e90;
+  background: rgba(20, 18, 22, 0.94);
+  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.36);
+  font-size: 11px;
+}
+
+.decision-panel h2 {
+  margin: 0 0 4px;
+  color: #d0c2b0;
+  font-family: Georgia, serif;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.decision-panel__skipped {
+  margin: 0 0 8px;
+  color: #6d645d;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.decision-panel__list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.decision-panel__row {
+  padding: 3px 0;
+  border-bottom: 1px solid #232025;
+  color: #cfc1ae;
+  font-size: 10px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.decision-panel__row:last-child { border-bottom: none; }
+
+@media (max-width: 560px) {
+  .decision-panel { right: 8px; bottom: 8px; left: 8px; width: auto; }
+}
+
 /* The dev/test-only audio debug panel (`?audioDebug=1`) styles itself from
    inside main.ts's `buildAudioDebugPanel`, which a production build drops
    entirely -- so no rules for it ship here. */
