@@ -169,9 +169,15 @@ variant would do — measured at up to `981°` of accumulated travel in a
 Two hazards to handle explicitly rather than discover later:
 
 - **Degenerate covariance.** At exactly coincident or exactly symmetric
-  positions the covariance is zero and the branch is numerically unstable.
-  The existing `angle === 0` early return covers the exact case; the unwrap
-  must not turn near-zero noise into a reference flip.
+  positions the covariance is zero and the branch is numerically unstable. A
+  group whose targets are merely a hair apart (float noise, not a real
+  spread) is the harder case: both `atan2` inputs are near zero but not
+  exactly zero, so their ratio is ill-conditioned and can land anywhere in
+  range depending on noise in the last few bits of each coordinate. The
+  unwrap must not turn that noise into a reference flip, so degeneracy is
+  detected on total variance against an epsilon, not on the angle being
+  exactly `0`, and the camera holds its previous unclamped yaw reference
+  rather than computing anything from a meaningless angle.
 - **Reference tracking.** `yawReference` currently compares a plain difference.
   It must compare against the *unwrapped* desired yaw, or the dead zone will
   keep seeing phantom near-180° changes.
@@ -184,13 +190,16 @@ fail. It is rewritten, not deleted: the property worth keeping — the camera
 never crosses to the other side of the fight — is now guaranteed structurally
 by the unsigned axis plus nearest-representative unwrap, and gets its own test.
 
-The `5°` dead zone and the `1.5 s` damping constant are unchanged. Fixed FOV,
-fixed elevation, existing look-target and distance behaviour are unchanged.
+The `5°` dead zone is unchanged. Fixed FOV, fixed elevation, existing
+look-target and distance behaviour are unchanged.
 
-If the camera visibly lags a fast-rotating pair, the remedy is a **larger dead
-zone**, not faster damping — but note that a larger dead zone raises the
-steady-state framing error it permits, so it trades one legibility cost for
-another and must be judged on screen, not in the abstract.
+A later amendment measured on-screen framing error directly and found the
+opposite of the intuition recorded here: the `1.5 s` damping constant was
+the lever, not the dead zone. Tightening the dead zone to `2°` moved the
+30°-error figure only from 1.5% to 1.3%, while tightening damping to `0.5 s`
+moved it from 11.2% to 1.5%. The damping constant is **not** unchanged — see
+the amendment in `2026-08-16-readable-deep-combat-design.md` for the measured
+tuning sweep and the rejected lag-cap alternative.
 
 ### 2. Rig directionality
 

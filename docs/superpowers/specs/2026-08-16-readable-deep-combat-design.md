@@ -1017,10 +1017,22 @@ unchanged):
 - The `5°` yaw dead zone was checked as a possible lever and is not one: tightening it to `2°` only moves
   the 30°-error figure from 1.5% to 1.3%.
 
-Not changed: the unwrap-then-clamp mechanism, the unsigned-axis degenerate-spread handling, fixed FOV,
-the fixed elevation/distance ratio, the `11..18` distance clamp, the 12% framing dead zone, the 10%
-equipment margin, the absence of motion lookahead, and the hard cut of all camera state at each new bout
-and on rematch.
+This amendment also changes degenerate-spread handling, which the parent section left as: coincident
+targets give `atan2(0, 0) = 0`, so the camera returns to the home shot. That is no longer true. A group
+whose targets are a hair apart (float noise, not a real spread) has both `atan2` inputs near zero but not
+exactly zero, so the ratio the parent section relied on is ill-conditioned and can land anywhere in range
+depending on noise in the last few bits of each coordinate — the same problem the exact-zero case merely
+happened not to expose. The fix is a `hasAxis` flag: total variance (`varianceX + varianceZ`) below
+`AXIS_VARIANCE_EPSILON` (`1e-9`, chosen to sit far below any real fighter separation and far above float
+noise on world-scale coordinates) means no measurable axis, and the camera holds its previous unclamped
+yaw reference instead of computing anything from the noisy angle — including on a genuine reset, where
+holding the initial `0` reference is exactly the old behaviour. The *axis* stays unsigned, unchanged from
+the parent section; only the handling of a *degenerate* spread changed.
+
+Not changed: the unwrap-then-clamp mechanism, the unsigned-axis property itself, fixed FOV, the fixed
+elevation/distance ratio, the `11..18` distance clamp, the 12% framing dead zone, the 10% equipment
+margin, the absence of motion lookahead, and the hard cut of all camera state at each new bout and on
+rematch.
 
 ## Combat audio
 
