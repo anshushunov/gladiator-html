@@ -62,10 +62,12 @@ import {
   processDefenseBatch,
   resolveForcedParryCounterStart,
   retainTarget,
+  scoreCombatCandidates,
   TARGET_ACQUISITION_RADIUS,
   TARGET_RETENTION_RADIUS,
   type IncomingThreat,
 } from './combatDecision'
+import type { DecisionCollector } from './decisionDiagnostics'
 import type { FighterDefinition } from './fighters'
 import { compareArchetypes, comparisonDamageMultiplier, validateFighterDefinition } from './fighters'
 import type { CombatArenaDefinition, LocomotionIntent, MovementRequest, TurnStep, Vec2 } from './movement'
@@ -1057,6 +1059,7 @@ function makeCombatDecisions(
   spatialHash: SpatialHash,
   cursor: EventIdCursor,
   forcedActionActorIds: ReadonlySet<CombatantId>,
+  collector: DecisionCollector | undefined,
 ): {
   combatants: Record<CombatantId, FighterCombatState>
   randomByCombatant: Record<CombatantId, CombatantRandomState>
@@ -1073,8 +1076,24 @@ function makeCombatDecisions(
     // Forced behavior (Fast's disengage wired in phase 2; Technical's
     // parry-counter start resolved just above this phase) bypasses weighted
     // selection entirely: no decision-stream draw, no candidate scoring.
-    if (self.forcedDisengageStartTick !== undefined || forcedActionActorIds.has(id)) continue
-    if (!isDecisionReady(self, tick) || self.targetId === undefined) continue
+    if (self.forcedDisengageStartTick !== undefined || forcedActionActorIds.has(id)) {
+      collector?.record({
+        kind: 'forced',
+        tick,
+        combatantId: id,
+        behaviour: self.forcedDisengageStartTick !== undefined ? 'disengage' : 'parry-counter',
+      })
+      continue
+    }
+    if (!isDecisionReady(self, tick) || self.targetId === undefined) {
+      collector?.record({
+        kind: 'skipped',
+        tick,
+        combatantId: id,
+        reason: self.targetId === undefined ? 'no-target' : 'not-due',
+      })
+      continue
+    }
 
     const nearbyIds = queryRadius(spatialHash, self.position, TARGET_RETENTION_RADIUS)
     const context = buildCombatDecisionContext({
@@ -1091,7 +1110,13 @@ function makeCombatDecisions(
 
     const combatantRandom = nextRandom[id]
     const [rolls, afterDecision] = drawPair(combatantRandom.decision)
+    const scored = scoreCombatCandidates(context, style)
     const decision = chooseCombatDecision(context, style, { selection: rolls.first, interval: rolls.second })
+    collector?.record(
+      scored.length === 0
+        ? { kind: 'fallback', tick, combatantId: id, chosen: decision }
+        : { kind: 'weighted', tick, combatantId: id, candidates: scored, roll: rolls.first, chosen: decision },
+    )
     const nextDecisionTick = tick + decisionIntervalTicks(self.definition.archetype, rolls.second)
     nextRandom = { ...nextRandom, [id]: { ...combatantRandom, decision: afterDecision } }
 
@@ -2139,7 +2164,7 @@ function resolveNoHostilePairsCompletion(state: EncounterState): EncounterTransi
  * identity, empty event batch) -- a finished encounter is inert. Never
  * mutates `previous` or anything reachable from it.
  */
-export function advanceEncounterTick(previous: EncounterState): EncounterTransition {
+export function advanceEncounterTick(previous: EncounterState, collector?: DecisionCollector): EncounterTransition {
   if (previous.phase !== 'running') {
     return { state: previous, events: [] }
   }
@@ -2185,6 +2210,7 @@ export function advanceEncounterTick(previous: EncounterState): EncounterTransit
     preMovementHash,
     cursor,
     forcedActionActorIds,
+    collector,
   )
   combatants = decisions.combatants
   randomByCombatant = decisions.randomByCombatant
@@ -2257,11 +2283,11 @@ export function advanceEncounterTick(previous: EncounterState): EncounterTransit
  * this one aggregating caller (the kernel itself never accumulates an event
  * log).
  */
-export function advanceEncounterTicks(initial: EncounterState, ticks: number): EncounterTransition {
+export function advanceEncounterTicks(initial: EncounterState, ticks: number, collector?: DecisionCollector): EncounterTransition {
   let state = initial
   const events: EncounterEvent[] = []
   for (let index = 0; index < ticks && state.phase === 'running'; index += 1) {
-    const next = advanceEncounterTick(state)
+    const next = advanceEncounterTick(state, collector)
     state = next.state
     events.push(...next.events)
   }
