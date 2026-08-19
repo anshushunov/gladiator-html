@@ -9,6 +9,12 @@
 //      reaction overlay;
 //   5. foot grounding and capped weapon-arm IK.
 //
+// Task 3 adds one layer design.md's list above doesn't carry: 1b, idle sway
+// (breathing/weight shift) while standing, inserted between 1 and 2 and
+// suppressed under any of 3/4/5's held poses -- a deliberate, recorded
+// compromise (there is no acceleration model, so start-stop remains in the
+// simulation data; this only changes how standing *reads*).
+//
 // Every layer contributes a *sparse* joint-transform record; layers are
 // merged strictly left-to-right with a later layer's joint entry replacing
 // an earlier one outright (never re-blended against it) -- this is what
@@ -42,6 +48,8 @@ import {
 } from './poses/combatPoses'
 import { SEMANTIC_JOINT_NAMES, type JointName, type ProceduralFighter } from './ProceduralFighter'
 import { classifyGaitPhase, computeGaitPhase } from './poses/gait'
+import { computeIdlePhase, idleAmplitude, sampleIdleLayer } from './poses/idle'
+import { TICKS_PER_SECOND } from '../simulation/movement'
 
 // ---------------------------------------------------------------------------
 // Public contract (brief Step 2)
@@ -206,7 +214,7 @@ function lerpTransform(a: JointTransform | undefined, b: JointTransform | undefi
   return { rotation }
 }
 
-type SparsePose = Partial<Record<JointName, JointTransform>>
+export type SparsePose = Partial<Record<JointName, JointTransform>>
 
 function blendPoseJoints(a: Readonly<SparsePose>, b: Readonly<SparsePose>, t: number): SparsePose {
   const keys = new Set<JointName>([...Object.keys(a), ...Object.keys(b)] as JointName[])
@@ -651,11 +659,30 @@ export class PoseController {
     // Layer 1: style guard.
     mergeInto(working, stylePoses.guard.joints)
 
+    // Interpolated speed weight: full at `GAIT_FULL_SPEED_REFERENCE`, zero at
+    // a standstill. Shared by the idle layer below (which wants the opposite
+    // sense -- full weight while standing) and by the gait layer (Layer 2),
+    // so the two hand off smoothly across one binding instead of computing it
+    // twice.
+    const velocity = lerpVec2(previous.velocity, current.velocity, alpha)
+    const speedWeight = clamp01(vecLength(velocity) / GAIT_FULL_SPEED_REFERENCE)
+
+    // Layer 1b: idle. Suppressed whenever a later layer owns the body --
+    // an action, a defensive reaction, stagger or defeat -- because those
+    // hold poses that a breathing overlay would corrupt, including the
+    // impact hold the fixtures assert is identical across ticks.
+    const idleSuppressed =
+      current.action.type !== 'neutral' ||
+      current.status !== 'active' ||
+      isStaggered(current, currentTick) ||
+      recognitionFlinchActive ||
+      reaction?.contactTarget !== undefined
+    const simulationTime = (currentTick + alpha) / TICKS_PER_SECOND
+    mergeInto(working, sampleIdleLayer(computeIdlePhase(simulationTime, current.definition.id), idleAmplitude(speedWeight, idleSuppressed, reducedMotion)))
+
     // Layer 2: locomotion cycle (gait), derived from travelled distance.
     const travelledDistance = lerp(previous.travelledDistance, current.travelledDistance, alpha)
     const gaitPhase = computeGaitPhase(travelledDistance, archetype)
-    const velocity = lerpVec2(previous.velocity, current.velocity, alpha)
-    const speedWeight = clamp01(vecLength(velocity) / GAIT_FULL_SPEED_REFERENCE)
     applyGaitLayer(working, stylePoses, gaitPhase, speedWeight)
 
     // Layer 3: action key-pose curve (this fighter's own attack only).

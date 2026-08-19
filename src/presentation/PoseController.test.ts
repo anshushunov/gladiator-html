@@ -200,9 +200,12 @@ describe('PoseController fixed layer order', () => {
     const staggerChest = COMBAT_POSES.styles.heavy.stagger.joints.chest!.rotation
     const defeatChest = COMBAT_POSES.styles.heavy.defeat.joints.chest!.rotation
 
-    // (a) baseline neutral: guard only.
+    // (a) baseline neutral: guard only. `reducedMotion: true` isolates this
+    // from the idle layer's own breathing sway (Task 3) -- exactly zero
+    // under reduced motion -- since this case is about layer *order*, not
+    // idle.
     const neutral = baseFighterState('heavy')
-    const baseline = controller.apply(makeInput({ current: neutral, currentTick: 0 }), fighter)
+    const baseline = controller.apply(makeInput({ current: neutral, currentTick: 0, reducedMotion: true }), fighter)
     expect(baseline.pose.chest.rotation).toEqual(guardChest)
 
     // (b) recognition-flinch overlay active.
@@ -289,7 +292,10 @@ describe('PoseController fixed layer order', () => {
     const duringFlinch = flinched.apply(makeInput({ current: neutral, currentTick: 5, reaction: { defenseDeclinedTick: 5 } }), fighter)
     expect(duringFlinch.pose.chest.rotation).not.toEqual(guardChest) // the flinch really is visible on this controller
 
-    const after = new PoseController().apply(makeInput({ current: neutral, currentTick: 6 }), fighter)
+    // `reducedMotion: true` isolates this from idle sway (Task 3) for the
+    // same reason as the baseline case above: this asserts the flinch window
+    // itself resets, not anything about idle.
+    const after = new PoseController().apply(makeInput({ current: neutral, currentTick: 6, reducedMotion: true }), fighter)
     expect(after.pose.chest.rotation).toEqual(guardChest)
     fighter.dispose()
   })
@@ -591,6 +597,70 @@ describe('PoseController weapon-arm IK', () => {
     const sample = controller.apply(makeInput({ current, currentTick: 21, alpha: 0, reaction: { contactTarget: nearTarget } }), fighter)
 
     expect(sample.pose.root).toEqual({ rotation: [0, 0, 0] })
+    fighter.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Idle layer: keeps a standing fighter alive between ticks
+// ---------------------------------------------------------------------------
+
+describe('PoseController idle layer', () => {
+  function neutralStandingInput(overrides: { tick: number; reducedMotion?: boolean }): PoseSampleInput {
+    const state = baseFighterState('heavy')
+    return makeInput({ current: state, previous: state, currentTick: overrides.tick, alpha: 0, reducedMotion: overrides.reducedMotion ?? false })
+  }
+
+  function impactHoldInput(overrides: { tick: number }): PoseSampleInput {
+    const state = baseFighterState('heavy', { action: impactAction('heavy-cleave', 40, 6) })
+    return makeInput({ current: state, previous: state, currentTick: overrides.tick, alpha: 0 })
+  }
+
+  it('keeps a standing fighter alive between ticks', () => {
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    const standing = neutralStandingInput({ tick: 100 })
+    const later = neutralStandingInput({ tick: 130 })
+
+    const first = controller.apply(standing, fighter)
+    const second = controller.apply(later, fighter)
+
+    expect(second.pose).not.toEqual(first.pose)
+    fighter.dispose()
+  })
+
+  it('is perfectly still under reduced motion', () => {
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    const first = controller.apply(neutralStandingInput({ tick: 100, reducedMotion: true }), fighter)
+    const second = controller.apply(neutralStandingInput({ tick: 130, reducedMotion: true }), fighter)
+
+    expect(second.pose).toEqual(first.pose)
+    fighter.dispose()
+  })
+
+  it('does not breathe through a held impact pose', () => {
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    const first = controller.apply(impactHoldInput({ tick: 100 }), fighter)
+    const second = controller.apply(impactHoldInput({ tick: 130 }), fighter)
+
+    expect(second.pose).toEqual(first.pose)
+    fighter.dispose()
+  })
+
+  it('leaves a planted foot exactly where grounding puts it', () => {
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'heavy' })
+    const standing = neutralStandingInput({ tick: 100 })
+    const later = neutralStandingInput({ tick: 130 })
+
+    const first = controller.apply(standing, fighter)
+    const second = controller.apply(later, fighter)
+
+    for (const name of ['foot.L', 'foot.R', 'upperLeg.L', 'upperLeg.R'] as const) {
+      expect(second.pose[name]).toEqual(first.pose[name])
+    }
     fighter.dispose()
   })
 })
