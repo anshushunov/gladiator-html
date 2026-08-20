@@ -15,9 +15,15 @@ async function startBoutZeroWith(page: Page, homeFighterId: 'brutus' | 'aquila' 
   const order: readonly ('brutus' | 'aquila' | 'nerva')[] = ['brutus', 'aquila', 'nerva']
   const rest = order.filter((id) => id !== homeFighterId)
   await page.goto('/?seed=20260815&snapshot')
+  // No `window.__GLADIATOR_TEST__.startNextSeries()` call here (fix round 1,
+  // Task 7 review): `main.ts` runs the season through `autoAdvanceSeason`
+  // once at module init, specifically so a production build with zero dev
+  // API still boots straight into series 0's planning screen -- so
+  // `season.phase` is already `'series'` the instant this `page.evaluate`
+  // runs, and a `startNextSeries()` call here would always fail
+  // `no-series-pending` and be discarded.
   await page.evaluate(
     ([home, others]) => {
-      window.__GLADIATOR_TEST__.startNextSeries()
       window.__GLADIATOR_TEST__.assign(home, 0)
       window.__GLADIATOR_TEST__.assign(others[0], 1)
       window.__GLADIATOR_TEST__.assign(others[1], 2)

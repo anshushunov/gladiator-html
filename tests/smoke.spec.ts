@@ -1,9 +1,23 @@
 import { expect, test } from '@playwright/test'
 import { preview, type PreviewServer } from 'vite'
 
+// ---------------------------------------------------------------------------
+// Fix round 1 (Task 7 review): series 0 is already active -- in `planning`
+// phase, no lineup assigned -- the instant the page finishes loading.
+// `main.ts` runs the season through `autoAdvanceSeason` once at module init,
+// specifically so a production build with zero dev API still boots straight
+// into the planning screen. None of this file's setup blocks below call
+// `window.__GLADIATOR_TEST__.startNextSeries()` for that reason: it would
+// always fail `no-series-pending` and be discarded, since `season.phase` is
+// already `'series'` by the time any test's first `page.evaluate` runs. The
+// one exception is inside the "...on rematch..." test further down, where a
+// mid-season `continueSeason()` genuinely does leave the season back on
+// `season-board` -- that call site keeps `startNextSeries()`, with its own
+// comment explaining why it is required there and nowhere else.
+// ---------------------------------------------------------------------------
+
 test('plans and locks three matchups', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
-  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
   // Season 0 opens with all five season roster members fightable (nobody has
   // fought yet), not just the original three -- `SEASON_ROSTER` (Task 4/6).
@@ -28,7 +42,6 @@ async function finishActiveBout(page: import('@playwright/test').Page) {
 async function startSeededFirstBout(page: import('@playwright/test').Page) {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -63,12 +76,16 @@ test('clears render snapshots and combatant data on rematch, with no leak from t
     if (bout < 2) await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
   }
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveBattleTraceHash())).not.toBeNull()
-  // `rematch()` is gone -- `continueSeason()` is its season-level successor
-  // (close out the series that just finished; `main.ts`'s `autoAdvanceSeason`
-  // immediately opens the next one, since `SeasonView` does not exist yet),
-  // and it resets the render frame the exact same way: `activeSeries`'s
-  // `activeBattle` reference changes from the finished third bout to
-  // `undefined` while planning the next series.
+  // `rematch()` is gone -- `continueSeason()` is its season-level successor:
+  // closes out the series that just finished (roster wear, its own
+  // `SeriesRecord`, the season score). This is series 0 of three, so it does
+  // NOT auto-open series 1 (`main.ts`'s `bridgeAfterContinueSeason` only
+  // bridges when `continueSeason` ends the whole season) -- but it still
+  // resets the render frame the exact same way either way: `activeSeries`'s
+  // own `activeBattle` reference changes from the finished third bout to
+  // `undefined`, whether that is because `activeSeries` itself became `null`
+  // (this test's case) or because a freshly-opened next series has not
+  // started its own first bout yet.
   await page.evaluate(() => window.__GLADIATOR_TEST__.continueSeason())
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState())).toMatchObject({
     previousTick: null,
@@ -81,7 +98,6 @@ test('clears render snapshots and combatant data on rematch, with no leak from t
 test('resets arena presentation for the second bout', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -103,7 +119,6 @@ test('resets arena presentation for the second bout', async ({ page }) => {
 test('resets rig identity, pose, trails, flashes, camera framing, the audio cursor, and event cursor for every new bout', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -164,7 +179,6 @@ test('resets rig identity, pose, trails, flashes, camera framing, the audio curs
 test('resets rig identity, pose, trails, flashes, the audio cursor, and event cursor on rematch, and again for the bout that follows it', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -205,8 +219,11 @@ test('resets rig identity, pose, trails, flashes, the audio cursor, and event cu
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
 
   // `rematch()` is gone -- `continueSeason()` closes out the series that just
-  // finished, and `main.ts`'s `autoAdvanceSeason` immediately opens the next
-  // one (no `SeasonView` exists yet to pause on in between).
+  // finished (roster wear, its own `SeriesRecord`, the season score). This is
+  // series 0 of three, so it does NOT auto-open series 1 (`main.ts`'s
+  // `bridgeAfterContinueSeason` only bridges when `continueSeason` ends the
+  // whole season) -- the explicit `startNextSeries()` call further down is
+  // what actually opens it, right before this test re-assigns fighters.
   await page.evaluate(() => window.__GLADIATOR_TEST__.continueSeason())
   const afterRematch = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
   // `season.ts`'s own `continueSeason()` clears `activeSeries.activeBattle`,
@@ -224,11 +241,13 @@ test('resets rig identity, pose, trails, flashes, the audio cursor, and event cu
   // bout 1/2 hold again for the fresh bout that follows a rematch -- rematch
   // is not a special case the ordinary per-bout reset path skips.
   //
-  // `startNextSeries()` here is a defensive no-op, not a strict requirement:
-  // `continueSeason()` above already left the season on the next series'
-  // planning phase via `autoAdvanceSeason`. Calling it again once already
-  // past `season-board` fails `no-series-pending` harmlessly and leaves the
-  // season untouched.
+  // `startNextSeries()` here is REQUIRED, unlike every other setup block in
+  // this file (see the file-header comment): `continueSeason()` above closed
+  // out series 0 mid-season (only one of three series has been played), and
+  // `main.ts`'s `bridgeAfterContinueSeason` deliberately does not auto-open
+  // the next series for that case -- only when `continueSeason` ends the
+  // whole season. Season 1's `activeSeries` is genuinely `null` until this
+  // call opens it.
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
@@ -264,7 +283,6 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
   const normalPage = page
   await normalPage.goto('/?seed=20260815&snapshot')
   await normalPage.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('brutus', 0)
     window.__GLADIATOR_TEST__.assign('aquila', 1)
     window.__GLADIATOR_TEST__.assign('nerva', 2)
@@ -283,7 +301,6 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('brutus', 0)
     window.__GLADIATOR_TEST__.assign('aquila', 1)
     window.__GLADIATOR_TEST__.assign('nerva', 2)
@@ -479,7 +496,6 @@ test('falls back gracefully instead of crashing when WebGL is unavailable at sta
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
 
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -511,7 +527,6 @@ test('a throwing presentation frame latches a disabled-presentation flag but nev
   // goes through `frame()` at all).
   await page.goto('/?seed=20260815')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -540,7 +555,7 @@ test('a throwing presentation frame latches a disabled-presentation flag but nev
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState().presentationDisabled)).toBe(true)
 })
 
-test('plays three bouts, reports a 2–1 win, and rematches the same seed', async ({ page }) => {
+test('plays three bouts, reports a 2–1 win, then the summary "Rematch" button continues into the next series', async ({ page }) => {
   // A stats-led ordering, deliberately NOT the all-counter one. Under Task 13's
   // final balance the all-counter lineup (Brutus->Drusus, Aquila->Cassius,
   // Nerva->Magnus) actually loses 1-2, which is the design's golden scenario
@@ -549,7 +564,6 @@ test('plays three bouts, reports a 2–1 win, and rematches the same seed', asyn
   // golden-scenario block for the full six-lineup table.
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('brutus', 1)
     window.__GLADIATOR_TEST__.assign('nerva', 2)
@@ -563,10 +577,47 @@ test('plays three bouts, reports a 2–1 win, and rematches the same seed', asyn
   await expect(page.getByTestId('series-score')).toHaveText('2–1')
   await expect(page.getByTestId('bout-result')).toHaveCount(3)
   await expect(page.getByTestId('bout-result').first()).toContainText('%')
+
+  // Fix round 1 (Task 7 review, Finding 2): this button's intent is still
+  // named `'rematch'` in `SeriesView` (unowned by this task), but `main.ts`'s
+  // `applyIntent` now runs it as season-level `continueSeason` -- clicking it
+  // here does NOT replay series 0's own challenge. It closes series 0 out
+  // (roster wear, its own `SeriesRecord`, the season score) and advances to
+  // series 1's challenge, with a derived seed (`deriveSeriesSeed(seed, 1)`,
+  // distinct from series 0's). Assert that real progression directly through
+  // `getSeasonState()`, not just DOM text that would read the same either way.
   await page.getByTestId('rematch').click()
+  const afterContinue = await page.evaluate(() => window.__GLADIATOR_TEST__.getSeasonState())
+  expect(afterContinue.phase).toBe('season-board') // mid-season: two more series to play, no `SeasonView` to show it on yet (Task 8)
+  expect(afterContinue.seriesIndex).toBe(1)
+  expect(afterContinue.records).toHaveLength(1)
+  expect(afterContinue.records[0].score).toEqual({ home: 2, away: 1 })
+  // The condition ladder actually moved for the three gladiators who fought:
+  // every `lastDeltas` entry differs from a same-fighter untouched roster
+  // would, and specifically the three who fought are no longer `fresh`.
+  expect(afterContinue.lastDeltas.length).toBeGreaterThan(0)
+  const conditionById = Object.fromEntries(afterContinue.roster.map((entry) => [entry.fighter.id, entry.condition]))
+  expect(conditionById.aquila).not.toBe('fresh')
+  expect(conditionById.brutus).not.toBe('fresh')
+  expect(conditionById.nerva).not.toBe('fresh')
+
+  // No `SeasonView` (Task 8) exists to show the board or a "start next
+  // series" control yet, so nothing renders after the click above until this
+  // -- the same call every other setup block in this file gets for free at
+  // boot (see the file-header comment), needed here because this is the one
+  // point in the file that deliberately drives the season past its first
+  // series.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeFocused()
   await expect(page.getByTestId('confirm-lineup')).toBeDisabled()
+  // The season keeps its own seed across series -- `resolveSeasonSeed` only
+  // ever writes the URL once, at boot, so this is true on every code path,
+  // not evidence specific to this one. `getActiveSeriesState()`'s own
+  // (derived) `seed` is the real per-series proof the new series is not a
+  // literal replay of series 0's bouts.
   expect(new URL(page.url()).searchParams.get('seed')).toBe('20260815')
+  const series1Seed = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()!.seed)
+  expect(series1Seed).not.toBe(20260815)
 })
 
 // ---------------------------------------------------------------------------
@@ -583,7 +634,6 @@ test('plays three bouts, reports a 2–1 win, and rematches the same seed', asyn
 test('flushes the series-ending bout\'s final event batch to audio instead of dropping it', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('brutus', 1)
     window.__GLADIATOR_TEST__.assign('nerva', 2)
@@ -628,7 +678,6 @@ test('reports school defeat in the summary heading for a losing lineup', async (
   // series.test.ts's golden-scenario block for the full six-lineup table.
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('nerva', 0)
     window.__GLADIATOR_TEST__.assign('aquila', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -644,7 +693,6 @@ test('reports school defeat in the summary heading for a losing lineup', async (
 
 test('supports keyboard planning and deterministic focus', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
-  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   const aquila = page.getByTestId('fighter-aquila')
   await aquila.focus()
   await page.keyboard.press('Enter')
@@ -670,7 +718,6 @@ test('normalizes an invalid URL seed', async ({ page }) => {
 test('changes speed without advancing while paused', async ({ page }) => {
   await page.goto('/?seed=20260815')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -690,7 +737,6 @@ test('changes speed without advancing while paused', async ({ page }) => {
 test('shows both interstitials with result and next matchup context', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
-    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -713,7 +759,6 @@ test('shows both interstitials with result and next matchup context', async ({ p
 test('matches the stable planning snapshot', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 820 })
   await page.goto('/?seed=20260815&snapshot')
-  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
   await expect(page.locator('canvas')).toBeHidden()
   // Expected to fail here (Task 7 brief, Step 5): the season roster now
@@ -729,7 +774,6 @@ test('matches the stable planning snapshot', async ({ page }) => {
 
 test('turns sound on by default after a real lineup-confirm click, and Sound off mutes without affecting the series', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
-  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   for (const [fighterId, boutIndex] of [['aquila', 0], ['nerva', 1], ['brutus', 2]] as const) {
     await page.getByTestId(`fighter-${fighterId}`).click()
     await page.getByTestId(`slot-${boutIndex}`).click()

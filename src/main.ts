@@ -120,12 +120,16 @@ const combatAudio = new CombatAudio(createBrowserAudioBackend())
  * The season is the runtime's real unit of state (Task 7): the app lives a
  * whole three-series season, not a single standalone series. `season-board`
  * and `season-summary` are the two phases `SeasonView` (Task 8) will own --
- * that screen does not exist yet, so `autoAdvanceSeason` (below) skips past
- * both automatically the instant they are reached, the same way a player
- * would use it once it exists but without ever pausing on it. Every existing
- * series-level fixture, and every real player until Task 8 lands, therefore
- * only ever observes `season.phase === 'series'`, exactly like the
- * standalone-series app this replaces.
+ * that screen does not exist yet, so this initial assignment runs the season
+ * through `autoAdvanceSeason` (below) exactly once, at boot, to open series
+ * 0's planning screen immediately: a production build ships with zero dev
+ * API, so nothing else could ever get a fresh season off `season-board`.
+ * This is one of only two places `autoAdvanceSeason` runs (fix round 1
+ * narrowed it from every season-changing command down to just this and the
+ * end-of-season case in `continueSeason`'s own handling) -- see that
+ * function's doc comment for why `season.phase` is genuinely observable as
+ * `'season-board'` again later, mid-session, and is not something every
+ * caller can assume away.
  */
 let season: SeasonState = autoAdvanceSeason(
   createSeason({ seed, roster: SEASON_ROSTER, challenges: SEASON_CHALLENGES, combatStyles: COMBAT_STYLES }),
@@ -230,23 +234,75 @@ let nextFootstepId = 0
 /**
  * Task 7 bridge: `SeasonView` (Task 8) has not been built yet, so
  * `season-board` (before a series) and `season-summary` (after the third)
- * have no screen of their own. Until it lands, every state transition is
- * routed through here, which skips straight past both -- opening the next
- * series the instant the board is reached, and restarting the whole season
- * the instant it is complete -- so `season.activeSeries` is always populated
- * by the time anything renders. This is what lets today's `SeriesView` stay
- * the entire visible app for now: it never has to know season-level phases
- * exist. Bounded to a handful of iterations as a defensive guard, not
- * because the state machine can actually cycle -- `startNextSeries` always
- * lands on `series` and `rematchSeason` always lands on `season-board`, so
- * two iterations is the real worst case (summary -> board -> series).
+ * have no screen of their own. This walks a state past both, straight
+ * through to `series`, using the same season commands a real board/summary
+ * screen would eventually call from a button click.
+ *
+ * Fix round 1 narrowed *where this runs* to exactly two call sites, not
+ * every season-changing command:
+ *   - the initial `season` assignment above, so a production build with no
+ *     dev API still boots into series 0's planning screen;
+ *   - `continueSeason`'s own result, and only when it lands on
+ *     `season-summary` (`bridgeAfterContinueSeason`, below) -- otherwise a
+ *     player finishing the whole season would be looking at a screen with
+ *     no controls at all, forever, since nothing in today's UI can reach
+ *     `rematchSeason`/`startNextSeries` on its own.
+ *
+ * It is deliberately NOT applied when `continueSeason` lands mid-season on
+ * `season-board` (more series left to play): `season.activeSeries` is
+ * genuinely `null` there until an explicit `startNextSeries()` call, exactly
+ * the gap Task 8's real "start next series" control is meant to close --
+ * see `guardActiveSeries` below for what stops that gap from becoming an
+ * uncaught exception in the meantime, and `smoke.spec.ts`'s "...then
+ * continues into the next series" test for what it looks like from a
+ * caller's side.
  */
 function autoAdvanceSeason(state: SeasonState): SeasonState {
   let next = state
   for (let guard = 0; guard < 8 && (next.phase === 'season-board' || next.phase === 'season-summary'); guard += 1) {
     next = next.phase === 'season-board' ? startNextSeries(next).state : rematchSeason(next).state
   }
+  if (import.meta.env.DEV && (next.phase === 'season-board' || next.phase === 'season-summary')) {
+    // The state machine cannot actually loop here (`startNextSeries` always
+    // lands on `series`, `rematchSeason` always lands on `season-board`, so
+    // the real worst case is 2 iterations: summary -> board -> series) --
+    // this only fires if that invariant itself breaks, in which case the app
+    // would otherwise silently render nothing with no clue why.
+    console.error('[gladiator] season auto-advance did not settle after 8 iterations', next.phase)
+  }
   return next
+}
+
+/** Applies `continueSeason`'s result the same way from both call sites that
+ * reach it (`applyIntent`'s `'rematch'` case and the dev API's
+ * `continueSeason()` wrapper): bridge past `season-board`/`season-summary`
+ * only when it closes the WHOLE season. See `autoAdvanceSeason`'s doc
+ * comment for why the ordinary mid-season case is deliberately left alone
+ * rather than silently bridged too. */
+function bridgeAfterContinueSeason(state: SeasonState): SeasonState {
+  return state.phase === 'season-summary' ? autoAdvanceSeason(state) : state
+}
+
+/**
+ * `assignFighter`/`unassignSlot`/`confirmLineup`/`startNextBout` (season.ts)
+ * all delegate to the active series and throw `Error('No active series')` if
+ * there isn't one (`requireActiveSeries`, season.ts) -- reasonable from
+ * season.ts's own side (a real season-board screen should never expose a
+ * control that could reach them without one), but this task's dev API and
+ * `applyIntent` call them directly. Since fix round 1 narrowed
+ * `autoAdvanceSeason` (above), `season.activeSeries` genuinely can be `null`
+ * when one of these is called -- not just theoretically, once Task 8 removes
+ * the bridge entirely, but reachable today, right after a mid-season
+ * `continueSeason` and before the following `startNextSeries()`. Turns that
+ * would-be exception into an ordinary `{ ok: false }`, matching every other
+ * precondition failure these commands can already return.
+ * `'no-series-pending'` is the closest existing `SeasonCommandFailure` value
+ * (`season.ts` is not this task's file to extend) -- it originally names
+ * `startNextSeries`'s own opposite precondition failure, but reads the same
+ * from here: there is no series to act on right now.
+ */
+function guardActiveSeries(apply: () => SeasonCommandResult): SeasonCommandResult {
+  return season.activeSeries ? apply() : { ok: false, state: season, reason: 'no-series-pending' }
 }
 
 /**
@@ -320,8 +376,8 @@ function currentAlpha(): number {
 function applyIntent(intent: SeriesIntent): void {
   const previousBattle = season.activeSeries?.activeBattle
   switch (intent.type) {
-    case 'assign': season = autoAdvanceSeason(assignFighter(season, intent.fighterId, intent.boutIndex).state); break
-    case 'unassign': season = autoAdvanceSeason(unassignSlot(season, intent.boutIndex).state); break
+    case 'assign': season = guardActiveSeries(() => assignFighter(season, intent.fighterId, intent.boutIndex)).state; break
+    case 'unassign': season = guardActiveSeries(() => unassignSlot(season, intent.boutIndex)).state; break
     case 'confirm': {
       // Gesture lifecycle (brief resolution #5): `enableAfterGesture` is
       // fired synchronously, without `await`, as the very first statement
@@ -334,19 +390,24 @@ function applyIntent(intent: SeriesIntent): void {
       // Sound on/off control; the synchronous season command below runs
       // immediately regardless of whether audio ends up enabled.
       void combatAudio.enableAfterGesture().then(refreshAudioUi).catch(refreshAudioUi)
-      season = autoAdvanceSeason(confirmLineup(season).state)
+      season = guardActiveSeries(() => confirmLineup(season)).state
       break
     }
-    case 'start-next': season = autoAdvanceSeason(startNextBout(season).state); break
+    case 'start-next': season = guardActiveSeries(() => startNextBout(season)).state; break
     case 'rematch': {
       // The series-summary screen's own "Rematch" button (`SeriesView`,
       // unowned by this task) still reads exactly as it always has, but its
       // season-level equivalent is `continueSeason` -- close out the series
       // that just finished (roster wear, the record, the score) and move on.
-      // `autoAdvanceSeason` immediately opens the next series (or, after the
-      // third, restarts the whole season) since `SeasonView` does not exist
-      // yet to let a player pause on the board in between.
-      season = autoAdvanceSeason(continueSeason(season).state)
+      // `bridgeAfterContinueSeason` only opens the next series automatically
+      // when this closes the WHOLE season (no `SeasonView` yet to show
+      // `season-summary` on); mid-season it leaves `season.activeSeries`
+      // `null` on purpose -- see that function's doc comment. A real player
+      // reaching this mid-season today sees a blank screen until Task 8
+      // ships a "start next series" control; every current fixture that
+      // needs to continue past that point calls the dev API's
+      // `startNextSeries()` explicitly, the same thing that control will do.
+      season = bridgeAfterContinueSeason(continueSeason(season).state)
       break
     }
     case 'toggle-pause': runtime.paused = !runtime.paused; break
@@ -375,15 +436,17 @@ function refreshAudioUi(): void {
 }
 
 /** Applies a season command's result, exactly the way `applyIntent` applies
- * a UI intent: writes `season` back (through `autoAdvanceSeason`, so a
- * command that closes out the season or a series never leaves `activeSeries`
- * emptied out with nothing to show), resets the render frame on any
+ * a UI intent: writes `season` back, resets the render frame on any
  * `activeBattle` reference change, and re-renders. Every dev test API
  * command below is a thin wrapper around this, matching `applyCommand`'s
- * shape from before the season layer existed. */
+ * shape from before the season layer existed -- `result.state` is written
+ * back as-is, with no `autoAdvanceSeason` bridging (fix round 1 narrowed
+ * that to only two call sites, neither of which is this generic wrapper;
+ * `continueSeason()`'s own dev API entry below applies
+ * `bridgeAfterContinueSeason` itself before calling this). */
 function applySeasonCommand(result: SeasonCommandResult): TestCommandResult {
   const previousBattle = season.activeSeries?.activeBattle
-  season = autoAdvanceSeason(result.state)
+  season = result.state
   if (season.activeSeries?.activeBattle !== previousBattle) resetRenderFrame(season.activeSeries?.activeBattle)
   renderDom()
   return result.ok ? { ok: true } : { ok: false, reason: result.reason }
@@ -563,17 +626,24 @@ if (import.meta.env.DEV) {
     getSeasonState: () => structuredClone(season),
     getActiveSeriesState: () => (season.activeSeries ? structuredClone(season.activeSeries) : null),
     startNextSeries: () => applySeasonCommand(startNextSeries(season)),
-    continueSeason: () => applySeasonCommand(continueSeason(season)),
+    // The only other call site (besides `applyIntent`'s `'rematch'` case)
+    // that needs `bridgeAfterContinueSeason` -- see its doc comment. The
+    // result's own `ok`/`reason` are forwarded unchanged; only `state` is
+    // replaced with the (possibly further-advanced) bridged one.
+    continueSeason: () => {
+      const result = continueSeason(season)
+      return applySeasonCommand({ ...result, state: bridgeAfterContinueSeason(result.state) })
+    },
     rematchSeason: () => applySeasonCommand(rematchSeason(season)),
-    assign: (homeFighterId, boutIndex) => applySeasonCommand(assignFighter(season, homeFighterId, boutIndex)),
-    unassign: (boutIndex) => applySeasonCommand(unassignSlot(season, boutIndex)),
-    confirm: () => applySeasonCommand(confirmLineup(season)),
+    assign: (homeFighterId, boutIndex) => applySeasonCommand(guardActiveSeries(() => assignFighter(season, homeFighterId, boutIndex))),
+    unassign: (boutIndex) => applySeasonCommand(guardActiveSeries(() => unassignSlot(season, boutIndex))),
+    confirm: () => applySeasonCommand(guardActiveSeries(() => confirmLineup(season))),
     advanceTicks: (ticks) => {
       if (!Number.isInteger(ticks) || ticks < 0) throw new Error('Tick count must be a non-negative integer')
       for (let step = 0; step < ticks; step += 1) stepBattleTick()
       renderDom()
     },
-    startNextBout: () => applySeasonCommand(startNextBout(season)),
+    startNextBout: () => applySeasonCommand(guardActiveSeries(() => startNextBout(season))),
     getActiveBattleTraceHash: () => (renderFrame ? formatTraceHash(renderFrame.current.traceHash) : null),
     getActiveCombatantPositions: () => {
       if (!renderFrame) return {}

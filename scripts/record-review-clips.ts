@@ -111,7 +111,6 @@ function parseArgs(argv: readonly string[]): Args {
 // here), and a second global merge would clash with the real one anyway.
 interface TestApi {
   getActiveSeriesState: () => { phase: string; activeBoutIndex: number | null; activeBattle?: { events: readonly unknown[]; encounter: { tick: number } } } | null
-  startNextSeries: () => void
   assign: (fighterId: string, slot: number) => void
   confirm: () => void
   advanceTicks: (ticks: number) => void
@@ -123,12 +122,13 @@ async function openSeries(context: BrowserContext, seed: number, lineup: readonl
   await page.goto(`http://127.0.0.1:${PORT}/?seed=${seed}`)
   await page.waitForFunction(() => Boolean((window as unknown as { __GLADIATOR_TEST__?: unknown }).__GLADIATOR_TEST__))
   if (hideHud) await page.addStyleTag({ content: HIDE_HUD_CSS })
+  // No `api.startNextSeries()` call here (fix round 1, Task 7 review): the
+  // season (Task 7) auto-opens series 0 on boot -- `main.ts` runs it through
+  // `autoAdvanceSeason` once at module init -- so `season.phase` is already
+  // `'series'` by the time this page finishes loading, and the call would
+  // always fail `no-series-pending` and be discarded.
   await page.evaluate((assignments) => {
     const api = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
-    // The season (Task 7) auto-opens series 0 for us on boot -- see
-    // `main.ts`'s `autoAdvanceSeason` -- so this is a defensive no-op in the
-    // common case, but keeps this script correct if that ever changes.
-    api.startNextSeries()
     assignments.forEach((fighterId, slot) => api.assign(fighterId, slot))
     api.confirm()
   }, [...lineup])
@@ -339,8 +339,9 @@ The e2e suite's own discipline works by hand too:
   it to. Combined with the dev-only test API this pins an exact frame:
 
 \`\`\`js
-// in the dev console, on a ?seed=${args.seed}&snapshot page
-__GLADIATOR_TEST__.startNextSeries()          // no-op if the season already opened one
+// in the dev console, on a ?seed=${args.seed}&snapshot page -- series 0 is
+// already open (the season opens it automatically on boot), so no
+// __GLADIATOR_TEST__.startNextSeries() call is needed here
 __GLADIATOR_TEST__.assign('brutus', 0)
 __GLADIATOR_TEST__.assign('aquila', 1)
 __GLADIATOR_TEST__.assign('nerva', 2)

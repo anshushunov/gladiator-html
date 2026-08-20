@@ -25,6 +25,18 @@ test('shows the decision panel only when asked for, actually within the viewport
   expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height)
 })
 
+/**
+ * Shared by every test below, in two different situations: right after
+ * `page.goto` (series 0 is already active then -- `main.ts` runs the season
+ * through `autoAdvanceSeason` once at module init -- so `startNextSeries()`
+ * fails `no-series-pending` harmlessly and is a no-op), and once, in
+ * `'clears decisions on rematch...'` below, right after a mid-season
+ * `continueSeason()` -- which genuinely does leave `season.activeSeries`
+ * `null` (see `main.ts`'s `bridgeAfterContinueSeason` doc comment), where
+ * this same call is what actually opens the next series. Kept unconditional
+ * here, rather than split into a no-op and a required variant, because this
+ * one helper has to stay correct in both call sites.
+ */
 async function assignAndConfirm(page: import('@playwright/test').Page) {
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
@@ -153,8 +165,9 @@ test('clears decisions on rematch, with no leak into the next bout', async ({ pa
   await page.goto('/?seed=20260815&snapshot&debugDecisions=1')
   await assignAndConfirm(page)
 
-  // Play out all three bouts of the series so `rematch()` (which only
-  // applies from the series' `summary` phase) is actually callable.
+  // Play out all three bouts of the series so `continueSeason()` (which only
+  // applies once the active series has reached its own `summary` phase) is
+  // actually callable.
   for (let bout = 0; bout < 3; bout += 1) {
     await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
     if (bout < 2) await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
@@ -166,8 +179,12 @@ test('clears decisions on rematch, with no leak into the next bout', async ({ pa
   expect(boutThreeCount).toBeGreaterThan(0)
 
   // `rematch()` is gone -- `continueSeason()` closes out the series that just
-  // finished, and `main.ts`'s `autoAdvanceSeason` immediately opens the next
-  // one (no `SeasonView` exists yet to pause on in between).
+  // finished (roster wear, its own `SeriesRecord`, the season score). Mid-
+  // season (only one of three series played), `main.ts`'s
+  // `bridgeAfterContinueSeason` deliberately does NOT auto-open the next one
+  // -- `season.activeSeries` is genuinely `null` here, and stays that way
+  // until the `assignAndConfirm(page)` call below's own `startNextSeries()`
+  // opens it (see that helper's own doc comment).
   await page.evaluate(() => window.__GLADIATOR_TEST__.continueSeason())
   await expect(rows).toHaveCount(0)
   await expect(page.getByTestId('decision-panel-skipped-count')).toHaveText('')
