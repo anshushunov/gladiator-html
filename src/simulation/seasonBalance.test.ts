@@ -14,9 +14,9 @@
 // `balance.test.ts` runs, over the same 200 consecutive seeds beginning at
 // 20260815.
 //
-// Every cohort is measured ONCE in `beforeAll` and read by all four
-// statistical blocks below, because the five criteria overlap heavily: the
-// challenge-1 fresh cohort alone is the input to criteria 1, 2, 3 and 4.
+// Every cohort is measured ONCE in the first suite's `beforeAll` and read by
+// all four statistical blocks in it, because the five criteria overlap heavily:
+// the challenge-1 fresh cohort alone is the input to criteria 1, 2, 3 and 4.
 // Re-measuring per block would quadruple a 9000-bout run for nothing.
 //
 //   fresh   x challenge 1  -- 5 gladiators x 3 opponents x 200 seeds
@@ -24,7 +24,9 @@
 //   wounded x challenge 1  -- 5 gladiators x 3 opponents x 200 seeds
 //
 // The fifth criterion, the golden season, runs no cohort at all: it is one
-// seeded season played through three named lineups.
+// seeded season played through three named lineups, nine bouts in total. That
+// is why the `beforeAll` is scoped to the cohort suite rather than to the file
+// -- `vitest -t 'golden season'` then costs a second rather than nine minutes.
 // ===========================================================================
 
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -32,7 +34,7 @@ import { COMBAT_STYLES } from '../content/combatStyles'
 import { BASELINE_TEST_SEED } from '../content/mvpSeries'
 import { SEASON_CHALLENGES, SEASON_ROSTER } from '../content/season'
 import { cohort, measure, pct, reportTable } from '../testSupport/balanceCohorts'
-import { startingHpFor, type FighterCondition } from './condition'
+import { isFightable, startingHpFor, type FighterCondition } from './condition'
 import type { Archetype, FighterDefinition } from './fighters'
 import {
   advanceSeasonTicks, assignFighter, confirmLineup, continueSeason, createSeason,
@@ -84,22 +86,6 @@ const aggregate = (condition: CohortCondition, challengeIndex: number, fighterId
   SEASON_CHALLENGES[challengeIndex].opponents.reduce((sum, opponent) => sum + rate(condition, challengeIndex, fighterId, opponent.id), 0) /
   SEASON_CHALLENGES[challengeIndex].opponents.length
 
-beforeAll(async () => {
-  for (const { condition, challengeIndex } of COHORTS) {
-    for (const fighter of SEASON_ROSTER) {
-      // `fresh` deliberately passes no override at all rather than
-      // `startingHpFor('fresh', maxHp)`: that is the same number, and leaving
-      // the key absent keeps this cohort bit-identical to the one
-      // `balance.test.ts` runs for the same pairing.
-      const startingHp = condition === 'wounded' ? { home: startingHpFor('wounded', fighter.maxHp) } : undefined
-      for (const opponent of SEASON_CHALLENGES[challengeIndex].opponents) {
-        const outcomes = await cohort(fighter, opponent, SEED_COUNT, startingHp)
-        winRates.set(cohortKey(condition, challengeIndex, fighter.id, opponent.id), measure(outcomes).homeWinRate)
-      }
-    }
-  }
-}, COHORT_TIMEOUT_MS)
-
 /** One row per gladiator for a given cohort, used only on a failure path. */
 function cohortTable(condition: CohortCondition, challengeIndex: number): string[][] {
   const opponents = SEASON_CHALLENGES[challengeIndex].opponents
@@ -118,6 +104,24 @@ function cohortTable(condition: CohortCondition, challengeIndex: number): string
 // ---------------------------------------------------------------------------
 
 describe('season roster balance cohorts (five gladiators x three challenges x 200 consecutive seeds from 20260815)', () => {
+  // Scoped to this suite rather than the file, so the golden season below --
+  // which needs no cohort at all -- can be run on its own in under a second.
+  beforeAll(async () => {
+    for (const { condition, challengeIndex } of COHORTS) {
+      for (const fighter of SEASON_ROSTER) {
+        // `fresh` deliberately passes no override at all rather than
+        // `startingHpFor('fresh', maxHp)`: that is the same number, and leaving
+        // the key absent keeps this cohort bit-identical to the one
+        // `balance.test.ts` runs for the same pairing.
+        const startingHp = condition === 'wounded' ? { home: startingHpFor('wounded', fighter.maxHp) } : undefined
+        for (const opponent of SEASON_CHALLENGES[challengeIndex].opponents) {
+          const outcomes = await cohort(fighter, opponent, SEED_COUNT, startingHp)
+          winRates.set(cohortKey(condition, challengeIndex, fighter.id, opponent.id), measure(outcomes).homeWinRate)
+        }
+      }
+    }
+  }, COHORT_TIMEOUT_MS)
+
   it('keeps every bench specialist inside the same 15..85% band against the three unscaled opponents', () => {
     const failures: string[] = []
     for (const specialist of BENCH) {
@@ -299,36 +303,11 @@ function playSeries(start: SeasonState, lineup: readonly [string, string, string
   return state
 }
 
-const conditionOf = (state: SeasonState, fighterId: string): FighterCondition =>
-  (state.roster.find((entry) => entry.fighter.id === fighterId) ?? (() => { throw new Error(`Unknown gladiator: ${fighterId}`) })()).condition
-
-/**
- * The three-slot lineup a player would field against `challengeIndex` if the
- * whole roster were fresh, chosen by maximising the summed measured win rate
- * over every assignment of three distinct gladiators to the three slots. This
- * is what makes "the best fresh-roster lineup is unavailable" a proof rather
- * than an assertion about a lineup someone picked by eye.
- */
-function bestFreshLineup(challengeIndex: number): string[] {
-  const opponents = SEASON_CHALLENGES[challengeIndex].opponents
-  let best: { lineup: string[]; total: number } | null = null
-  for (const first of SEASON_ROSTER) {
-    for (const second of SEASON_ROSTER) {
-      if (second.id === first.id) continue
-      for (const third of SEASON_ROSTER) {
-        if (third.id === first.id || third.id === second.id) continue
-        const lineup = [first.id, second.id, third.id]
-        const total = lineup.reduce((sum, fighterId, slot) => sum + rate('fresh', challengeIndex, fighterId, opponents[slot].id), 0)
-        if (best === null || total > best.total) best = { lineup, total }
-      }
-    }
-  }
-  if (best === null) throw new Error('No lineup could be formed')
-  return best.lineup
-}
+/** Nine bouts, no cohort: generous only so a slow CI machine cannot flake it. */
+const GOLDEN_TIMEOUT_MS = 120_000
 
 describe('golden season (seed 20260815, three named lineups)', () => {
-  it('produces the asserted condition-delta sequence and reaches challenge 3 unable to field the best fresh lineup', () => {
+  it('produces the asserted trace and reaches challenges 2 and 3 unable to field a fresh lineup', () => {
     let state = createSeason({ seed: BASELINE_TEST_SEED, roster: SEASON_ROSTER, challenges: SEASON_CHALLENGES, combatStyles: COMBAT_STYLES })
     const boards: SeasonState[] = []
 
@@ -342,21 +321,27 @@ describe('golden season (seed 20260815, three named lineups)', () => {
     expect(state.score).toEqual(GOLDEN_SCORE)
     expect(state.records.map((record) => formatDeltas(record.deltas))).toEqual(GOLDEN_DELTAS.map((deltas) => [...deltas]))
 
-    // The tension quality, asserted rather than hoped for. Both later boards
-    // are checked, and each is checked twice: the roster can no longer field
-    // three `fresh` gladiators at all, and the specific lineup that the
-    // measured cohorts say is optimal against that challenge contains at least
-    // one gladiator who is no longer fresh.
+    // The tension quality, asserted rather than hoped for: a series is three
+    // slots, so a board with fewer than three `fresh` gladiators cannot field an
+    // all-fresh lineup at all -- not the best one, not any one. Both later
+    // boards are checked.
+    //
+    // An earlier version also searched the measured cohorts for the optimal
+    // all-fresh lineup and asserted that it contained a worn gladiator. That
+    // was tautological: once fewer than three are fresh, EVERY set of three
+    // distinct gladiators contains a worn one, so the search could not fail. It
+    // is gone, and with it this block's only reason to wait on the cohorts.
     for (const seriesIndex of [1, 2]) {
       const board = boards[seriesIndex]
       expect(board.phase).toBe('season-board')
-      const fresh = board.roster.filter((entry) => entry.condition === 'fresh')
-      expect(fresh.length).toBeLessThan(3)
+      expect(board.roster.filter((entry) => entry.condition === 'fresh').length).toBeLessThan(3)
     }
 
-    const beforeChallenge3 = boards[2]
-    const optimal = bestFreshLineup(CHALLENGE_3)
-    const worn = optimal.filter((fighterId) => conditionOf(beforeChallenge3, fighterId) !== 'fresh')
-    expect(worn.length).toBeGreaterThan(0)
-  }, COHORT_TIMEOUT_MS)
+    // Strictly more than the above, and not implied by it: by challenge 3 the
+    // school is short-handed, not merely worn -- a gladiator is `broken` and
+    // cannot be fielded at any HP. `startNextSeries` drops him from the series
+    // roster entirely, so the player picks three from four.
+    const unfightable = boards[2].roster.filter((entry) => !isFightable(entry.condition))
+    expect(unfightable.map((entry) => entry.fighter.id)).toEqual(['brutus'])
+  }, GOLDEN_TIMEOUT_MS)
 })
