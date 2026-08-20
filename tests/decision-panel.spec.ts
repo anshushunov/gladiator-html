@@ -27,15 +27,14 @@ test('shows the decision panel only when asked for, actually within the viewport
 
 /**
  * Shared by every test below, in two different situations: right after
- * `page.goto` (series 0 is already active then -- `main.ts` runs the season
- * through `autoAdvanceSeason` once at module init -- so `startNextSeries()`
- * fails `no-series-pending` harmlessly and is a no-op), and once, in
- * `'clears decisions on rematch...'` below, right after a mid-season
- * `continueSeason()` -- which genuinely does leave `season.activeSeries`
- * `null` (see `main.ts`'s `bridgeAfterContinueSeason` doc comment), where
- * this same call is what actually opens the next series. Kept unconditional
- * here, rather than split into a no-op and a required variant, because this
- * one helper has to stay correct in both call sites.
+ * `page.goto` (the app boots onto the season board -- Task 8 removed the old
+ * auto-advance bridge -- so this `startNextSeries()` is what actually opens
+ * series 0's planning screen), and once, in `'clears decisions on
+ * rematch...'` below, right after a mid-season `continueSeason()` -- which
+ * leaves `season.activeSeries` `null` on the season board again, where this
+ * same call is what opens the next series. Kept unconditional here, rather
+ * than split into two variants, because this one helper has to stay correct
+ * in both call sites.
  */
 async function assignAndConfirm(page: import('@playwright/test').Page) {
   await page.evaluate(() => {
