@@ -25,8 +25,23 @@ const ARCHETYPE_LABELS: Record<Archetype, string> = { heavy: 'Heavy', fast: 'Fas
 
 type PendingFocus = { mode: 'after-assign' } | { mode: 'after-unassign'; fighterId: string }
 
-function isLineupComplete(state: SeriesState): boolean {
-  return state.assignments.every((slot) => slot !== null)
+function assignedCount(state: SeriesState): number {
+  return state.assignments.filter((slot) => slot !== null).length
+}
+
+/**
+ * Whether the lineup can be confirmed -- measured against
+ * `requiredAssignmentCount` (`min(3, fightable roster size)`, series.ts), the
+ * exact predicate `confirmLineup` itself enforces, NOT "all three slots
+ * filled". `assignFighter` moves a gladiator between slots rather than
+ * cloning them, so a short-handed series (fewer than three fightable
+ * gladiators, the forfeit case) can never fill all three: reading
+ * completeness as "every slot occupied" left the confirm button permanently
+ * disabled there and the season unfinishable in a production build, where
+ * the dev command API does not exist.
+ */
+function isLineupReady(state: SeriesState): boolean {
+  return assignedCount(state) === requiredAssignmentCount(state)
 }
 
 /** Task 3 turned `assignments` entries from a bare fighter id into a
@@ -240,7 +255,7 @@ export class SeriesView {
     }
     if (state.phase !== 'planning' || this.pendingFocus === null) return
     if (this.pendingFocus.mode === 'after-assign') {
-      if (isLineupComplete(state)) {
+      if (isLineupReady(state)) {
         this.shell.querySelector<HTMLElement>('[data-testid="confirm-lineup"]')?.focus()
       } else {
         const firstUnassigned = state.homeRoster.find(({ id }) => !state.assignments.some((slot) => slotFighterId(slot) === id))
@@ -303,7 +318,7 @@ export class SeriesView {
       matchups.append(this.buildMatchupSlot(state, index as BoutIndex))
     }
     const confirm = el('button', { class: 'button button--primary planning__confirm', type: 'button', 'data-action': 'confirm', 'data-testid': 'confirm-lineup' }, 'Confirm lineup')
-    confirm.disabled = !isLineupComplete(state)
+    confirm.disabled = !isLineupReady(state)
     section.append(heading, instruction, counterRule, roster, matchups, confirm)
     // The season only ever hands the planning screen its fightable
     // gladiators (`SeriesState.homeRoster`) -- a broken one is simply absent
@@ -439,10 +454,13 @@ export class SeriesView {
         ? `${name} selected. Choose a bout slot, or press Escape to clear.`
         : `${name} is assigned to bout ${BOUT_NUMERALS[assignedIndex]}. Choose a different slot to move them, or press Escape to clear.`
     }
-    const assignedCount = state.assignments.filter((slot) => slot !== null).length
-    return assignedCount === 0
+    const assigned = assignedCount(state)
+    // `requiredAssignmentCount`, not a literal 3: a short-handed series needs
+    // fewer assignments (the rest are forfeited), and "2 of 3" there would
+    // describe a lineup the player is never allowed to reach.
+    return assigned === 0
       ? 'Select a gladiator, then choose one of the three bout slots.'
-      : `${assignedCount} of 3 matchups assigned. Select a gladiator, then choose a bout slot.`
+      : `${assigned} of ${requiredAssignmentCount(state)} matchups assigned. Select a gladiator, then choose a bout slot.`
   }
 
   private buildInterstitial(state: SeriesState): HTMLElement {

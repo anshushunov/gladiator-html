@@ -147,7 +147,7 @@ test('plays a full three-series season through the real dev command surface, end
   await expect(page.getByTestId('rematch-season')).toBeVisible()
 })
 
-test('keeps a gladiator driven to broken off the roster, and the planning screen says why', async ({ page }) => {
+test('keeps a gladiator driven to broken off the roster, says why on the planning screen, and still lets the player confirm the short lineup', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await breakTheThreeVeterans(page)
 
@@ -199,6 +199,42 @@ test('keeps a gladiator driven to broken off the roster, and the planning screen
   await expect(forfeitNotice).toBeVisible()
   await expect(forfeitNotice).toContainText('2 gladiators are fit to fight')
   await expect(forfeitNotice).toContainText('1 slot will be forfeited')
+
+  // ...and the player can actually act on that notice. Everything above this
+  // point, and the forfeit test below it, reaches `confirm` through the dev
+  // API (`page.evaluate`), which bypasses the DOM entirely -- so the whole
+  // forfeit machinery was reachable in tests while a real player, and every
+  // production build (no dev API at all), was stuck on this screen forever:
+  // the confirm button was disabled unless all THREE slots were filled, and
+  // `assignFighter` moves a gladiator between slots rather than cloning them,
+  // so two fightable gladiators can never fill three. That made acceptance
+  // criterion 6 unreachable outside `window.__GLADIATOR_TEST__`. Clicks only
+  // from here down, exactly like `smoke.spec.ts`'s production-preview tests.
+  const confirm = page.getByTestId('confirm-lineup')
+  await expect(confirm).toBeDisabled()
+  await page.getByTestId('fighter-vitus').click()
+  await page.getByTestId('slot-0').click()
+  // Still short one assignment: the button tracks `requiredAssignmentCount`
+  // (`min(3, fightable)` = 2 here), it is not simply always enabled.
+  await expect(confirm).toBeDisabled()
+  // The running count is measured against the same number, not a hardcoded
+  // three -- "1 of 3" would describe a lineup this series never lets the
+  // player reach. Select-then-Escape is what forces the re-render that shows
+  // the unselected wording: `SeriesView.handleClick` clears its selection
+  // after dispatching the assign intent, so the render the assignment itself
+  // triggers still shows the selected-fighter sentence.
+  await page.getByTestId('fighter-sura').click()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('#assignment-instruction')).toHaveText('1 of 2 matchups assigned. Select a gladiator, then choose a bout slot.')
+  await page.getByTestId('fighter-sura').click()
+  await page.getByTestId('slot-1').click()
+  await expect(confirm).toBeEnabled()
+
+  await confirm.click()
+  // The series really starts -- the third slot is forfeited, not blocking.
+  await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'fighting')
+  const started = await getActiveSeriesState(page)
+  expect(started!.phase).toBe('fighting')
 })
 
 test('forfeits a slot when fewer than three gladiators are fit to fight, and the season still completes', async ({ page }) => {
