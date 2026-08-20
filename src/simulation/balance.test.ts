@@ -25,111 +25,22 @@
 
 import { describe, expect, it } from 'vitest'
 import { COMBAT_STYLES } from '../content/combatStyles'
-import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
+import { homeRoster, opponents } from '../content/mvpSeries'
+// The cohort METHOD -- how a bout is run, how a pairing is measured, and which
+// 200/500 consecutive seeds it runs over -- lives in `src/testSupport` so the
+// season cohorts can reuse it without a second test file importing this one
+// (which is how Vitest would end up re-running both cohorts below inside it).
+// The bands and the cohort sizes are still owned here, where they are asserted.
+import {
+  cohort, cohortSeed, measure, pct, reportTable, yieldToEventLoop,
+  type BoutOutcome, type PairingMetrics,
+} from '../testSupport/balanceCohorts'
 import { advanceBattleTick, createBattle, MAX_BOUT_TICKS } from './battle'
 import type { Archetype, FighterDefinition } from './fighters'
 
 const ROSTER_SEED_COUNT = 200
 const STYLE_SEED_COUNT = 500
 const COHORT_TIMEOUT_MS = 600_000
-
-// ---------------------------------------------------------------------------
-// Metrics
-// ---------------------------------------------------------------------------
-
-/**
- * Nearest-rank percentile over an already-sorted ascending sample, matching the
- * brief's authored formula exactly. `fraction` 0.5 is the median.
- */
-function percentile(sorted: readonly number[], fraction: number): number {
-  return sorted[Math.floor((sorted.length - 1) * fraction)]
-}
-
-interface PairingMetrics {
-  homeWinRate: number
-  medianTicks: number
-  p10Ticks: number
-  p95Ticks: number
-  timeoutRate: number
-  resolutionGapP95Ticks: number
-  /** p95 of the opening approach: ticks from the start of the bout to its first local resolution. See `runBout`. */
-  approachP95Ticks: number
-  /** Bouts that never resolved anything at all, so they had no "after initial approach" window to measure. */
-  unresolvedBouts: number
-}
-
-interface BoutOutcome {
-  homeWon: boolean
-  durationTicks: number
-  reachedTickLimit: boolean
-  /** Longest run of ticks with no local resolution, measured after the first one (see `runBout`). */
-  maxResolutionGapTicks: number
-  /** Tick of the bout's first local resolution, or the whole bout's duration if it never had one (see `runBout`). */
-  firstResolutionTick: number
-  /** False when the bout ended without a single resolution -- there was no window to measure, and `firstResolutionTick` above is a floor, not a measurement. */
-  resolved: boolean
-}
-
-/**
- * Runs one complete bout and measures it.
- *
- * The resolution gap is read from the combatants' own `lastResolutionTick`
- * clocks -- simulation state, never wall time -- which the kernel updates for
- * both living participants on every hit, block, parry, evade, geometry miss and
- * accuracy miss. Measurement starts at the FIRST resolution, which is how the
- * design's "at most 300 ticks after initial approach" is read: the opening walk
- * from the duel's 8.4-unit start separation is not a stall.
- *
- * A bout in which nothing ever resolves has no "after initial approach" window
- * at all; it is reported as a gap equal to the whole bout so it can never look
- * better than a bout that merely stalled for a while.
- *
- * The approach the gap metric excludes is measured in its own right and
- * returned as `firstResolutionTick`. design.md bounds the gap "after initial
- * approach" and says nothing about the approach itself, which leaves the one
- * window the pacing check refuses to look at unbounded: a bout that circled
- * for two thousand ticks before its first exchange and then traded cleanly
- * scores exactly as well as one that engaged immediately. `resolved` marks
- * the degenerate case where there was no approach to measure either.
- */
-function runBout(home: FighterDefinition, away: FighterDefinition, seed: number): BoutOutcome {
-  let battle = createBattle({ home, away, seed, combatStyles: COMBAT_STYLES })
-  const ids = [battle.descriptor.homeId, battle.descriptor.awayId]
-  let firstResolutionTick = -1
-  let maxGap = 0
-
-  while (battle.phase === 'running' && battle.encounter.tick < MAX_BOUT_TICKS) {
-    battle = advanceBattleTick(battle)
-    const lastResolution = Math.max(...ids.map((id) => battle.encounter.combatants[id].lastResolutionTick))
-    if (lastResolution > 0 && firstResolutionTick < 0) firstResolutionTick = lastResolution
-    if (firstResolutionTick >= 0) maxGap = Math.max(maxGap, battle.encounter.tick - lastResolution)
-  }
-
-  return {
-    homeWon: battle.winnerSide === 'home',
-    durationTicks: battle.encounter.tick,
-    reachedTickLimit: battle.finishReason === 'time-limit',
-    maxResolutionGapTicks: firstResolutionTick < 0 ? battle.encounter.tick : maxGap,
-    firstResolutionTick: firstResolutionTick < 0 ? battle.encounter.tick : firstResolutionTick,
-    resolved: firstResolutionTick >= 0,
-  }
-}
-
-function measure(outcomes: readonly BoutOutcome[]): PairingMetrics {
-  const durations = outcomes.map((o) => o.durationTicks).sort((a, b) => a - b)
-  const gaps = outcomes.map((o) => o.maxResolutionGapTicks).sort((a, b) => a - b)
-  const approaches = outcomes.map((o) => o.firstResolutionTick).sort((a, b) => a - b)
-  return {
-    homeWinRate: outcomes.filter((o) => o.homeWon).length / outcomes.length,
-    medianTicks: percentile(durations, 0.5),
-    p10Ticks: percentile(durations, 0.1),
-    p95Ticks: percentile(durations, 0.95),
-    timeoutRate: outcomes.filter((o) => o.reachedTickLimit).length / outcomes.length,
-    resolutionGapP95Ticks: percentile(gaps, 0.95),
-    approachP95Ticks: percentile(approaches, 0.95),
-    unresolvedBouts: outcomes.filter((o) => !o.resolved).length,
-  }
-}
 
 /**
  * The band on the opening approach, in ticks.
@@ -148,44 +59,6 @@ function measure(outcomes: readonly BoutOutcome[]): PairingMetrics {
  * distribution.
  */
 const APPROACH_P95_LIMIT_TICKS = 2 * 300
-
-/** `seedIndex` 0..n-1 maps to 200 (or 500) CONSECUTIVE seeds beginning at the design's fixed 20260815. */
-const cohortSeed = (seedIndex: number): number => BASELINE_TEST_SEED + seedIndex
-
-/**
- * How many bouts to simulate between yields to the event loop.
- *
- * These cohorts are thousands of bouts of synchronous simulation. Run as one
- * uninterrupted block they starve the Vitest worker's RPC heartbeat, which
- * reports `Timeout calling "onTaskUpdate"` as an unhandled error and makes
- * `npm test` exit non-zero even though every assertion passed -- a suite that
- * is green but failing is worse than one that is simply red. Yielding
- * periodically keeps the worker responsive and progress reporting alive. It
- * does not touch determinism: the bouts themselves are pure and are still run
- * in a fixed order over a fixed seed range.
- */
-const BOUTS_PER_YIELD = 25
-
-const yieldToEventLoop = () => new Promise<void>((resolve) => { setTimeout(resolve, 0) })
-
-async function cohort(home: FighterDefinition, away: FighterDefinition, seedCount: number): Promise<BoutOutcome[]> {
-  const outcomes: BoutOutcome[] = []
-  for (let index = 0; index < seedCount; index += 1) {
-    outcomes.push(runBout(home, away, cohortSeed(index)))
-    if ((index + 1) % BOUTS_PER_YIELD === 0) await yieldToEventLoop()
-  }
-  return outcomes
-}
-
-/** Prints one compact table. Called only from a failure path, so a passing suite is silent. */
-function reportTable(title: string, rows: readonly (readonly string[])[]): void {
-  const widths = rows[0].map((_, column) => Math.max(...rows.map((row) => row[column].length)))
-  const lines = rows.map((row) => row.map((cell, column) => cell.padStart(widths[column])).join('  '))
-  // eslint-disable-next-line no-console
-  console.log(`\n[balance] ${title}\n${lines.join('\n')}\n`)
-}
-
-const pct = (value: number) => `${(value * 100).toFixed(1)}%`
 
 // ---------------------------------------------------------------------------
 // Roster cohorts
