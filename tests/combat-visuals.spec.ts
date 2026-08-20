@@ -17,6 +17,7 @@ async function startBoutZeroWith(page: Page, homeFighterId: 'brutus' | 'aquila' 
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(
     ([home, others]) => {
+      window.__GLADIATOR_TEST__.startNextSeries()
       window.__GLADIATOR_TEST__.assign(home, 0)
       window.__GLADIATOR_TEST__.assign(others[0], 1)
       window.__GLADIATOR_TEST__.assign(others[1], 2)
@@ -36,14 +37,14 @@ async function advanceToTick(page: Page, tick: number, cursor: { current: number
 
 async function combatantState(page: Page, combatantId: string) {
   return page.evaluate((id) => {
-    const battle = window.__GLADIATOR_TEST__.getState().activeBattle!
+    const battle = window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!
     return battle.encounter.combatants[id]
   }, combatantId)
 }
 
 async function eventsAtTick(page: Page, tick: number) {
   return page.evaluate((t) => {
-    const battle = window.__GLADIATOR_TEST__.getState().activeBattle!
+    const battle = window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!
     return battle.events.filter((event) => event.tick === t)
   }, tick)
 }
@@ -199,7 +200,7 @@ test("keeps each rig's rendered root yaw locked to its simulation facing, never 
     const { combatants, snapshot } = await page.evaluate(() => {
       window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha!(1)
       return {
-        combatants: window.__GLADIATOR_TEST__.getState().activeBattle!.encounter.combatants,
+        combatants: window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!.encounter.combatants,
         snapshot: window.__GLADIATOR_TEST__.getArenaDebugSnapshot!()!,
       }
     })

@@ -27,6 +27,7 @@ test('shows the decision panel only when asked for, actually within the viewport
 
 async function assignAndConfirm(page: import('@playwright/test').Page) {
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -164,7 +165,10 @@ test('clears decisions on rematch, with no leak into the next bout', async ({ pa
   const boutThreeCount = await rows.count()
   expect(boutThreeCount).toBeGreaterThan(0)
 
-  await page.evaluate(() => window.__GLADIATOR_TEST__.rematch())
+  // `rematch()` is gone -- `continueSeason()` closes out the series that just
+  // finished, and `main.ts`'s `autoAdvanceSeason` immediately opens the next
+  // one (no `SeasonView` exists yet to pause on in between).
+  await page.evaluate(() => window.__GLADIATOR_TEST__.continueSeason())
   await expect(rows).toHaveCount(0)
   await expect(page.getByTestId('decision-panel-skipped-count')).toHaveText('')
 
