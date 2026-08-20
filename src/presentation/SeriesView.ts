@@ -378,7 +378,10 @@ export class SeriesView {
     button.append(
       title,
       el('span', { class: 'fighter-option__school' }, fighter.school),
-      el('span', { class: 'fighter-option__stats' }, `HP ${fighter.maxHp} ${RC.middleDot} Power ${fighter.power} ${RC.middleDot} Defense ${Math.round(fighter.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(fighter.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(fighter.criticalChance * 100)}%`),
+      // `formatPower` here too, not the raw number: the opponent's power in
+      // the matchup slot beside this card already goes through it, so a home
+      // gladiator read `Power 22` next to `Power 19.0` for the same stat.
+      el('span', { class: 'fighter-option__stats' }, `HP ${fighter.maxHp} ${RC.middleDot} Power ${formatPower(fighter.power)} ${RC.middleDot} Defense ${Math.round(fighter.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(fighter.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(fighter.criticalChance * 100)}%`),
       el('span', { class: 'fighter-option__assignment' }, assignedIndex === -1 ? 'Unassigned' : `Bout ${BOUT_NUMERALS[assignedIndex]}`),
     )
     const entry = this.lastRoster.find((candidate) => candidate.fighter.id === fighter.id)

@@ -78,9 +78,15 @@ async function playSeries(page: Page, lineup: readonly string[]): Promise<void> 
   // so this has to poll rather than assume one `evaluate` call reaches
   // `summary` in a single round-trip -- a series with a forfeit can finish in
   // fewer of them than a fully-fought one.
-  for (;;) {
+  // Bounded at four iterations rather than `for (;;)`: a series is three
+  // bouts, so it can stop in `between-bouts` at most twice and the fourth
+  // check is already slack. An unbounded loop turns a series that fails to
+  // progress into a Playwright test-timeout with no indication of what
+  // actually happened; this fails on the spot, naming the stuck phase.
+  for (let attempt = 0; ; attempt += 1) {
     const phase = (await getActiveSeriesState(page))?.phase
     if (phase !== 'between-bouts') break
+    expect(attempt, `series stuck in 'between-bouts' after ${attempt} startNextBout() calls`).toBeLessThan(4)
     await page.evaluate(() => {
       const test = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
       test.startNextBout()
@@ -144,7 +150,24 @@ test('plays a full three-series season through the real dev command surface, end
   await expect(page.getByTestId('season-summary')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Season defeat' })).toBeFocused()
   await expect(page.getByTestId('season-summary-bout')).toHaveCount(9)
-  await expect(page.getByTestId('rematch-season')).toBeVisible()
+
+  // `Rematch season` is acceptance criterion 7 and the only control on this
+  // screen -- click it rather than merely checking it exists. Its handler
+  // (`main.ts`'s `handleSeasonClick`, the `rematchSeason` branch) had never
+  // once run at runtime in this suite: every other assertion about a season
+  // restart went through the dev API.
+  await page.getByTestId('rematch-season').click()
+  await expect(page.getByTestId('season-board')).toBeVisible()
+  await expect(page.getByText('Season board — Series 1 of 3')).toBeVisible()
+  await expect(page.getByText('Season score 0–0')).toBeVisible()
+  await expect(page.locator('[data-testid="season-roster-card"] [data-testid="condition-badge"][data-condition="fresh"]')).toHaveCount(5)
+  // Nothing carried over: same seed, series index back to 0, no records.
+  const restarted = await getSeasonState(page)
+  expect(restarted.phase).toBe('season-board')
+  expect(restarted.seriesIndex).toBe(0)
+  expect(restarted.records).toEqual([])
+  expect(restarted.score).toEqual({ home: 0, away: 0 })
+  expect(restarted.roster.every((entry) => entry.condition === 'fresh')).toBe(true)
 })
 
 test('keeps a gladiator driven to broken off the roster, says why on the planning screen, and still lets the player confirm the short lineup', async ({ page }) => {

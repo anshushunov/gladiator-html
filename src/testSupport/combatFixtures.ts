@@ -1,7 +1,8 @@
 // Test-only plain fixture builders for encounter tests.
 //
 // This file may compose simulation contracts with `src/content/**` — that is
-// explicitly allowed here and only here; `src/simulation/**` itself never
+// allowed anywhere under `src/testSupport/**` (this file and
+// `balanceCohorts.ts`) and nowhere inside `src/simulation/**`, which never
 // imports content (see `src/simulation/architecture.test.ts`). It stays free
 // of production state and of any function stored into encounter state: every
 // export is plain data or a plain-data builder. Task 12 extends this file

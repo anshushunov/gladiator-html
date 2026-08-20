@@ -599,10 +599,12 @@ test('plays three bouts, reports a 2–1 win, then the summary "Continue" button
   expect(afterContinue.seriesIndex).toBe(1)
   expect(afterContinue.records).toHaveLength(1)
   expect(afterContinue.records[0].score).toEqual({ home: 2, away: 1 })
-  // The condition ladder actually moved for the three gladiators who fought:
-  // every `lastDeltas` entry differs from a same-fighter untouched roster
-  // would, and specifically the three who fought are no longer `fresh`.
-  expect(afterContinue.lastDeltas.length).toBeGreaterThan(0)
+  // The condition ladder actually moved for the three gladiators who fought.
+  // `lastDeltas` carries one row per roster member, fought and rested alike,
+  // and a rested row is NOT necessarily a change: `conditionAfterRest` clamps
+  // at `fresh`, so the two who sat out series 0 record `fresh > fresh`. The
+  // real statement is about the three who fought.
+  expect(afterContinue.lastDeltas).toHaveLength(5)
   const conditionById = Object.fromEntries(afterContinue.roster.map((entry) => [entry.fighter.id, entry.condition]))
   expect(conditionById.aquila).not.toBe('fresh')
   expect(conditionById.brutus).not.toBe('fresh')

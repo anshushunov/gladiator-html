@@ -54,10 +54,17 @@ export default defineConfig({
       //     the font/AA half of this, not the WebGL half, and no capture
       //     machine can be pinned for every future runner.
       //
-      // 4% sits between them with room on both sides. The DOM-only planning
-      // snapshot has no 3D in it and matches exactly across machines; it is
-      // held to the same number only because a shared config is simpler than
-      // a per-test override that would drift.
+      // 4% sits between them with room on both sides, and is the right bar
+      // for the WebGL captures this config's `threshold` note is about.
+      //
+      // The two DOM-only captures do override it, deliberately and much
+      // tighter: `planning.png` (`smoke.spec.ts`) and `season-board.png`
+      // (`season.spec.ts`) both pass `maxDiffPixelRatio: 0.002`. They contain
+      // no 3D at all and match exactly across machines on the same OS, and
+      // 4% of those frames (~41,900 px) was measured wide enough to swallow
+      // two whole new roster cards -- which it did, silently, until a review
+      // caught the stale baseline. Each override carries that reasoning at
+      // its own call site.
       maxDiffPixelRatio: 0.04,
     },
   },
