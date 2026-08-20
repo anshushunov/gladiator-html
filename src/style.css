@@ -121,9 +121,19 @@ h1 span { color: #c78b4f; font-style: italic; }
   text-transform: uppercase;
 }
 
+/* `auto-fit`/`minmax`, not a fixed `repeat(3, 1fr)`: the season roster grew
+   from three fielded gladiators to five (bench specialists, Task 4/6), and a
+   fixed three-column grid wrapped that fifth card onto a second row, adding
+   enough height to push `.below-arena-row` (and the dev-only decision panel
+   it can hold) below an 800px-tall viewport (`decision-panel.spec.ts`'s
+   first test) -- a viewport constraint, not a snapshot, so it cannot be
+   satisfied by regenerating a baseline. `minmax(190px, 1fr)` keeps every
+   card readable while still fitting five of them on one row at the game
+   shell's own width (`min(1180px, ...)`, `style.css` above): five columns of
+   190px plus four 14px gaps is 1006px, comfortably under 1180px. */
 .roster-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 14px;
   margin-bottom: 20px;
 }
@@ -151,6 +161,36 @@ h1 span { color: #c78b4f; font-style: italic; }
 .fighter-option__school { color: #927f6d; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
 .fighter-option__stats { color: #a99e90; font-variant-numeric: tabular-nums; }
 .fighter-option__assignment { color: #bb8b57; font-size: 11px; }
+
+.fighter-option__condition { display: flex; align-items: center; gap: 8px; }
+.fighter-option__hp { color: #a99e90; font-variant-numeric: tabular-nums; }
+.fighter-option__telegraph { margin: 0; color: #8f8577; font-size: 10.5px; }
+
+/* Condition badge -- shared by the planning screen's fighter cards, the
+   season board's roster cards, and the season summary's per-gladiator roll
+   call, so it is styled once here rather than per screen. */
+.condition-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.condition-badge[data-condition="fresh"] { color: #9ed0a0; border-color: #3f6b47; background: rgba(63, 107, 71, 0.22); }
+.condition-badge[data-condition="bruised"] { color: #e0c47a; border-color: #7a642f; background: rgba(122, 100, 47, 0.22); }
+.condition-badge[data-condition="wounded"] { color: #e0a06a; border-color: #7a4f2f; background: rgba(122, 79, 47, 0.24); }
+.condition-badge[data-condition="broken"] { color: #e08a7a; border-color: #8e3f33; background: rgba(142, 63, 51, 0.26); }
+
+.condition-delta {
+  margin: 0;
+  color: #dfcfba;
+  font-size: 10.5px;
+  font-weight: 700;
+}
 
 .matchup-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 
@@ -212,6 +252,127 @@ h1 span { color: #c78b4f; font-style: italic; }
 .matchup-slot__remove:hover { border-color: #8e3f33; }
 
 .planning__confirm { margin-top: 20px; }
+
+.roster-disabled {
+  margin-top: 18px;
+  padding: 12px 15px;
+  border: 1px solid #3a2a28;
+  border-radius: 4px;
+  background: rgba(30, 20, 20, 0.5);
+}
+
+.roster-disabled__heading {
+  margin: 0 0 6px;
+  color: #c98a72;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.roster-disabled__list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.roster-disabled__item { color: #b79986; font-size: 12px; }
+
+.planning__forfeit-notice {
+  margin: 14px 0 0;
+  padding: 10px 13px;
+  border: 1px solid #4a3c2e;
+  border-radius: 4px;
+  color: #e0c47a;
+  background: rgba(122, 100, 47, 0.14);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Season board and summary */
+
+.season-board, .season-summary {
+  padding: 20px 2px 6px;
+}
+
+.season-board h2, .season-summary h2 {
+  margin: 0 0 6px;
+  font-family: Georgia, serif;
+  font-size: 26px;
+  font-weight: 500;
+}
+
+.season-board__score, .season-summary__score {
+  margin: 0 0 18px;
+  color: #c9b795;
+  font-size: 14px;
+}
+
+.season-summary__score { font-family: Georgia, serif; font-size: 34px; color: #f0b071; }
+
+.season-challenge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.season-challenge-card {
+  padding: 14px 16px;
+  border: 1px solid #302a2a;
+  border-radius: 4px;
+  background: linear-gradient(160deg, #1e1a1d, #131216);
+}
+
+.season-challenge-card--current { border-color: #91432f; box-shadow: inset 0 0 0 1px #91432f; }
+
+.season-challenge-card__heading { margin: 0 0 4px; font-family: Georgia, serif; font-size: 16px; font-weight: 500; }
+.season-challenge-card__featured { margin: 0 0 8px; color: #c78b4f; font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+
+.season-challenge-card__opponents { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.season-challenge-card__opponents li { display: flex; flex-direction: column; gap: 1px; font-size: 11px; }
+.season-challenge-card__opponents strong { font-family: Georgia, serif; font-size: 14px; font-weight: 500; }
+.season-challenge-card__stats { color: #a99e90; font-variant-numeric: tabular-nums; }
+
+.season-roster-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.season-roster-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid #302a2a;
+  border-radius: 4px;
+  background: linear-gradient(160deg, #1e1a1d, #131216);
+  font-size: 12px;
+}
+
+.season-roster-card__title { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.season-roster-card__title strong { font-family: Georgia, serif; font-size: 17px; font-weight: 500; }
+.season-roster-card__archetype { color: #c78b4f; font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.season-roster-card__school { color: #927f6d; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
+.season-roster-card__hp { color: #a99e90; font-variant-numeric: tabular-nums; }
+.season-roster-card__telegraph { margin: 0; color: #8f8577; font-size: 10.5px; }
+.season-roster-card__bouts { margin-top: auto; color: #6d645d; font-size: 10px; }
+
+.season-board__start { margin-top: 4px; }
+
+.season-summary__series { margin-bottom: 16px; }
+.season-summary__series-heading { margin: 0 0 6px; font-family: Georgia, serif; font-size: 16px; font-weight: 500; color: #dfcfba; }
+
+.season-summary__bouts { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.season-summary__bout {
+  padding: 8px 11px;
+  border: 1px solid #29252a;
+  border-radius: 4px;
+  color: #cfc1ae;
+  background: rgba(20, 18, 22, 0.75);
+  font-size: 12px;
+}
+
+.season-summary__roster { margin: 18px 0; padding-top: 14px; border-top: 1px solid #29252a; }
+.season-summary__roster-row { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; color: #c9b795; font-size: 12px; }
+.season-summary__roster-row strong { font-family: Georgia, serif; font-size: 14px; font-weight: 500; color: #dfcfba; }
 
 /* Interstitial and summary */
 
@@ -517,7 +678,10 @@ h1 span { color: #c78b4f; font-style: italic; }
   }
   .arena { min-height: 430px; }
   .fighter-card { margin: 0; }
-  .roster-grid { grid-template-columns: 1fr 1fr; }
+  /* `.roster-grid`/`.season-roster-grid`/`.season-challenge-grid` are not
+     overridden here: `auto-fit`/`minmax` (their base rules, above) already
+     reflows their column count from the container's own width, so a fixed
+     column count here would only fight that instead of improving on it. */
   .matchup-slot { grid-template-columns: 1fr; }
 }
 
@@ -528,6 +692,5 @@ h1 span { color: #c78b4f; font-style: italic; }
   .battle-feed { grid-template-columns: 1fr; }
   .fighter-card__title { grid-template-columns: auto 1fr; }
   .fighter-card strong { display: none; }
-  .roster-grid { grid-template-columns: 1fr; }
   .controls { flex-wrap: wrap; }
 }

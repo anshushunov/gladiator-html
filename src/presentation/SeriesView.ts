@@ -1,7 +1,10 @@
 import { formatBattleFeed } from './battleFeed'
-import { getAssignmentComparison, type BoutIndex, type BoutOutcome, type PlanningSlot, type SeriesPhase, type SeriesState } from '../simulation/series'
+import { getAssignmentComparison, requiredAssignmentCount, type BoutIndex, type BoutOutcome, type PlanningSlot, type SeriesPhase, type SeriesState } from '../simulation/series'
 import type { Archetype, FighterDefinition, FighterSide } from '../simulation/fighters'
 import { fighterBySide, type BattleState } from '../simulation/battle'
+import { isFightable, startingHpFor } from '../simulation/condition'
+import type { RosterEntry } from '../simulation/season'
+import { CONDITION_LABELS, fightTelegraph } from './conditionTelegraph'
 
 export type SeriesIntent =
   | { type: 'assign'; fighterId: string; boutIndex: BoutIndex }
@@ -58,6 +61,12 @@ export class SeriesView {
   private lastRenderedPhase: SeriesPhase | null = null
   private lastState: SeriesState | null = null
   private lastRuntime: RuntimeViewState | null = null
+  /** The season's full roster (fightable and broken alike), as of the last
+   * `render()` call -- `SeriesState.homeRoster` only ever carries fightable
+   * gladiators (see its own doc comment in `series.ts`), so the planning
+   * screen's condition badges/telegraphs and its disabled-broken row both
+   * need this wider list, which only the season layer can supply. */
+  private lastRoster: readonly RosterEntry[] = []
   private pendingFocus: PendingFocus | null = null
   private lastFeedEventId = -1
 
@@ -68,9 +77,10 @@ export class SeriesView {
     shell.addEventListener('keydown', (event) => this.handleKeyDown(event))
   }
 
-  render(state: SeriesState, runtime: RuntimeViewState): void {
+  render(state: SeriesState, runtime: RuntimeViewState, roster: readonly RosterEntry[]): void {
     this.lastState = state
     this.lastRuntime = runtime
+    this.lastRoster = roster
     const phaseChanged = this.lastRenderedPhase !== null && state.phase !== this.lastRenderedPhase
     if (phaseChanged) this.selectedFighterId = null
     this.shell.dataset.phase = state.phase
@@ -89,6 +99,31 @@ export class SeriesView {
     else this.updateBattleUi(state, runtime)
     this.lastRenderedPhase = state.phase
     this.applyFocus(state, phaseChanged)
+  }
+
+  /** Empties the series screen while the season board/summary owns it
+   * instead (`main.ts`, whenever `SeasonState.activeSeries` is `null`).
+   * Deliberately does NOT reset `lastRenderedPhase`: the season board can sit
+   * between two series for an arbitrary number of renders, and keeping it at
+   * whatever `SeriesPhase` the last series ended on ('summary', ordinarily)
+   * means the next series's first render is still correctly detected as a
+   * phase change (`'summary' !== 'planning'`) -- so "Plan the series" keeps
+   * getting auto-focused exactly like every other phase transition.
+   * Resetting to `null` here would silently suppress that, since `null` is
+   * reserved for "no real render has ever happened yet" (this class's own
+   * initial value). */
+  clear(): void {
+    this.selectedFighterId = null
+    this.pendingFocus = null
+    const seriesUi = this.shell.querySelector<HTMLElement>('#series-ui')
+    seriesUi?.replaceChildren()
+    const battleUi = this.shell.querySelector<HTMLElement>('#battle-ui')
+    if (battleUi) battleUi.hidden = true
+    const battleFeed = this.shell.querySelector<HTMLElement>('.battle-feed')
+    if (battleFeed) battleFeed.hidden = true
+    this.clearBattleUi()
+    const controls = this.shell.querySelector<HTMLElement>('[data-testid="runtime-controls"]')
+    controls?.replaceChildren()
   }
 
   private rebuildShell(state: SeriesState, runtime: RuntimeViewState): void {
@@ -269,7 +304,41 @@ export class SeriesView {
     const confirm = el('button', { class: 'button button--primary planning__confirm', type: 'button', 'data-action': 'confirm', 'data-testid': 'confirm-lineup' }, 'Confirm lineup')
     confirm.disabled = !isLineupComplete(state)
     section.append(heading, instruction, counterRule, roster, matchups, confirm)
+    // The season only ever hands the planning screen its fightable
+    // gladiators (`SeriesState.homeRoster`) -- a broken one is simply absent
+    // from the cards above, with no on-screen trace of them at all. This row
+    // (present only while the wider season roster actually has one) makes
+    // that absence explicit, and its reason, rather than silent.
+    const disabled = this.buildDisabledRosterRow(state)
+    if (disabled) section.append(disabled)
+    // `requiredAssignmentCount` is `min(3, fightable)` -- below three, the
+    // series will forfeit whichever slots the player cannot fill, and the
+    // player should know that before confirming, not discover it in the
+    // between-bouts screen.
+    if (requiredAssignmentCount(state) < 3) section.append(this.buildForfeitNotice(state))
     return section
+  }
+
+  private buildDisabledRosterRow(state: SeriesState): HTMLElement | null {
+    const broken = this.lastRoster.filter((entry) => !isFightable(entry.condition) && !state.homeRoster.some(({ id }) => id === entry.fighter.id))
+    if (broken.length === 0) return null
+    const wrap = el('div', { class: 'roster-disabled', 'data-testid': 'roster-disabled' })
+    wrap.append(el('h3', { class: 'roster-disabled__heading' }, 'Unavailable this series'))
+    const list = el('ul', { class: 'roster-disabled__list' })
+    for (const entry of broken) {
+      list.append(el('li', { class: 'roster-disabled__item' }, `${entry.fighter.name} ${RC.emDash} broken, cannot fight this series.`))
+    }
+    wrap.append(list)
+    return wrap
+  }
+
+  private buildForfeitNotice(state: SeriesState): HTMLElement {
+    const forfeitCount = 3 - requiredAssignmentCount(state)
+    return el(
+      'p',
+      { class: 'planning__forfeit-notice', 'data-testid': 'forfeit-notice' },
+      `Only ${state.homeRoster.length} gladiator${state.homeRoster.length === 1 ? ' is' : 's are'} fit to fight ${RC.emDash} ${forfeitCount} slot${forfeitCount === 1 ? '' : 's'} will be forfeited.`,
+    )
   }
 
   private buildFighterOption(state: SeriesState, fighter: FighterDefinition): HTMLButtonElement {
@@ -296,6 +365,15 @@ export class SeriesView {
       el('span', { class: 'fighter-option__stats' }, `HP ${fighter.maxHp} ${RC.middleDot} Power ${fighter.power} ${RC.middleDot} Defense ${Math.round(fighter.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(fighter.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(fighter.criticalChance * 100)}%`),
       el('span', { class: 'fighter-option__assignment' }, assignedIndex === -1 ? 'Unassigned' : `Bout ${BOUT_NUMERALS[assignedIndex]}`),
     )
+    const entry = this.lastRoster.find((candidate) => candidate.fighter.id === fighter.id)
+    if (entry) {
+      const conditionRow = el('span', { class: 'fighter-option__condition' })
+      conditionRow.append(
+        el('span', { class: 'condition-badge', 'data-testid': 'condition-badge', 'data-condition': entry.condition }, CONDITION_LABELS[entry.condition]),
+        el('span', { class: 'fighter-option__hp' }, `Starting HP ${startingHpFor(entry.condition, fighter.maxHp)}`),
+      )
+      button.append(conditionRow, el('span', { class: 'fighter-option__telegraph' }, fightTelegraph(entry.condition)))
+    }
     return button
   }
 
@@ -323,7 +401,13 @@ export class SeriesView {
     pick.append(
       el('span', { class: 'matchup-slot__numeral' }, BOUT_NUMERALS[boutIndex]),
       opponentBlock,
-      el('span', { class: 'matchup-slot__stats' }, `HP ${opponent.maxHp} ${RC.middleDot} Power ${opponent.power} ${RC.middleDot} Defense ${Math.round(opponent.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(opponent.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(opponent.criticalChance * 100)}%`),
+      // `Math.round` on `power`: challenge scaling (`content/season.ts`'s
+      // `scaleOpponent`) rounds `maxHp` but deliberately leaves `power` a
+      // raw float (the balance tuning it feeds needs the unrounded value) --
+      // display-only rounding here, the same treatment the percentage stats
+      // already get, keeps a challenge-2/3 opponent from showing something
+      // like "Power 19.080000000000002".
+      el('span', { class: 'matchup-slot__stats' }, `HP ${opponent.maxHp} ${RC.middleDot} Power ${Math.round(opponent.power)} ${RC.middleDot} Defense ${Math.round(opponent.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(opponent.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(opponent.criticalChance * 100)}%`),
     )
 
     if (assignedId !== null) {
@@ -366,10 +450,9 @@ export class SeriesView {
     const section = el('section', { class: 'interstitial', 'aria-labelledby': 'interstitial-heading' })
     if (!result) return section
     const heading = el('h2', { id: 'interstitial-heading', tabindex: '-1' }, 'Between bouts')
-    // Forfeited slots get a placeholder line here -- the real forfeit UI
-    // (telegraphing an empty slot, before it is even reached) is Task 8's;
-    // this only has to keep the interstitial from crashing on a result shape
-    // that has no fought fields.
+    // A forfeit is only reachable here because the planning screen already
+    // telegraphed it in advance (`buildForfeitNotice`, above) -- this line
+    // just reports which slot it was, distinctly from a fought bout's result.
     const resultText = result.kind === 'forfeit'
       ? `Bout ${BOUT_NUMERALS[result.boutIndex]}: forfeited, no fighter available.`
       : (() => {
@@ -408,7 +491,10 @@ export class SeriesView {
   }
 
   private buildSummaryBout(state: SeriesState, result: BoutOutcome): HTMLLIElement {
-    // Same forfeit stub as `buildInterstitial` -- Task 8 owns the real UI.
+    // Same forfeit reporting as `buildInterstitial`, for the series's own
+    // summary screen (the season-wide summary across all three series is
+    // `SeasonView.buildOutcomeRow`, a separate rendering of the same
+    // `BoutOutcome` union at the season layer).
     if (result.kind === 'forfeit') {
       const awayName = fighterName(state.opponents, result.opponentId)
       return el('li', { class: 'summary__bout', 'data-testid': 'bout-result' },
