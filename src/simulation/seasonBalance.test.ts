@@ -296,9 +296,9 @@ function playSeries(start: SeasonState, lineup: readonly [string, string, string
   let state = expectOk(startNextSeries(start))
   lineup.forEach((fighterId, index) => { state = expectOk(assignFighter(state, fighterId, index)) })
   state = expectOk(confirmLineup(state))
-  state = advanceSeasonTicks(state, 20_000)
+  state = expectOk(advanceSeasonTicks(state, 20_000))
   while (state.activeSeries?.phase === 'between-bouts') {
-    state = advanceSeasonTicks(expectOk(startNextBout(state)), 20_000)
+    state = expectOk(advanceSeasonTicks(expectOk(startNextBout(state)), 20_000))
   }
   return state
 }

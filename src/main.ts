@@ -233,27 +233,6 @@ const lastPlantedFoot: PlantedFootByCombatant = new Map()
 let nextFootstepId = 0
 
 /**
- * `assignFighter`/`unassignSlot`/`confirmLineup`/`startNextBout` (season.ts)
- * all delegate to the active series and throw `Error('No active series')` if
- * there isn't one (`requireActiveSeries`, season.ts) -- reasonable from
- * season.ts's own side (a real season-board screen should never expose a
- * control that could reach them without one), but this task's dev API and
- * `applyIntent` call them directly, and `season.activeSeries` is genuinely
- * `null` on `season-board`/`season-summary` -- the whole span between one
- * series ending (`continueSeason`) and the next one's "Start series N" click
- * (`handleSeasonClick`, below) actually opening it. Turns that would-be
- * exception into an ordinary `{ ok: false }`, matching every other
- * precondition failure these commands can already return.
- * `'no-series-pending'` is the closest existing `SeasonCommandFailure` value
- * (`season.ts` is not this task's file to extend) -- it originally names
- * `startNextSeries`'s own opposite precondition failure, but reads the same
- * from here: there is no series to act on right now.
- */
-function guardActiveSeries(apply: () => SeasonCommandResult): SeasonCommandResult {
-  return season.activeSeries ? apply() : { ok: false, state: season, reason: 'no-series-pending' }
-}
-
-/**
  * Bout lifecycle boundary: (re)initializes both render snapshots to the
  * given battle's current tick (tick 0 for a freshly created battle), with an
  * empty event batch -- or clears them entirely when no battle is active
@@ -324,8 +303,8 @@ function currentAlpha(): number {
 function applyIntent(intent: SeriesIntent): void {
   const previousBattle = season.activeSeries?.activeBattle
   switch (intent.type) {
-    case 'assign': season = guardActiveSeries(() => assignFighter(season, intent.fighterId, intent.boutIndex)).state; break
-    case 'unassign': season = guardActiveSeries(() => unassignSlot(season, intent.boutIndex)).state; break
+    case 'assign': season = assignFighter(season, intent.fighterId, intent.boutIndex).state; break
+    case 'unassign': season = unassignSlot(season, intent.boutIndex).state; break
     case 'confirm': {
       // Gesture lifecycle (brief resolution #5): `enableAfterGesture` is
       // fired synchronously, without `await`, as the very first statement
@@ -338,10 +317,10 @@ function applyIntent(intent: SeriesIntent): void {
       // Sound on/off control; the synchronous season command below runs
       // immediately regardless of whether audio ends up enabled.
       void combatAudio.enableAfterGesture().then(refreshAudioUi).catch(refreshAudioUi)
-      season = guardActiveSeries(() => confirmLineup(season)).state
+      season = confirmLineup(season).state
       break
     }
-    case 'start-next': season = guardActiveSeries(() => startNextBout(season)).state; break
+    case 'start-next': season = startNextBout(season).state; break
     case 'rematch': {
       // The series-summary screen's own "Rematch" button (`SeriesView`,
       // unowned by this task) still reads exactly as it always has, but its
@@ -597,15 +576,15 @@ if (import.meta.env.DEV) {
     startNextSeries: () => applySeasonCommand(startNextSeries(season)),
     continueSeason: () => applySeasonCommand(continueSeason(season)),
     rematchSeason: () => applySeasonCommand(rematchSeason(season)),
-    assign: (homeFighterId, boutIndex) => applySeasonCommand(guardActiveSeries(() => assignFighter(season, homeFighterId, boutIndex))),
-    unassign: (boutIndex) => applySeasonCommand(guardActiveSeries(() => unassignSlot(season, boutIndex))),
-    confirm: () => applySeasonCommand(guardActiveSeries(() => confirmLineup(season))),
+    assign: (homeFighterId, boutIndex) => applySeasonCommand(assignFighter(season, homeFighterId, boutIndex)),
+    unassign: (boutIndex) => applySeasonCommand(unassignSlot(season, boutIndex)),
+    confirm: () => applySeasonCommand(confirmLineup(season)),
     advanceTicks: (ticks) => {
       if (!Number.isInteger(ticks) || ticks < 0) throw new Error('Tick count must be a non-negative integer')
       for (let step = 0; step < ticks; step += 1) stepBattleTick()
       renderDom()
     },
-    startNextBout: () => applySeasonCommand(guardActiveSeries(() => startNextBout(season))),
+    startNextBout: () => applySeasonCommand(startNextBout(season)),
     getActiveBattleTraceHash: () => (renderFrame ? formatTraceHash(renderFrame.current.traceHash) : null),
     getActiveCombatantPositions: () => {
       if (!renderFrame) return {}

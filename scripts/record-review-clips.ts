@@ -128,10 +128,10 @@ async function openSeries(context: BrowserContext, seed: number, lineup: readonl
   // `activeSeries === null`), and only an explicit `startNextSeries()` call
   // (or a real click on the board's own "Start series N" button) opens
   // series 0's planning screen. Without this call `assign`/`confirm` below
-  // go through `guardActiveSeries` and silently return `{ ok: false, reason:
-  // 'no-series-pending' }`, leaving the lineup unset -- the failure this
-  // script used to hit, surfacing only later as a `null` from
-  // `getActiveSeriesState()!` in `skipToSlot`.
+  // return `{ ok: false, reason: 'no-active-series' }` (`delegateToSeries`,
+  // season.ts), leaving the lineup unset -- the failure this script used to
+  // hit, surfacing only later as a `null` from `getActiveSeriesState()!` in
+  // `skipToSlot`.
   await page.evaluate((assignments) => {
     const api = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
     api.startNextSeries()

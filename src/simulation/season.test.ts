@@ -3,7 +3,8 @@ import { COMBAT_STYLES } from '../content/combatStyles'
 import { SEASON_CHALLENGES, SEASON_ROSTER } from '../content/season'
 import {
   advanceSeasonTicks, confirmLineup, continueSeason, createSeason, rematchSeason,
-  startNextBout, startNextSeries, assignFighter, type SeasonState,
+  startNextBout, startNextSeries, assignFighter, unassignSlot,
+  type SeasonCommandResult, type SeasonState,
 } from './season'
 
 const config = () => ({ seed: 20260815, roster: SEASON_ROSTER, challenges: SEASON_CHALLENGES, combatStyles: COMBAT_STYLES })
@@ -13,9 +14,9 @@ function playSeries(start: SeasonState, lineup: readonly [string, string, string
   let state = startNextSeries(start).state
   lineup.forEach((fighterId, index) => { state = assignFighter(state, fighterId, index).state })
   state = confirmLineup(state).state
-  state = advanceSeasonTicks(state, 20_000)
+  state = advanceSeasonTicks(state, 20_000).state
   while (state.activeSeries?.phase === 'between-bouts') {
-    state = advanceSeasonTicks(startNextBout(state).state, 20_000)
+    state = advanceSeasonTicks(startNextBout(state).state, 20_000).state
   }
   return state
 }
@@ -78,6 +79,31 @@ describe('season', () => {
     expect(state.records.flatMap((record) => record.outcomes)).toHaveLength(9)
     expect(state.score.home + state.score.away).toBe(9)
     expect(state.score.home).toBe(state.records.reduce((sum, record) => sum + record.score.home, 0))
+  })
+
+  // Every command that acts on `activeSeries` is reachable from the season
+  // board, where `activeSeries` is legitimately `null` -- that is an ordinary
+  // refusal, not a thrown programmer error, and all six name it identically.
+  // Before this, four threw `Error('No active series')`, `advanceSeasonTicks`
+  // silently returned the state unchanged, and `continueSeason` folded the
+  // case into `'series-not-finished'`, so `main.ts` had to pre-guard every
+  // call site with a borrowed reason of its own.
+  it('refuses every series-delegating command with no-active-series while on the board', () => {
+    const board = createSeason(config())
+    expect(board.activeSeries).toBeNull()
+    const commands: Record<string, () => SeasonCommandResult> = {
+      assignFighter: () => assignFighter(board, 'brutus', 0),
+      unassignSlot: () => unassignSlot(board, 0),
+      confirmLineup: () => confirmLineup(board),
+      advanceSeasonTicks: () => advanceSeasonTicks(board, 10),
+      startNextBout: () => startNextBout(board),
+      continueSeason: () => continueSeason(board),
+    }
+    for (const [name, run] of Object.entries(commands)) {
+      const result = run()
+      expect(`${name}: ${result.ok} ${result.reason}`).toBe(`${name}: false no-active-series`)
+      expect(result.state).toBe(board)
+    }
   })
 
   it('resets the whole roster on a season rematch', () => {

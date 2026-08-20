@@ -68,7 +68,15 @@ export interface SeasonState {
 // confirming an incomplete lineup) can be forwarded verbatim rather than
 // papered over -- `'series-not-finished'` is deliberately shared with
 // `continueSeason`'s own precondition, since both mean the same thing.
-export type SeasonCommandFailure = SeriesCommandFailure | 'no-series-pending' | 'fighter-unavailable' | 'season-not-finished'
+//
+// `'no-active-series'` and `'no-series-pending'` are opposite preconditions
+// and are deliberately distinct values: the first means "there is no series
+// to act on right now" (every command that delegates into `activeSeries`),
+// the second means "there is no NEXT series to open" (`startNextSeries`,
+// which is only legal from `season-board`). An earlier revision reused
+// `'no-series-pending'` for both from `main.ts`, which made a caller unable
+// to tell the two apart.
+export type SeasonCommandFailure = SeriesCommandFailure | 'no-active-series' | 'no-series-pending' | 'fighter-unavailable' | 'season-not-finished'
 // `reason` is declared (as `undefined`) on the success branch too, not left
 // absent: that is what lets a caller read `.reason` straight off an `{ ok:
 // false }` result without an `if (!result.ok)` narrowing step first.
@@ -118,15 +126,22 @@ export function startNextSeries(state: SeasonState): SeasonCommandResult {
   return { ok: true, state: { ...state, phase: 'series', activeSeries } }
 }
 
-function requireActiveSeries(state: SeasonState): SeriesState {
-  if (!state.activeSeries) throw new Error('No active series')
-  return state.activeSeries
-}
-
 /** Runs a series-layer command against the active series and writes the
- * returned `SeriesState` back into `activeSeries`, forwarding `ok`/`reason` verbatim. */
+ * returned `SeriesState` back into `activeSeries`, forwarding `ok`/`reason`
+ * verbatim.
+ *
+ * "There is an active series" is an ordinary precondition, checked here and
+ * reported as `'no-active-series'` -- not a thrown programmer error.
+ * `activeSeries === null` is a perfectly normal state: it is every moment the
+ * season spends on `season-board` or `season-summary`, the whole span between
+ * one series closing (`continueSeason`) and the next one opening
+ * (`startNextSeries`). Throwing there forced `main.ts` to wrap all five
+ * delegating commands in a guard of its own and to borrow
+ * `'no-series-pending'` -- `startNextSeries`'s opposite precondition -- to
+ * name the refusal. */
 function delegateToSeries(state: SeasonState, apply: (series: SeriesState) => SeriesCommandResult): SeasonCommandResult {
-  const activeSeries = requireActiveSeries(state)
+  const activeSeries = state.activeSeries
+  if (!activeSeries) return { ok: false, state, reason: 'no-active-series' }
   const result = apply(activeSeries)
   if (!result.ok) return { ok: false, state: { ...state, activeSeries: result.state }, reason: result.reason }
   return { ok: true, state: { ...state, activeSeries: result.state } }
@@ -146,9 +161,14 @@ export function confirmLineup(state: SeasonState): SeasonCommandResult {
   return delegateToSeries(state, confirmSeriesLineup)
 }
 
-export function advanceSeasonTicks(state: SeasonState, ticks: number): SeasonState {
-  if (!state.activeSeries) return state
-  return { ...state, activeSeries: advanceSeriesTicks(state.activeSeries, ticks) }
+/** Advances the active series' clock. Reports the same `'no-active-series'`
+ * refusal as every other command that needs one, rather than silently
+ * returning the state unchanged -- a caller could not otherwise distinguish
+ * "ticked, nothing moved" (an ordinary bout-less phase, which `series.ts`'s
+ * own `advanceSeriesTicks` treats as a no-op and this still forwards as
+ * `ok: true`) from "there was nothing to tick at all". */
+export function advanceSeasonTicks(state: SeasonState, ticks: number): SeasonCommandResult {
+  return delegateToSeries(state, (series) => ({ ok: true, state: advanceSeriesTicks(series, ticks) }))
 }
 
 export function startNextBout(state: SeasonState): SeasonCommandResult {
@@ -157,7 +177,10 @@ export function startNextBout(state: SeasonState): SeasonCommandResult {
 
 export function continueSeason(state: SeasonState): SeasonCommandResult {
   const activeSeries = state.activeSeries
-  if (!activeSeries || activeSeries.phase !== 'summary') return { ok: false, state, reason: 'series-not-finished' }
+  // Split rather than folded into one condition, so this command names the
+  // same precondition by the same value as its five neighbours do.
+  if (!activeSeries) return { ok: false, state, reason: 'no-active-series' }
+  if (activeSeries.phase !== 'summary') return { ok: false, state, reason: 'series-not-finished' }
 
   const fought = new Map<string, BoutOutcome & { kind: 'fought' }>()
   for (const outcome of activeSeries.results) {
