@@ -321,17 +321,16 @@ function applyIntent(intent: SeriesIntent): void {
       break
     }
     case 'start-next': season = startNextBout(season).state; break
-    case 'rematch': {
-      // The series-summary screen's own "Rematch" button (`SeriesView`,
-      // unowned by this task) still reads exactly as it always has, but its
-      // season-level equivalent is `continueSeason` -- close out the series
-      // that just finished (roster wear, the record, the score) and land on
-      // whichever screen `SeasonView` owns next: `season-board` (more series
-      // left; the player's own "Start series N" click is what opens the
-      // next one, `handleSeasonClick` below) or `season-summary` (the whole
-      // season is over; "Rematch season" is the only way forward from
-      // there). No bridging -- the season genuinely stops on that screen
-      // until a real click moves it, in production exactly as in dev.
+    case 'continue': {
+      // The series-summary screen's own "Continue" button (`SeriesView`):
+      // close out the series that just finished (roster wear, the record, the
+      // score) and land on whichever screen `SeasonView` owns next:
+      // `season-board` (more series left; the player's own "Start series N"
+      // click is what opens the next one, `handleSeasonClick` below) or
+      // `season-summary` (the whole season is over; "Rematch season" is the
+      // only way forward from there). No bridging -- the season genuinely
+      // stops on that screen until a real click moves it, in production
+      // exactly as in dev.
       season = continueSeason(season).state
       break
     }

@@ -561,7 +561,7 @@ test('a throwing presentation frame latches a disabled-presentation flag but nev
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState().presentationDisabled)).toBe(true)
 })
 
-test('plays three bouts, reports a 2–1 win, then the summary "Rematch" button continues into the next series', async ({ page }) => {
+test('plays three bouts, reports a 2–1 win, then the summary "Continue" button continues into the next series', async ({ page }) => {
   // A stats-led ordering, deliberately NOT the all-counter one. Under Task 13's
   // final balance the all-counter lineup (Brutus->Drusus, Aquila->Cassius,
   // Nerva->Magnus) actually loses 1-2, which is the design's golden scenario
@@ -585,14 +585,15 @@ test('plays three bouts, reports a 2–1 win, then the summary "Rematch" button 
   await expect(page.getByTestId('bout-result')).toHaveCount(3)
   await expect(page.getByTestId('bout-result').first()).toContainText('%')
 
-  // This button's intent is still named `'rematch'` in `SeriesView` (unowned
-  // by this task), but `main.ts`'s `applyIntent` runs it as season-level
-  // `continueSeason` -- clicking it here does NOT replay series 0's own
-  // challenge. It closes series 0 out (roster wear, its own `SeriesRecord`,
-  // the season score) and lands back on the season board, since two series
-  // remain. Assert that real progression directly through
-  // `getSeasonState()`, not just DOM text that would read the same either way.
-  await page.getByTestId('rematch').click()
+  // The series summary's `Continue` button (`data-action="continue"`, run by
+  // `main.ts`'s `applyIntent` as the season-level `continueSeason`): it does
+  // NOT replay series 0's own challenge. It closes series 0 out (roster wear,
+  // its own `SeriesRecord`, the season score) and lands back on the season
+  // board, since two series remain. Assert that real progression directly
+  // through `getSeasonState()`, not just DOM text that would read the same
+  // either way.
+  await expect(page.getByTestId('continue-series')).toHaveText('Continue')
+  await page.getByTestId('continue-series').click()
   const afterContinue = await page.evaluate(() => window.__GLADIATOR_TEST__.getSeasonState())
   expect(afterContinue.phase).toBe('season-board') // mid-season: two more series to play
   expect(afterContinue.seriesIndex).toBe(1)

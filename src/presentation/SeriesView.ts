@@ -12,7 +12,7 @@ export type SeriesIntent =
   | { type: 'unassign'; boutIndex: BoutIndex }
   | { type: 'confirm' }
   | { type: 'start-next' }
-  | { type: 'rematch' }
+  | { type: 'continue' }
   | { type: 'toggle-pause' }
   | { type: 'set-speed'; speed: 1 | 2 | 4 }
   | { type: 'toggle-sound' }
@@ -211,8 +211,8 @@ export class SeriesView {
       case 'start-next':
         this.onIntent({ type: 'start-next' })
         return
-      case 'rematch':
-        this.onIntent({ type: 'rematch' })
+      case 'continue':
+        this.onIntent({ type: 'continue' })
         return
       case 'toggle-pause':
         this.onIntent({ type: 'toggle-pause' })
@@ -503,8 +503,13 @@ export class SeriesView {
     const verdict = el('p', { class: 'summary__verdict', 'aria-live': 'polite' }, victory ? 'Victory for the House of Mars!' : 'Defeat for the House of Mars.')
     const list = el('ol', { class: 'summary__bouts' })
     for (const result of state.results) list.append(this.buildSummaryBout(state, result))
-    const rematch = el('button', { class: 'button button--primary', type: 'button', 'data-action': 'rematch', 'data-testid': 'rematch' }, 'Rematch')
-    section.append(heading, scoreLine, verdict, list, rematch)
+    // `Continue`, not `Rematch` (design.md, "Series summary"): `main.ts` runs
+    // this button as the season-level `continueSeason` -- it charges the
+    // roster's wear, appends the `SeriesRecord` and advances the season, none
+    // of it undoable. Labelling that "Rematch" promised a replay and spent
+    // three gladiators' condition instead.
+    const advance = el('button', { class: 'button button--primary', type: 'button', 'data-action': 'continue', 'data-testid': 'continue-series' }, 'Continue')
+    section.append(heading, scoreLine, verdict, list, advance)
     return section
   }
 
