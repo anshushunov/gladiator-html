@@ -7,6 +7,14 @@ test('shows the decision panel only when asked for, actually within the viewport
   const viewport = { width: 1280, height: 800 }
   await page.setViewportSize(viewport)
   await page.goto('/?seed=20260815&snapshot&debugDecisions=1')
+  // Task 8 removed the old auto-advance bridge: a fresh load now lands on
+  // the season board, not the planning screen. This test exists to catch
+  // `.below-arena-row` (and the panel it can hold) being pushed below the
+  // viewport by the planning screen's five fighter cards -- a defect the
+  // season board's own, shorter layout cannot reproduce -- so it must
+  // actually open the series before measuring, or it silently measures the
+  // wrong screen.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   const panel = page.getByTestId('decision-panel')
   await expect(panel).toBeVisible()
 
@@ -178,12 +186,13 @@ test('clears decisions on rematch, with no leak into the next bout', async ({ pa
   expect(boutThreeCount).toBeGreaterThan(0)
 
   // `rematch()` is gone -- `continueSeason()` closes out the series that just
-  // finished (roster wear, its own `SeriesRecord`, the season score). Mid-
-  // season (only one of three series played), `main.ts`'s
-  // `bridgeAfterContinueSeason` deliberately does NOT auto-open the next one
-  // -- `season.activeSeries` is genuinely `null` here, and stays that way
-  // until the `assignAndConfirm(page)` call below's own `startNextSeries()`
-  // opens it (see that helper's own doc comment).
+  // finished (roster wear, its own `SeriesRecord`, the season score) and
+  // returns to the season board. Mid-season (only one of three series
+  // played), that board does not auto-open the next series -- `main.ts`
+  // simply renders it and waits for a real `start-series` click (or, here,
+  // the dev API's equivalent) -- so `season.activeSeries` is genuinely `null`
+  // here, and stays that way until the `assignAndConfirm(page)` call below's
+  // own `startNextSeries()` opens it (see that helper's own doc comment).
   await page.evaluate(() => window.__GLADIATOR_TEST__.continueSeason())
   await expect(rows).toHaveCount(0)
   await expect(page.getByTestId('decision-panel-skipped-count')).toHaveText('')

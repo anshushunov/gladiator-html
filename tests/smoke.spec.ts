@@ -79,14 +79,14 @@ test('clears render snapshots and combatant data on rematch, with no leak from t
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveBattleTraceHash())).not.toBeNull()
   // `rematch()` is gone -- `continueSeason()` is its season-level successor:
   // closes out the series that just finished (roster wear, its own
-  // `SeriesRecord`, the season score). This is series 0 of three, so it does
-  // NOT auto-open series 1 (`main.ts`'s `bridgeAfterContinueSeason` only
-  // bridges when `continueSeason` ends the whole season) -- but it still
-  // resets the render frame the exact same way either way: `activeSeries`'s
-  // own `activeBattle` reference changes from the finished third bout to
-  // `undefined`, whether that is because `activeSeries` itself became `null`
-  // (this test's case) or because a freshly-opened next series has not
-  // started its own first bout yet.
+  // `SeriesRecord`, the season score) and returns to the season board. This
+  // is series 0 of three, so `season.activeSeries` becomes `null` here --
+  // there is no bridge past the board at any point, whole-season or not --
+  // but the render frame still resets the exact same way either way:
+  // `activeSeries`'s own `activeBattle` reference changes from the finished
+  // third bout to `undefined`, whether that is because `activeSeries` itself
+  // became `null` (this test's case) or because a freshly-opened next series
+  // has not started its own first bout yet.
   await page.evaluate(() => window.__GLADIATOR_TEST__.continueSeason())
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState())).toMatchObject({
     previousTick: null,
