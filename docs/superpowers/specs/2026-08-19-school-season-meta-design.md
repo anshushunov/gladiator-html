@@ -143,8 +143,12 @@ The two new gladiators are **specialists, not equivalents**: weaker on aggregate
 | Challenge | Drusus (fast) | Cassius (technical) | Magnus (heavy) | Featured threat |
 |---|---|---|---|---|
 | 1 | ×1.00 | ×1.00 | ×1.00 | none — the baseline series |
-| 2 | ×1.12 | ×1.08 | ×1.04 | fast |
-| 3 | ×1.16 | ×1.12 | ×1.20 | heavy |
+| 2 | ×1.00 | ×1.08 | ×1.06 | technical |
+| 3 | ×1.00 | ×1.10 | ×1.12 | heavy |
+
+**Drusus does not scale.** The escalation is carried by Cassius and Magnus alone. Drusus is the strongest opponent and both Fast gladiators meet him in a mirror they are already losing: `aquila/drusus` measures **15.0%** over the balance cohort, exactly on the 15% floor `balance.test.ts` holds the calibrated roster to, and Aquila is a frozen definition that no bench tuning can move. Scaling him at ×1.16 drops that pairing to **3.5%**, far under the 5% floor this document's own criterion 3 sets for challenge 3; even ×1.08 reaches 6.5%. Every point of pressure on Drusus therefore comes out of the one pairing with none to give, and — because the vectors must stay monotone per opponent — it drags the other two opponents down with it to keep challenge 2 underneath. Freezing him buys Cassius and Magnus roughly twice the room, which is where the difficulty gradient actually lives.
+
+Two consequences follow. Challenge 2's featured threat is `technical` rather than `fast`, since with Drusus fixed the largest step of that challenge is Cassius's. And the escalating pair stop short of ×1.16: the binding pairing is `sura/*`, and at ×1.16 the worst challenge-3 pairing sits at 5.0% against Magnus — on the floor, with no margin — so Magnus stops at ×1.12, the last factor keeping it a clear 2.0 points above, and Cassius at ×1.10, one step under Magnus so the featured threat still takes the largest step of its challenge.
 
 A uniform scalar was the earlier draft and it was structurally inert: since the player maps gladiators to slots freely, scaling everyone equally leaves the same matchup template optimal in all three series. Asymmetric vectors change *which* answer each challenge demands, while staying monotone per opponent. Accuracy, defense, and critical chance are untouched — the content comments warn those rows are where the counter-triangle's calibration is tight.
 
