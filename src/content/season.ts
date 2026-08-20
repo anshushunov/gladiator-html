@@ -128,7 +128,28 @@ export const SEASON_ROSTER = [...homeRoster, ...benchSpecialists] as const satis
  *   - asymmetric rather than a uniform scalar, so which gladiator answers which
  *     slot still changes between challenges;
  *   - the featured threat still takes the largest step of its challenge --
- *     Drusus in challenge 2 (fast), Magnus in challenge 3 (heavy).
+ *     Drusus in challenge 2 (fast), Magnus in challenge 3 (heavy). That rule is
+ *     asserted in `season.test.ts`, not just stated here.
+ *
+ * Five of the six numbers moved, and each one is forced by something. Steps are
+ * quoted relative to challenge 1, since that is what the featured-threat rule
+ * compares:
+ *
+ *   ch3 Magnus   1.20 -> 1.10  MEASURED. `aquila/magnus` is 5.0% at the
+ *                              authored 1.20 and 12.5% at 1.10.
+ *   ch3 Drusus   1.16 -> 1.06  MEASURED. See the table above; 1.08 already
+ *                              drops `sura/drusus` to 6.0%.
+ *   ch3 Cassius  1.12 -> 1.08  RULE. Must step less than Magnus, the featured
+ *                              threat of its challenge (+0.08 < +0.10). Cassius
+ *                              is not the binding opponent anywhere -- the
+ *                              weakest pairing at 1.11 is still `sura` at 10.5%.
+ *   ch2 Drusus   1.12 -> 1.05  MONOTONICITY. Must stay under ch3's 1.06.
+ *   ch2 Cassius  1.08 -> 1.03  RULE. Must step less than Drusus, the featured
+ *                              threat of challenge 2 (+0.03 < +0.05).
+ *   ch2 Magnus   1.04 -> 1.04  UNCHANGED -- the design's authored value. It is
+ *                              already monotone against ch3's 1.10 and its
+ *                              +0.04 is already under Drusus's +0.05, so nothing
+ *                              forces it down and it was left alone.
  *
  * The cost is that Drusus, the strongest opponent, can now only be scaled by a
  * few percent: he is the ceiling on the whole escalation, because both Fast
@@ -140,7 +161,7 @@ export const SEASON_ROSTER = [...homeRoster, ...benchSpecialists] as const satis
  */
 const SCALING: readonly (readonly [number, number, number])[] = [
   [1.00, 1.00, 1.00],
-  [1.05, 1.03, 1.02],
+  [1.05, 1.03, 1.04],
   [1.06, 1.08, 1.10],
 ]
 

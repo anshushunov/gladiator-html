@@ -41,4 +41,28 @@ describe('season content', () => {
   it('names one featured threat per escalated challenge', () => {
     expect(SEASON_CHALLENGES.map((c) => c.featuredThreat)).toEqual([null, 'fast', 'heavy'])
   })
+
+  // The rule the scaling vectors are chosen against, and the reason three of
+  // the six numbers are what they are (see the SCALING comment in season.ts):
+  // a challenge's featured threat is the opponent it escalates HARDEST, not
+  // merely a label on the card. Measured off `power`, which carries the factor
+  // exactly -- `maxHp` is rounded to an integer and so is only approximate.
+  it('escalates the featured threat harder than either other opponent', () => {
+    const baseline = SEASON_CHALLENGES[0].opponents
+    const featuredChallenges = SEASON_CHALLENGES.filter((challenge) => challenge.featuredThreat !== null)
+    expect(featuredChallenges).toHaveLength(2)
+
+    for (const challenge of featuredChallenges) {
+      const steps = challenge.opponents.map((opponent, index) => ({
+        archetype: opponent.archetype,
+        step: opponent.power / baseline[index].power,
+      }))
+      const featured = steps.filter((entry) => entry.archetype === challenge.featuredThreat)
+      expect(featured).toHaveLength(1)
+      for (const other of steps) {
+        if (other === featured[0]) continue
+        expect(featured[0].step).toBeGreaterThan(other.step)
+      }
+    }
+  })
 })
