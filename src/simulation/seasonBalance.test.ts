@@ -86,6 +86,35 @@ const aggregate = (condition: CohortCondition, challengeIndex: number, fighterId
   SEASON_CHALLENGES[challengeIndex].opponents.reduce((sum, opponent) => sum + rate(condition, challengeIndex, fighterId, opponent.id), 0) /
   SEASON_CHALLENGES[challengeIndex].opponents.length
 
+/** Probability of taking a three-bout series given each bout's own independent win rate: at least two of the three. */
+function seriesWinRate([a, b, c]: readonly number[]): number {
+  return a * b * c + a * b * (1 - c) + a * (1 - b) * c + (1 - a) * b * c
+}
+
+/**
+ * The best three-slot lineup a full `fresh` roster can field against a
+ * challenge: the injective assignment of three distinct gladiators to the
+ * three slots (60 of them, for five gladiators) with the highest probability
+ * of winning the series. Pure arithmetic over the already-measured cohort --
+ * it simulates nothing.
+ */
+function bestLineup(challengeIndex: number): { fighterIds: string[]; seriesWinRate: number } {
+  const opponents = SEASON_CHALLENGES[challengeIndex].opponents
+  let best: { fighterIds: string[]; seriesWinRate: number } | null = null
+  for (const first of SEASON_ROSTER) {
+    for (const second of SEASON_ROSTER) {
+      for (const third of SEASON_ROSTER) {
+        const fighterIds = [first.id, second.id, third.id]
+        if (new Set(fighterIds).size !== 3) continue
+        const value = seriesWinRate(fighterIds.map((id, slot) => rate('fresh', challengeIndex, id, opponents[slot].id)))
+        if (!best || value > best.seriesWinRate) best = { fighterIds, seriesWinRate: value }
+      }
+    }
+  }
+  if (!best) throw new Error('No three-slot lineup exists')
+  return best
+}
+
 /** One row per gladiator for a given cohort, used only on a failure path. */
 function cohortTable(condition: CohortCondition, challengeIndex: number): string[][] {
   const opponents = SEASON_CHALLENGES[challengeIndex].opponents
@@ -192,6 +221,27 @@ describe('season roster balance cohorts (five gladiators x three challenges x 20
         const value = rate('fresh', CHALLENGE_3, fighter.id, opponent.id)
         if (value < 0.05 || value > 0.95) failures.push(`${fighter.id}/${opponent.id} in challenge 3 wins ${pct(value)}, outside 5..95%`)
       }
+    }
+
+    // The criterion's third part: "the best available three-slot lineup
+    // against challenge 3 stays winnable on the majority of the cohort"
+    // (design.md, criterion 3). It is the only assertion in this file that
+    // measures the "wear may be too harsh" risk at the level of a LINEUP
+    // rather than a pairing -- the 5..95% band above passes happily on a
+    // roster where every single gladiator is a coin-flip loser, which is
+    // exactly the season this slice must not ship.
+    //
+    // Read off the already-measured `fresh x challenge 3` cohort, no extra
+    // bouts: the best lineup is the injective assignment of three of the five
+    // gladiators to the three slots that maximizes the probability of taking
+    // the series (two bouts of three). The three bouts are combined as
+    // independent draws because they are: `deriveBoutSeed` gives each slot
+    // its own stream, so within one series the three pairings share no
+    // randomness. Measured at 58.3% for `vitus/nerva/brutus`, the best of
+    // the sixty.
+    const best = bestLineup(CHALLENGE_3)
+    if (best.seriesWinRate <= 0.5) {
+      failures.push(`best challenge-3 lineup ${best.fighterIds.join('/')} takes the series only ${pct(best.seriesWinRate)} of the time, not a majority`)
     }
 
     if (failures.length > 0) {
