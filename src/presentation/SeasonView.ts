@@ -40,6 +40,18 @@ function fighterNameFor(roster: readonly RosterEntry[], id: string): string {
 
 export class SeasonView {
   private readonly host: HTMLElement
+  /** The board/summary phase last given real keyboard focus -- mirrors
+   * `SeriesView.lastRenderedPhase`'s own role for `applyFocus`, so every
+   * fresh arrival at this screen (not just its very first render) moves
+   * focus to that screen's own heading, exactly like every series-owned
+   * phase transition already does (`SeriesView.applyFocus`). `null`
+   * whenever this screen is not the one currently shown (`clear()` resets
+   * it), so a later return to the SAME phase -- e.g. the board reappearing
+   * after a series that started and ended without ever reaching the summary
+   * -- is still detected as "just arrived" and re-focused, rather than
+   * compared against a stale value from before `SeriesView` took over the
+   * screen in between. */
+  private lastFocusedPhase: SeasonState['phase'] | null = null
 
   constructor(host: HTMLElement) {
     this.host = host
@@ -48,13 +60,22 @@ export class SeasonView {
   render(state: SeasonState): void {
     if (state.phase === 'season-board') this.renderBoard(state)
     else if (state.phase === 'season-summary') this.renderSummary(state)
-    else this.clear()
+    else { this.clear(); return }
+    if (state.phase !== this.lastFocusedPhase) {
+      const headingId = state.phase === 'season-board' ? 'season-board-heading' : 'season-summary-heading'
+      this.host.querySelector<HTMLElement>(`#${headingId}`)?.focus()
+    }
+    this.lastFocusedPhase = state.phase
   }
 
   /** Empties the board/summary while a series is in progress -- called by
-   * `main.ts` whenever `SeriesView` owns the screen instead. */
+   * `main.ts` whenever `SeriesView` owns the screen instead. Resets
+   * `lastFocusedPhase` (see its own doc comment) so this screen's next
+   * appearance is always treated as a fresh arrival, not a same-phase
+   * no-op. */
   clear(): void {
     this.host.replaceChildren()
+    this.lastFocusedPhase = null
   }
 
   private renderBoard(state: SeasonState): void {
