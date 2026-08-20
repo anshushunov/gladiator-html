@@ -5,6 +5,7 @@ import { fighterBySide, type BattleState } from '../simulation/battle'
 import { isFightable, startingHpFor } from '../simulation/condition'
 import type { RosterEntry } from '../simulation/season'
 import { CONDITION_LABELS, fightTelegraph } from './conditionTelegraph'
+import { formatPower } from './formatPower'
 
 export type SeriesIntent =
   | { type: 'assign'; fighterId: string; boutIndex: BoutIndex }
@@ -401,13 +402,12 @@ export class SeriesView {
     pick.append(
       el('span', { class: 'matchup-slot__numeral' }, BOUT_NUMERALS[boutIndex]),
       opponentBlock,
-      // `Math.round` on `power`: challenge scaling (`content/season.ts`'s
-      // `scaleOpponent`) rounds `maxHp` but deliberately leaves `power` a
-      // raw float (the balance tuning it feeds needs the unrounded value) --
-      // display-only rounding here, the same treatment the percentage stats
-      // already get, keeps a challenge-2/3 opponent from showing something
-      // like "Power 19.080000000000002".
-      el('span', { class: 'matchup-slot__stats' }, `HP ${opponent.maxHp} ${RC.middleDot} Power ${Math.round(opponent.power)} ${RC.middleDot} Defense ${Math.round(opponent.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(opponent.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(opponent.criticalChance * 100)}%`),
+      // `formatPower`: see its own doc comment -- challenge scaling
+      // (`content/season.ts`'s `scaleOpponent`) rounds `maxHp` but
+      // deliberately leaves `power` a raw float (the balance tuning it feeds
+      // needs the unrounded value); shared with `SeasonView.buildChallengeCard`
+      // so the two screens never disagree on the same opponent's power.
+      el('span', { class: 'matchup-slot__stats' }, `HP ${opponent.maxHp} ${RC.middleDot} Power ${formatPower(opponent.power)} ${RC.middleDot} Defense ${Math.round(opponent.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(opponent.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(opponent.criticalChance * 100)}%`),
     )
 
     if (assignedId !== null) {

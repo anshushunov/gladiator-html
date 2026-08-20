@@ -11,6 +11,7 @@ import type { ChallengeDefinition, ConditionDelta, RosterEntry, SeasonState } fr
 import { isFightable, startingHpFor, type FighterCondition } from '../simulation/condition'
 import type { Archetype } from '../simulation/fighters'
 import { CONDITION_LABELS, fightTelegraph, restTelegraph } from './conditionTelegraph'
+import { formatPower } from './formatPower'
 
 const RC = { arrow: '→', middleDot: '·', enDash: '–', emDash: '—' }
 const ARCHETYPE_LABELS: Record<Archetype, string> = { heavy: 'Heavy', fast: 'Fast', technical: 'Technical' }
@@ -95,10 +96,10 @@ export class SeasonView {
       const item = el('li', {})
       item.append(
         el('strong', {}, opponent.name),
-        // `Math.round` on `power`: see the identical comment on
-        // `SeriesView.buildMatchupSlot` -- `scaleOpponent` deliberately
-        // leaves `power` a raw float, rounded here for display only.
-        el('span', { class: 'season-challenge-card__stats' }, `${ARCHETYPE_LABELS[opponent.archetype]} ${RC.middleDot} HP ${opponent.maxHp} ${RC.middleDot} Power ${Math.round(opponent.power)}`),
+        // `formatPower`: see its own doc comment -- `scaleOpponent` leaves
+        // `power` a raw float, formatted here for display only, shared with
+        // `SeriesView.buildMatchupSlot` so the two screens never disagree.
+        el('span', { class: 'season-challenge-card__stats' }, `${ARCHETYPE_LABELS[opponent.archetype]} ${RC.middleDot} HP ${opponent.maxHp} ${RC.middleDot} Power ${formatPower(opponent.power)}`),
       )
       list.append(item)
     }
