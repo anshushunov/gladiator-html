@@ -775,16 +775,23 @@ test('matches the stable planning snapshot', async ({ page }) => {
   await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
   await expect(page.locator('canvas')).toBeHidden()
-  // This baseline was captured against three fighter cards (before Task
-  // 4/6's bench specialists) and still shows only three -- genuinely stale
-  // content. Measured directly against today's five-card layout (condition
-  // badges, starting HP, and the telegraph line included) at this suite's
-  // shared `maxDiffPixelRatio: 0.04`: only ~2% of pixels differ (the added
-  // text/badges are a small fraction of a mostly-empty dark frame), so this
-  // assertion still passes without a baseline update. Left unregenerated on
-  // purpose -- Task 9 owns updating it once its own planning-screen polish
-  // has also landed, so the baseline only needs authoring once.
-  await expect(page).toHaveScreenshot('planning.png', { fullPage: true })
+
+  // Task 9 review: this baseline used to be captured against three fighter
+  // cards (before Task 4/6's bench specialists) and kept passing unregenerated
+  // for two whole gladiators' worth of new cards plus fifteen lines of new
+  // telegraph text -- ~20,600 differing pixels against this suite's shared
+  // `maxDiffPixelRatio: 0.04` (~41,900 px on this frame), so the baseline had
+  // gone silently stale. Structural assertions below carry the actual
+  // regression-catching weight now (they fail on any content change
+  // regardless of how few pixels it costs); the screenshot is a tight,
+  // frame-level guard on top, not the only check.
+  await expect(page.locator('[data-role="home-fighter"]')).toHaveCount(5)
+  await expect(page.locator('[data-testid="condition-badge"][data-condition="fresh"]')).toHaveCount(5)
+  await expect(page.getByTestId('roster-disabled')).toHaveCount(0)
+  await expect(page.getByTestId('forfeit-notice')).toHaveCount(0)
+  await expect(page.getByTestId('fighter-brutus')).toContainText('Fight: → bruised, or wounded on a loss or a win under 25% HP')
+
+  await expect(page).toHaveScreenshot('planning.png', { fullPage: true, maxDiffPixelRatio: 0.002 })
 })
 
 // ---------------------------------------------------------------------------
