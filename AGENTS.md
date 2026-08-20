@@ -6,6 +6,7 @@ Keep the loop fast: make the smallest playable change, run the narrowest useful 
 
 - `src/simulation/` is deterministic TypeScript and must not import DOM or Three.js code.
 - `src/presentation/` renders simulation state. Keep game rules out of it.
+- `src/simulation/season.ts` owns the condition ladder: every gladiator's `FighterCondition` step, starting HP for that step, and the forfeit rule when fewer than three are fightable. `src/presentation/SeasonView.ts` and `SeriesView.ts` only format an already-computed `SeasonState`/`RosterEntry` (condition badges, the shared `conditionTelegraph.ts` wording) -- neither may re-derive a condition transition or a starting-HP ratio itself, the same rule that keeps combat math out of `presentation/` generally.
 - Prefer plain functions and small modules. Add abstractions only after a second real use case appears.
 - Use primitives and CSS while testing a hypothesis; polished assets can wait.
 
