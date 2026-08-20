@@ -120,7 +120,17 @@ h1 span { color: #c78b4f; font-style: italic; }
    outcome (`conditionTelegraph.ts`) and grew from one line to two per
    fighter card. Trimmed padding/margins here, not the telegraph text or the
    card grid's column count -- the point of both is to stay readable and
-   keep five cards on one row. */
+   keep five cards on one row.
+
+   Task 9 review: win32 measured only ~5px of headroom under that 800px cap
+   (795px), and Linux -- what CI actually runs, per-OS font metrics being the
+   whole reason baselines are split by platform (`playwright.config.ts`) --
+   overflowed it outright (802.375px, measured in the
+   `mcr.microsoft.com/playwright:v1.62.1-noble` container `AGENTS.md`'s own
+   recipe uses). `.roster-grid`'s `margin-bottom` and `.fighter-option`'s own
+   `padding`/`gap` (below) were trimmed a second time for exactly this reason
+   -- a few more pixels than a razor-thin win32-only pass, since font
+   rasterization differences are the whole point of a per-OS margin. */
 .planning__counter-rule {
   margin: 0 0 6px;
   color: #c78b4f;
@@ -144,14 +154,14 @@ h1 span { color: #c78b4f; font-style: italic; }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 14px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .fighter-option {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 10px;
+  gap: 4px;
+  padding: 8px;
   border: 1px solid #302a2a;
   border-radius: 4px;
   color: #f4ead7;
