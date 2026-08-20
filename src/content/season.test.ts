@@ -15,15 +15,27 @@ describe('season content', () => {
     expect(new Set(SEASON_ROSTER.map((f) => f.id)).size).toBe(5)
   })
 
-  it('scales every opponent monotonically across the three challenges, integrally', () => {
-    for (const opponentIndex of [0, 1, 2]) {
+  // Drusus is deliberately identical in all three challenges: he is the
+  // strongest opponent and both Fast gladiators meet him in a mirror that
+  // `aquila/drusus` already loses at exactly the 15% floor, so any scaling at
+  // all pushes a frozen pairing under criterion 3's 5% band. Escalation is
+  // carried by Cassius and Magnus. See the SCALING comment in season.ts.
+  it('freezes Drusus across all three challenges', () => {
+    for (const challenge of SEASON_CHALLENGES) expect(challenge.opponents[0]).toEqual(mvpOpponents[0])
+  })
+
+  it('escalates Cassius and Magnus monotonically across the three challenges, integrally', () => {
+    for (const opponentIndex of [1, 2]) {
       const hp = SEASON_CHALLENGES.map((c) => c.opponents[opponentIndex].maxHp)
       const power = SEASON_CHALLENGES.map((c) => c.opponents[opponentIndex].power)
       expect(hp[0]).toBeLessThan(hp[1])
       expect(hp[1]).toBeLessThan(hp[2])
       expect(power[0]).toBeLessThan(power[1])
       expect(power[1]).toBeLessThan(power[2])
-      for (const value of hp) expect(Number.isInteger(value)).toBe(true)
+    }
+    // Integrality is required of every opponent, frozen or not.
+    for (const challenge of SEASON_CHALLENGES) {
+      for (const opponent of challenge.opponents) expect(Number.isInteger(opponent.maxHp)).toBe(true)
     }
   })
 
@@ -39,7 +51,9 @@ describe('season content', () => {
   })
 
   it('names one featured threat per escalated challenge', () => {
-    expect(SEASON_CHALLENGES.map((c) => c.featuredThreat)).toEqual([null, 'fast', 'heavy'])
+    // `technical`, not `fast`: with Drusus frozen at x1.00 the largest step of
+    // challenge 2 is Cassius's, and the featured threat follows the escalation.
+    expect(SEASON_CHALLENGES.map((c) => c.featuredThreat)).toEqual([null, 'technical', 'heavy'])
   })
 
   // The rule the scaling vectors are chosen against, and the reason three of

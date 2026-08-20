@@ -97,75 +97,83 @@ export const SEASON_ROSTER = [...homeRoster, ...benchSpecialists] as const satis
  * Per-opponent scaling, in `opponents` order: Drusus (fast), Cassius
  * (technical), Magnus (heavy).
  *
- * Task 6 lowered these from the design's authored table (design.md, "Roster and
- * challenge content"), which was `[1.12, 1.08, 1.04]` and `[1.16, 1.12, 1.20]`.
- * That table is not compatible with the design's OWN criterion 3 -- "no `fresh`
- * pairing in challenge 3 falls outside 5..95%" -- and no bench tuning can make
- * it so, because the pairing that breaks it is `aquila/drusus`, and both of
- * those are frozen definitions.
+ * DRUSUS IS FROZEN AT x1.00 IN ALL THREE CHALLENGES. Escalation is carried by
+ * Cassius and Magnus alone. This is an owner decision taken on Task 6's
+ * measurements, and it replaces the design's authored table (design.md, "Roster
+ * and challenge content": `[1.12, 1.08, 1.04]` and `[1.16, 1.12, 1.20]`), which
+ * is not compatible with the design's OWN criterion 3 -- "no `fresh` pairing in
+ * challenge 3 falls outside 5..95%".
  *
- * What was measured, win rate over the fixed 200-seed cohort at a range of
- * Drusus factors:
+ * Why Drusus, specifically. He is the strongest opponent, and BOTH Fast
+ * gladiators meet him in a mirror they are already losing. `aquila/drusus`
+ * measures 15.0% unscaled -- exactly ON the 15% floor of `balance.test.ts`'s own
+ * band -- so every point of scaling comes straight out of a pairing that has
+ * none to give (`mvpSeries.ts` records 19.5% when Aquila was calibrated; the
+ * combat kernel has drifted since). Measured over the fixed 200-seed cohort:
  *
  *   Drusus x     1.00   1.04   1.06   1.08   1.12   1.16
  *   aquila       15.0   12.5   12.5    6.5    5.0    3.5
  *   sura         19.5   11.5    8.5    6.0     --     --
  *
- * `aquila/drusus` is a Fast mirror against a strictly better stat block and
- * already sits ON the 15% floor of `balance.test.ts`'s own band at challenge 1
- * (the `mvpSeries.ts` comment records 19.5% when it was calibrated; the combat
- * kernel has drifted since). The authored x1.16 puts it at 3.5%, and x1.12 --
- * the lowest value monotonicity would even allow next to challenge 2's x1.12 --
- * puts it at exactly 5.0%, i.e. on the boundary with zero margin. Magnus is the
- * same story one step milder: `aquila/magnus` measures 5.0% at the authored
- * x1.20 and 12.5% at x1.10.
+ * Aquila is a frozen definition, so no bench tuning can move this. Scaling
+ * Drusus at all therefore forced the whole escalation down -- an earlier
+ * revision of this file ran x1.05/x1.06 on him and had to hold Cassius and
+ * Magnus to x1.08/x1.10 to stay monotone underneath. Freezing the one opponent
+ * that cannot take pressure buys the other two roughly twice the room.
  *
- * So the vectors were re-chosen to be the harshest that keep every challenge-3
- * pairing clear of the floor by a real margin, while preserving everything the
- * design asks of their SHAPE:
- *   - monotone per opponent, integral `maxHp`, `accuracy`/`defence`/`critical`
- *     untouched (`season.test.ts` pins all three);
+ * Where Cassius and Magnus stop, and why they do not reach the x1.16 the
+ * decision aimed at. `sura/*` is the binding pairing for both; the worst
+ * challenge-3 pairing at each factor:
+ *
+ *   x            1.06   1.08   1.10   1.11   1.12   1.13   1.14   1.16   1.18
+ *   vs Cassius   17.0   12.5   10.5   10.0    9.5     --    6.5    6.0    5.0
+ *   vs Magnus    12.0   10.5    8.5    8.0    7.0    6.5    5.5    5.0    3.5
+ *
+ * At the aimed-for x1.16 the worst pairing sits at 5.0% against Magnus and 6.0%
+ * against Cassius -- i.e. exactly ON the floor, the same zero-margin boundary
+ * that disqualified the design's own table. Magnus stops at x1.12, the last
+ * factor keeping the worst pairing a clear 2.0 points (4 bouts of 200) above
+ * the floor; x1.13 is 6.5% and x1.14 is 5.5%.
+ *
+ * Every number, and what forces it. Steps are quoted relative to challenge 1,
+ * since that is what the featured-threat rule compares:
+ *
+ *   ch3 Magnus   1.20 -> 1.12  MEASURED CEILING. See the table above.
+ *   ch3 Cassius  1.12 -> 1.10  RULE. Must step less than Magnus, the featured
+ *                              threat of its challenge (+0.10 < +0.12). Its own
+ *                              measured ceiling is higher -- x1.12 still leaves
+ *                              the worst pairing at 9.5% -- so Cassius is held
+ *                              back by the featured-threat rule, not by balance.
+ *   ch2 Cassius  1.08 -> 1.08  UNCHANGED -- the design's authored value, and the
+ *                              largest step of challenge 2, which is what makes
+ *                              `technical` its featured threat.
+ *   ch2 Magnus   1.04 -> 1.06  RAISED. Must step less than Cassius (+0.06 <
+ *                              +0.08) and stay under its own ch3 x1.12.
+ *   ch2 Drusus   1.12 -> 1.00  FROZEN, see above.
+ *   ch3 Drusus   1.16 -> 1.00  FROZEN, see above.
+ *
+ * Everything the design asks of the vectors' SHAPE still holds:
+ *   - monotone per opponent (non-decreasing; strictly increasing for the two
+ *     that escalate), integral `maxHp`, and `accuracy`/`defence`/`critical`
+ *     untouched -- `season.test.ts` pins all of it, Drusus's freeze included;
  *   - asymmetric rather than a uniform scalar, so which gladiator answers which
  *     slot still changes between challenges;
- *   - the featured threat still takes the largest step of its challenge --
- *     Drusus in challenge 2 (fast), Magnus in challenge 3 (heavy). That rule is
- *     asserted in `season.test.ts`, not just stated here.
+ *   - the featured threat takes the largest step of its challenge -- Cassius in
+ *     challenge 2 (`technical`, since a frozen Drusus can no longer be it) and
+ *     Magnus in challenge 3 (`heavy`). That rule is asserted in
+ *     `season.test.ts`, not merely stated here.
  *
- * Five of the six numbers moved, and each one is forced by something. Steps are
- * quoted relative to challenge 1, since that is what the featured-threat rule
- * compares:
- *
- *   ch3 Magnus   1.20 -> 1.10  MEASURED. `aquila/magnus` is 5.0% at the
- *                              authored 1.20 and 12.5% at 1.10.
- *   ch3 Drusus   1.16 -> 1.06  MEASURED. See the table above; 1.08 already
- *                              drops `sura/drusus` to 6.0%.
- *   ch3 Cassius  1.12 -> 1.08  RULE. Must step less than Magnus, the featured
- *                              threat of its challenge (+0.08 < +0.10). Cassius
- *                              is not the binding opponent anywhere -- the
- *                              weakest pairing at 1.11 is still `sura` at 10.5%.
- *   ch2 Drusus   1.12 -> 1.05  MONOTONICITY. Must stay under ch3's 1.06.
- *   ch2 Cassius  1.08 -> 1.03  RULE. Must step less than Drusus, the featured
- *                              threat of challenge 2 (+0.03 < +0.05).
- *   ch2 Magnus   1.04 -> 1.04  UNCHANGED -- the design's authored value. It is
- *                              already monotone against ch3's 1.10 and its
- *                              +0.04 is already under Drusus's +0.05, so nothing
- *                              forces it down and it was left alone.
- *
- * The cost is that Drusus, the strongest opponent, can now only be scaled by a
- * few percent: he is the ceiling on the whole escalation, because both Fast
- * gladiators fight him in a mirror they are losing anyway. Escalation is
- * therefore carried mostly by Cassius and Magnus. Measured challenge-3 result:
- * the worst pairing is `sura/magnus` at 8.5% and the best is `brutus/magnus` at
- * 65.0%, and every veteran's mean falls (Brutus 68.2 -> 52.5, Aquila 25.5 ->
- * 14.3, Nerva 60.0 -> 45.3).
+ * Measured challenge-3 result: the worst pairing is `sura/magnus` at 7.0% and
+ * the best is `vitus/drusus` at 67.0%, and every veteran's mean falls
+ * (Brutus 68.2 -> 53.8, Aquila 25.5 -> 13.7, Nerva 60.0 -> 49.2).
  */
 const SCALING: readonly (readonly [number, number, number])[] = [
   [1.00, 1.00, 1.00],
-  [1.05, 1.03, 1.04],
-  [1.06, 1.08, 1.10],
+  [1.00, 1.08, 1.06],
+  [1.00, 1.10, 1.12],
 ]
 
-const FEATURED: readonly (Archetype | null)[] = [null, 'fast', 'heavy']
+const FEATURED: readonly (Archetype | null)[] = [null, 'technical', 'heavy']
 
 function scaleOpponent(definition: FighterDefinition, factor: number): FighterDefinition {
   if (factor === 1) return definition
