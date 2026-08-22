@@ -470,11 +470,17 @@ export class SeriesView {
       'aria-describedby': 'assignment-instruction',
     })
     const opponentBlock = el('span', { class: 'matchup-slot__fighter' })
+    // Archetype and temperament share one line rather than stacking: they are
+    // the same kind of fact about the same opponent ("what they are" / "how
+    // they fight it"), and a fourth stacked line here cost the planning
+    // screen ~20px per slot against a height budget it has to keep (see
+    // `.matchup-slot__controls` in `style.css`).
+    const styleLine = el('span', { class: 'matchup-slot__style' })
+    styleLine.append(el('em', {}, ARCHETYPE_LABELS[opponent.archetype]), this.buildTemperamentBadge(state, boutIndex))
     opponentBlock.append(
       el('strong', {}, opponent.name),
       el('small', {}, opponent.school),
-      el('em', {}, ARCHETYPE_LABELS[opponent.archetype]),
-      this.buildTemperamentBadge(state, boutIndex),
+      styleLine,
     )
     pick.append(
       el('span', { class: 'matchup-slot__numeral' }, BOUT_NUMERALS[boutIndex]),
@@ -487,6 +493,13 @@ export class SeriesView {
       el('span', { class: 'matchup-slot__stats' }, `HP ${opponent.maxHp} ${RC.middleDot} Power ${formatPower(opponent.power)} ${RC.middleDot} Defense ${Math.round(opponent.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(opponent.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(opponent.criticalChance * 100)}%`),
     )
 
+    // `Remove` and the order selector share the slot's second grid column,
+    // stacked, instead of the selector claiming a full-width row of its own
+    // below the slot. Same DOM order as before (pick -> remove -> selector),
+    // so tab order is unchanged; the point is purely that the selector now
+    // costs the row no extra height, which is what keeps the planning screen
+    // inside its 800px budget (see `.matchup-slot__controls` in `style.css`).
+    const controls = el('div', { class: 'matchup-slot__controls' })
     if (assignedId !== null) {
       const homeName = fighterName(state.homeRoster, assignedId)
       const comparison = getAssignmentComparison(state, assignedId, boutIndex)
@@ -494,18 +507,16 @@ export class SeriesView {
         el('span', { class: 'matchup-slot__assigned' }, homeName),
         el('span', { class: 'comparison-badge', 'data-comparison': comparison }, comparison),
       )
-      const remove = el('button', {
+      controls.append(el('button', {
         class: 'matchup-slot__remove',
         type: 'button',
         'data-action': 'remove-assignment',
         'data-slot-index': String(boutIndex),
         'aria-label': `Remove ${homeName} from bout ${BOUT_NUMERALS[boutIndex]}`,
-      }, 'Remove')
-      item.append(pick, remove)
-    } else {
-      item.append(pick)
+      }, 'Remove'))
     }
-    item.append(this.buildOrderSelector(state, boutIndex))
+    controls.append(this.buildOrderSelector(state, boutIndex))
+    item.append(pick, controls)
     return item
   }
 

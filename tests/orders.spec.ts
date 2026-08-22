@@ -101,6 +101,39 @@ test('picks a per-bout order on the planning screen without touching the other b
 })
 
 // ---------------------------------------------------------------------------
+// 1b. Height budget. The order selectors and temperament badges first shipped
+//     as a full-width row beneath each matchup slot, which added ~78px per
+//     slot (~233px across three) to a screen that `style.css` documents as
+//     having had ~5px of headroom under 800px on win32 and none at all on
+//     Linux. That pushed `Confirm lineup` to y~949 -- the planning screen's
+//     primary action, below the fold on an ordinary 1280x800 laptop -- and it
+//     took `decision-panel.spec.ts`'s viewport check (which measures a
+//     dev-only panel, several screens away from this feature) to notice.
+//     Asserted here too, next to the controls that caused it, so the next
+//     addition to this screen fails against its own spec.
+// ---------------------------------------------------------------------------
+
+test('keeps the planning screen, Confirm lineup included, inside a 1280x800 viewport', async ({ page }) => {
+  const viewport = { width: 1280, height: 800 }
+  await page.setViewportSize(viewport)
+  // `openPlannedSeries` fills all three slots, which is the taller state --
+  // each occupied slot also renders a `Remove` button beside its selector.
+  await openPlannedSeries(page)
+
+  // Nothing scrolled to get here; the assertions below are about the first
+  // paint a player sees, not about what is reachable after scrolling.
+  expect(await page.evaluate(() => window.scrollY)).toBe(0)
+
+  for (const testId of ['confirm-lineup', 'order-0-standard', 'order-2-guarded', 'temperament-2']) {
+    const box = await page.getByTestId(testId).boundingBox()
+    expect(box, `${testId} has no layout box`).not.toBeNull()
+    expect(box!.y, `${testId} starts above the viewport`).toBeGreaterThanOrEqual(0)
+    expect(box!.y + box!.height, `${testId} extends below the 800px fold`).toBeLessThanOrEqual(viewport.height)
+    expect(box!.x + box!.width, `${testId} extends past the right edge`).toBeLessThanOrEqual(viewport.width)
+  }
+})
+
+// ---------------------------------------------------------------------------
 // 2. The battle HUD names the order being fought under and the foe's
 //    temperament -- the one place a player can see both mid-bout.
 // ---------------------------------------------------------------------------
