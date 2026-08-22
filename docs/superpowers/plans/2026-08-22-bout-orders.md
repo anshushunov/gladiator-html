@@ -629,6 +629,21 @@ const TEMPERAMENTS: readonly (readonly DispositionId[])[] = [
 
 Run: `npm test` → ALL PASS. `seasonBalance.test.ts`'s golden season and cohorts run against challenge-1 (all-standard) and unscaled opponents, so nothing moves; if a challenge-2/3 assertion there consumed a full `ChallengeDefinition` object shape, extend its expected object with the temperament row.
 
+> **Amended 2026-08-23, final review.** The sentence above is wrong on both
+> counts, and the error survived into the shipped suite. `seasonBalance.test.ts`
+> also measures a `fresh × challenge 3` cohort and a challenge-3 best-lineup
+> series metric, and its golden season plays all three challenges — so the
+> challenge-3 temperament row moves every one of them. Because the suite's
+> `runBout`/`cohort` calls omitted the `dispositions` argument, it went on
+> measuring a counterfactual challenge 3 with all three opponents neutral, and
+> nothing constrained the authored row at all. With the argument passed, the
+> authored `['press', 'guarded', 'press']` fails criterion 3 twice over (best
+> lineup 39.0% against a >50% floor; `sura/magnus` 3.0% against a 5% floor).
+> Challenge 3's escalation is already fully spent by the stat scaling, so its
+> temperament row cannot add difficulty; it is now
+> `['standard', 'press', 'standard']`. The grid it was chosen from is in
+> `src/content/season.ts`'s `TEMPERAMENTS` comment.
+
 - [ ] **Step 5: Commit**
 
 ```bash

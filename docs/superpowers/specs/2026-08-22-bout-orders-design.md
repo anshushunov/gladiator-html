@@ -142,6 +142,16 @@ baseline series) and teaches orders against neutral opponents first. Challenges
 alongside the stat scaling. The exact temperament assignment for challenges 2–3
 is content tuning, constrained by the balance acceptance.
 
+> **Amended 2026-08-23, final review.** "Constrained by the balance acceptance"
+> was not true as shipped: `seasonBalance.test.ts` measured challenge 3 with all
+> three opponents neutral, so nothing constrained the row. Measured properly,
+> challenge 3 has **no difficulty budget left for temperament** — `SCALING`
+> spends all of it, leaving the best three-slot lineup at 52.5% against
+> criterion 3's 50% floor. Challenge 3's row is therefore chosen for variety at
+> net-neutral difficulty (`['standard', 'press', 'standard']`), not as a further
+> escalation; the measured grid is in `src/content/season.ts`. Challenge 2 is
+> unmeasured by any criterion and remains free content tuning.
+
 There is no counter table. Order-vs-temperament interaction emerges from
 behavior: pressing a cautious opponent who keeps leaving plays differently
 than pressing an aggressor who walks into you.

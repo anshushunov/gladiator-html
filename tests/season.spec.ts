@@ -142,9 +142,15 @@ test('plays a full three-series season through the real dev command surface, end
   expect(outcomes.map(formatOutcome)).toEqual([
     'brutus vs drusus: away', 'aquila vs cassius: away', 'nerva vs magnus: home',
     'vitus vs drusus: home', 'sura vs cassius: away', 'brutus vs magnus: away',
-    'aquila vs drusus: away', 'nerva vs cassius: away', 'vitus vs magnus: away',
+    // `nerva vs cassius: home`: series 2 is challenge 3, whose Cassius presses
+    // (`content/season.ts`'s `TEMPERAMENTS` row 2). Pressing is the one
+    // temperament change that HELPS the Technical gladiator across from him --
+    // 39.5% to 50.5% over `seasonBalance.test.ts`'s fixed cohort -- and Nerva's
+    // own order is the default `standard`, so the opponent's temperament is the
+    // only changed input. Same flip, same reason, as the golden season's.
+    'aquila vs drusus: away', 'nerva vs cassius: home', 'vitus vs magnus: away',
   ])
-  expect(season.score).toEqual({ home: 2, away: 7 })
+  expect(season.score).toEqual({ home: 3, away: 6 })
 
   // The season-summary screen itself, not just the dev-API state -- a real
   // player only ever sees this DOM, never `getSeasonState()`.
@@ -339,16 +345,14 @@ test('forfeits a slot when fewer than three gladiators are fit to fight, and the
   const activeSeries = await getActiveSeriesState(page)
   expect(activeSeries!.phase).toBe('summary')
   expect(activeSeries!.results.map(formatOutcome)).toEqual([
-    // `home`, not the `away` this row froze before bout orders shipped: this
-    // is series 2, i.e. challenge 3, whose authored temperaments
-    // (`content/season.ts`'s `TEMPERAMENTS` row 2) now have Drusus fighting
-    // `press` instead of neutral. Vitus's own order is the default
-    // `standard`, which is byte-identical to the old behaviour (the state
-    // field is omitted entirely and the modifier list is empty), so the
-    // opponent's temperament is the only changed input -- a pressing Drusus
-    // trading itself into a loss is the risk half of the mechanic working,
-    // not unexplained drift.
-    'vitus vs drusus: home',
+    // `away`, the same value this row held before bout orders shipped:
+    // challenge 3's Drusus is `standard` (`content/season.ts`'s `TEMPERAMENTS`
+    // row 2), and with Vitus on the default `standard` order the whole bout is
+    // byte-identical to the pre-orders one -- the state field is omitted
+    // entirely and the modifier list is empty. An intermediate revision of the
+    // content had Drusus pressing here and this row read `home`; the
+    // `TEMPERAMENTS` comment records why challenge 3 cannot afford that.
+    'vitus vs drusus: away',
     'sura vs cassius: away',
     'forfeit vs magnus (slot 2)',
   ])

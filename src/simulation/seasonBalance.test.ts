@@ -23,6 +23,18 @@
 //   fresh   x challenge 3  -- 5 gladiators x 3 opponents x 200 seeds
 //   wounded x challenge 1  -- 5 gladiators x 3 opponents x 200 seeds
 //
+// Every one of them carries that challenge's SHIPPED opponent temperaments
+// (`content/season.ts`'s `TEMPERAMENTS`), so what is measured is the season a
+// player actually meets. This matters only to challenge 3 -- challenge 1's row
+// is frozen all-'standard', which reaches `createBattle` as the absent key it
+// always was, so those two cohorts stay bit-identical to `balance.test.ts`'s.
+// It matters a great deal to challenge 3: the first revision of this file
+// omitted the argument, and the challenge-3 criteria below were therefore
+// measuring a counterfactual season in which all three opponents fight neutral.
+// The row that omission let through failed criterion 3 on two clauses once the
+// temperaments were passed (best lineup 39.0%, `sura/magnus` 3.0%); the grid
+// that replaced it is in `content/season.ts`'s `TEMPERAMENTS` comment.
+//
 // The fifth criterion, the golden season, runs no cohort at all: it is one
 // seeded season played through three named lineups, nine bouts in total. That
 // is why the `beforeAll` is scoped to the cohort suite rather than to the file
@@ -115,7 +127,8 @@ async function measureBestLineup(challengeIndex: number): Promise<{ fighterIds: 
     for (let slot = 0; slot < opponents.length; slot += 1) {
       for (let index = 0; index < SEED_COUNT; index += 1) {
         const seriesSeed = deriveSeriesSeed(cohortSeed(index), challengeIndex)
-        perSlot[slot].push(runBout(fighter, opponents[slot], deriveBoutSeed(seriesSeed, slot)).homeWon)
+        const dispositions = { away: SEASON_CHALLENGES[challengeIndex].temperaments[slot] }
+        perSlot[slot].push(runBout(fighter, opponents[slot], deriveBoutSeed(seriesSeed, slot), undefined, dispositions).homeWon)
         if ((index + 1) % BOUTS_PER_YIELD === 0) await yieldToEventLoop()
       }
     }
@@ -170,8 +183,12 @@ describe('season roster balance cohorts (five gladiators x three challenges x 20
         // the key absent keeps this cohort bit-identical to the one
         // `balance.test.ts` runs for the same pairing.
         const startingHp = condition === 'wounded' ? { home: startingHpFor('wounded', fighter.maxHp) } : undefined
-        for (const opponent of SEASON_CHALLENGES[challengeIndex].opponents) {
-          const outcomes = await cohort(fighter, opponent, SEED_COUNT, startingHp)
+        const { opponents, temperaments } = SEASON_CHALLENGES[challengeIndex]
+        for (const [slot, opponent] of opponents.entries()) {
+          // The shipped temperament for this slot, not `standard`: a cohort that
+          // omitted it would measure a challenge nobody plays (challenge 3's
+          // Drusus and Magnus press, its Cassius guards).
+          const outcomes = await cohort(fighter, opponent, SEED_COUNT, startingHp, { away: temperaments[slot] })
           winRates.set(cohortKey(condition, challengeIndex, fighter.id, opponent.id), measure(outcomes).homeWinRate)
         }
       }
@@ -342,9 +359,15 @@ const formatOutcomes = (outcomes: readonly BoutOutcome[]): string[] =>
 const GOLDEN_OUTCOMES: readonly (readonly string[])[] = [
   ['brutus vs drusus: away', 'aquila vs cassius: away', 'nerva vs magnus: home'],
   ['vitus vs drusus: home', 'sura vs cassius: away', 'brutus vs magnus: away'],
-  ['aquila vs drusus: away', 'nerva vs cassius: away', 'vitus vs magnus: away'],
+  // `nerva vs cassius: home`, not the `away` this row froze while challenge 3's
+  // temperaments went unmeasured: challenge 3's Cassius now presses
+  // (`content/season.ts`'s `TEMPERAMENTS` row 2), and pressing is the one
+  // temperament change that HELPS the Technical gladiator facing him -- 39.5%
+  // to 50.5% over the fixed cohort. Nerva's own order is the default
+  // `standard`, so the opponent's temperament is the only changed input.
+  ['aquila vs drusus: away', 'nerva vs cassius: home', 'vitus vs magnus: away'],
 ]
-const GOLDEN_SCORE = { home: 2, away: 7 }
+const GOLDEN_SCORE = { home: 3, away: 6 }
 
 /**
  * The measured sequence, in roster order, one row per series. It is asserted
@@ -358,7 +381,10 @@ const GOLDEN_SCORE = { home: 2, away: 7 }
 const GOLDEN_DELTAS: readonly (readonly string[])[] = [
   ['brutus:fresh>wounded(fought)', 'aquila:fresh>wounded(fought)', 'nerva:fresh>bruised(fought)', 'vitus:fresh>fresh(rested)', 'sura:fresh>fresh(rested)'],
   ['brutus:wounded>broken(fought)', 'aquila:wounded>bruised(rested)', 'nerva:bruised>fresh(rested)', 'vitus:fresh>wounded(fought)', 'sura:fresh>wounded(fought)'],
-  ['brutus:broken>wounded(rested)', 'aquila:bruised>broken(fought)', 'nerva:fresh>wounded(fought)', 'vitus:wounded>broken(fought)', 'sura:wounded>bruised(rested)'],
+  // `nerva:fresh>bruised`, one rung rather than two: the same flip the outcome
+  // row above records -- he now WINS that bout, and wins it with HP to spare,
+  // which `conditionAfterBout` charges a single step for.
+  ['brutus:broken>wounded(rested)', 'aquila:bruised>broken(fought)', 'nerva:fresh>bruised(fought)', 'vitus:wounded>broken(fought)', 'sura:wounded>bruised(rested)'],
 ]
 
 function expectOk(result: SeasonCommandResult): SeasonState {

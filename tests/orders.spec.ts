@@ -283,7 +283,7 @@ test('shows every challenge\'s opponent temperaments on the season board', async
   // pass against a board that pairs the badges with the wrong opponents.
   expect(await readTemperaments(0)).toEqual(['standard', 'standard', 'standard'])
   expect(await readTemperaments(1)).toEqual(['press', 'guarded', 'standard'])
-  expect(await readTemperaments(2)).toEqual(['press', 'guarded', 'press'])
+  expect(await readTemperaments(2)).toEqual(['standard', 'press', 'standard'])
 
   // Challenge 2 is the first card a player meets a non-neutral opponent on,
   // and the badge has to read as words, not just carry a data attribute.
