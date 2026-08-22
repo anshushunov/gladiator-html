@@ -162,8 +162,7 @@ export class SeasonView {
     if (isFightable(entry.condition)) {
       card.append(el('span', { class: 'season-roster-card__hp' }, `Starting HP ${startingHpFor(entry.condition, entry.fighter.maxHp)}`))
       card.append(el('p', { class: 'season-roster-card__telegraph' }, fightTelegraph(entry.condition)))
-      const rest = restTelegraph(entry.condition)
-      if (rest) card.append(el('p', { class: 'season-roster-card__telegraph' }, rest))
+      card.append(el('p', { class: 'season-roster-card__telegraph' }, restTelegraph(entry.condition)))
     } else {
       card.append(el('span', { class: 'season-roster-card__hp' }, 'Cannot fight this series'))
     }

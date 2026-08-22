@@ -35,8 +35,10 @@ describe('rest telegraph', () => {
     expect(restTelegraph('broken')).toBe('Rest: broken → wounded')
   })
 
-  it('says nothing when resting cannot move the ladder', () => {
+  // Benching is half the decision, so the no-op is stated rather than hidden:
+  // "stays fresh" is what tells the player resting this one buys nothing.
+  it('says so out loud when resting cannot move the ladder', () => {
     expect(conditionAfterRest('fresh')).toBe('fresh')
-    expect(restTelegraph('fresh')).toBeNull()
+    expect(restTelegraph('fresh')).toBe('Rest: stays fresh')
   })
 })

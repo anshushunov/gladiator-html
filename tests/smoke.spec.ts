@@ -793,6 +793,12 @@ test('matches the stable planning snapshot', async ({ page }) => {
   await expect(page.getByTestId('roster-disabled')).toHaveCount(0)
   await expect(page.getByTestId('forfeit-notice')).toHaveCount(0)
   await expect(page.getByTestId('fighter-brutus')).toContainText('Fight: → bruised, or wounded on a loss or a win under 25% HP')
+  await expect(page.getByTestId('fighter-brutus')).toContainText('Rest: stays fresh')
+  // The stats line is asserted as text, not left to the screenshot: even at
+  // 0.002 the pixel check swallowed `Power 22` -> `Power 22.0` across all five
+  // cards, so a short text change is exactly what it cannot see.
+  await expect(page.getByTestId('fighter-brutus')).toContainText('HP 324 · Power 22.0')
+  await expect(page.locator('.matchup-slot').first()).toContainText('HP 350 · Power 21.0')
 
   await expect(page).toHaveScreenshot('planning.png', { fullPage: true, maxDiffPixelRatio: 0.002 })
 })

@@ -4,7 +4,7 @@ import type { Archetype, FighterDefinition, FighterSide } from '../simulation/fi
 import { fighterBySide, type BattleState } from '../simulation/battle'
 import { isFightable, startingHpFor } from '../simulation/condition'
 import type { RosterEntry } from '../simulation/season'
-import { CONDITION_LABELS, fightTelegraph } from './conditionTelegraph'
+import { CONDITION_LABELS, fightTelegraph, restTelegraph } from './conditionTelegraph'
 import { formatPower } from './formatPower'
 
 export type SeriesIntent =
@@ -192,9 +192,17 @@ export class SeriesView {
       case 'pick-slot': {
         const boutIndex = this.parseSlot(target)
         if (boutIndex === null || this.selectedFighterId === null) return
-        this.pendingFocus = { mode: 'after-assign' }
-        this.onIntent({ type: 'assign', fighterId: this.selectedFighterId, boutIndex })
+        // Clear the selection BEFORE dispatching: `onIntent` re-renders
+        // synchronously, and the render reads `selectedFighterId`. Clearing
+        // afterwards left the instruction line promising "choose a different
+        // slot to move them, or press Escape to clear" against a selection
+        // that was already gone -- and since the runtime re-renders only when
+        // the season object changes, that stale sentence survived until the
+        // player's next action, not merely one frame.
+        const fighterId = this.selectedFighterId
         this.selectedFighterId = null
+        this.pendingFocus = { mode: 'after-assign' }
+        this.onIntent({ type: 'assign', fighterId, boutIndex })
         return
       }
       case 'remove-assignment': {
@@ -311,8 +319,19 @@ export class SeriesView {
     const heading = el('h2', { id: 'planning-heading', tabindex: '-1' }, 'Plan the series')
     const instruction = el('p', { id: 'assignment-instruction', class: 'planning__instruction' }, this.instructionText(state))
     const counterRule = el('p', { class: 'planning__counter-rule' }, `Heavy ${RC.arrow} Fast ${RC.arrow} Technical ${RC.arrow} Heavy`)
+    // Every gladiator in the season roster gets a card, in roster order:
+    // fightable ones as buttons, broken ones as disabled cards carrying the
+    // rest forecast. The design doc's UI section calls for exactly that
+    // ("`broken` cards are disabled and labelled"); dropping them from the
+    // grid entirely hid one half of the decision the screen exists to
+    // support -- what fielding costs versus what resting would restore.
     const roster = el('div', { class: 'roster-grid' })
-    for (const fighter of state.homeRoster) roster.append(this.buildFighterOption(state, fighter))
+    const fightableIds = new Set(state.homeRoster.map(({ id }) => id))
+    for (const entry of this.lastRoster) {
+      roster.append(fightableIds.has(entry.fighter.id)
+        ? this.buildFighterOption(state, entry.fighter)
+        : this.buildUnavailableFighterCard(entry))
+    }
     const matchups = el('ol', { class: 'matchup-list', 'aria-label': 'Matchup slots' })
     for (let index = 0; index < state.opponents.length; index += 1) {
       matchups.append(this.buildMatchupSlot(state, index as BoutIndex))
@@ -333,6 +352,31 @@ export class SeriesView {
     // between-bouts screen.
     if (requiredAssignmentCount(state) < 3) section.append(this.buildForfeitNotice(state))
     return section
+  }
+
+  /** A broken gladiator's card: same shape as a fightable one, disabled, and
+   * carrying the rest forecast — the only move available for them this series. */
+  private buildUnavailableFighterCard(entry: RosterEntry): HTMLButtonElement {
+    const card = el('button', {
+      class: 'fighter-option fighter-option--unavailable',
+      type: 'button',
+      'data-fighter-id': entry.fighter.id,
+      'data-testid': `fighter-${entry.fighter.id}`,
+      'data-role': 'unavailable-fighter',
+    })
+    card.disabled = true
+    const title = el('span', { class: 'fighter-option__title' })
+    title.append(
+      el('span', { class: 'fighter-option__name' }, entry.fighter.name),
+      el('span', { class: 'fighter-option__archetype' }, ARCHETYPE_LABELS[entry.fighter.archetype]),
+    )
+    const conditionRow = el('span', { class: 'fighter-option__condition' })
+    conditionRow.append(
+      el('span', { class: 'condition-badge', 'data-testid': 'condition-badge', 'data-condition': entry.condition }, CONDITION_LABELS[entry.condition]),
+      el('span', { class: 'fighter-option__hp' }, 'Cannot fight this series'),
+    )
+    card.append(title, conditionRow, el('span', { class: 'fighter-option__telegraph' }, restTelegraph(entry.condition)))
+    return card
   }
 
   private buildDisabledRosterRow(state: SeriesState): HTMLElement | null {
@@ -377,7 +421,6 @@ export class SeriesView {
     )
     button.append(
       title,
-      el('span', { class: 'fighter-option__school' }, fighter.school),
       // `formatPower` here too, not the raw number: the opponent's power in
       // the matchup slot beside this card already goes through it, so a home
       // gladiator read `Power 22` next to `Power 19.0` for the same stat.
@@ -391,7 +434,11 @@ export class SeriesView {
         el('span', { class: 'condition-badge', 'data-testid': 'condition-badge', 'data-condition': entry.condition }, CONDITION_LABELS[entry.condition]),
         el('span', { class: 'fighter-option__hp' }, `Starting HP ${startingHpFor(entry.condition, fighter.maxHp)}`),
       )
-      button.append(conditionRow, el('span', { class: 'fighter-option__telegraph' }, fightTelegraph(entry.condition)))
+      button.append(
+        conditionRow,
+        el('span', { class: 'fighter-option__telegraph' }, fightTelegraph(entry.condition)),
+        el('span', { class: 'fighter-option__telegraph' }, restTelegraph(entry.condition)),
+      )
     }
     return button
   }

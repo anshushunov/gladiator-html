@@ -200,10 +200,14 @@ test('keeps a gladiator driven to broken off the roster, says why on the plannin
   const rejected = await page.evaluate(() => (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__.assign('brutus', 0))
   expect(rejected).toEqual({ ok: false, reason: 'fighter-unavailable' })
 
-  // Only the fightable gladiators (`vitus`, `sura`) get a card at all; a
-  // broken one is absent from the pickable roster, not merely disabled.
+  // Every gladiator keeps a card; only the two fightable ones are pickable.
+  // A broken one stays on screen as a disabled card carrying its rest
+  // forecast, because benching is the other half of the decision this screen
+  // supports — dropping them from the grid hid what waiting would buy.
   await expect(page.locator('[data-role="home-fighter"]')).toHaveCount(2)
-  await expect(page.getByTestId('fighter-brutus')).toHaveCount(0)
+  await expect(page.locator('[data-role="unavailable-fighter"]')).toHaveCount(3)
+  await expect(page.getByTestId('fighter-brutus')).toBeDisabled()
+  await expect(page.getByTestId('fighter-brutus')).toContainText('Rest: broken → wounded')
 
   // The planning screen says why the missing three are missing --
   // `SeriesView.buildDisabledRosterRow` -- rather than leaving their absence

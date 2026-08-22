@@ -33,7 +33,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { COMBAT_STYLES } from '../content/combatStyles'
 import { BASELINE_TEST_SEED } from '../content/mvpSeries'
 import { SEASON_CHALLENGES, SEASON_ROSTER } from '../content/season'
-import { cohort, measure, pct, reportTable } from '../testSupport/balanceCohorts'
+import { BOUTS_PER_YIELD, cohort, cohortSeed, measure, pct, reportTable, runBout, yieldToEventLoop } from '../testSupport/balanceCohorts'
 import { isFightable, startingHpFor, type FighterCondition } from './condition'
 import type { Archetype, FighterDefinition } from './fighters'
 import {
@@ -41,6 +41,7 @@ import {
   startNextBout, startNextSeries,
   type ConditionDelta, type SeasonCommandResult, type SeasonState,
 } from './season'
+import { deriveBoutSeed, deriveSeriesSeed } from './random'
 import type { BoutOutcome } from './series'
 
 const SEED_COUNT = 200
@@ -86,27 +87,53 @@ const aggregate = (condition: CohortCondition, challengeIndex: number, fighterId
   SEASON_CHALLENGES[challengeIndex].opponents.reduce((sum, opponent) => sum + rate(condition, challengeIndex, fighterId, opponent.id), 0) /
   SEASON_CHALLENGES[challengeIndex].opponents.length
 
-/** Probability of taking a three-bout series given each bout's own independent win rate: at least two of the three. */
-function seriesWinRate([a, b, c]: readonly number[]): number {
-  return a * b * c + a * b * (1 - c) + a * (1 - b) * c + (1 - a) * b * c
-}
-
 /**
  * The best three-slot lineup a full `fresh` roster can field against a
- * challenge: the injective assignment of three distinct gladiators to the
- * three slots (60 of them, for five gladiators) with the highest probability
- * of winning the series. Pure arithmetic over the already-measured cohort --
- * it simulates nothing.
+ * challenge, measured on real series rather than estimated from marginals.
+ *
+ * An earlier revision multiplied the three pairings' independently-measured
+ * win rates. That is a different quantity from the one the criterion asks
+ * about, on two counts. The cohort's marginals are measured on raw battle
+ * seeds (`cohortSeed`), whereas a real series draws
+ * `deriveBoutSeed(deriveSeriesSeed(seasonSeed, 2), slot)` — so the arithmetic
+ * joined numbers that no single season ever produces together; and taking a
+ * maximum over sixty correlated estimates biases the winner upward. Measured:
+ * the estimate read 58.3% where the same lineup actually takes 52.5% of real
+ * seasons. The margin over the 50% floor is genuinely that thin, and a test
+ * that reports it as wider is the one thing this assertion must not do.
+ *
+ * So: play the 15 challenge-3 pairings (five gladiators x three slots) under
+ * each of the 200 season seeds, then score every injective lineup on the
+ * joint outcome — did it take at least two bouts of the same season.
  */
-function bestLineup(challengeIndex: number): { fighterIds: string[]; seriesWinRate: number } {
+async function measureBestLineup(challengeIndex: number): Promise<{ fighterIds: string[]; seriesWinRate: number }> {
   const opponents = SEASON_CHALLENGES[challengeIndex].opponents
+  // wins[fighterId][slot] = one boolean per season seed
+  const wins = new Map<string, boolean[][]>()
+  for (const fighter of SEASON_ROSTER) {
+    const perSlot: boolean[][] = opponents.map(() => [])
+    for (let slot = 0; slot < opponents.length; slot += 1) {
+      for (let index = 0; index < SEED_COUNT; index += 1) {
+        const seriesSeed = deriveSeriesSeed(cohortSeed(index), challengeIndex)
+        perSlot[slot].push(runBout(fighter, opponents[slot], deriveBoutSeed(seriesSeed, slot)).homeWon)
+        if ((index + 1) % BOUTS_PER_YIELD === 0) await yieldToEventLoop()
+      }
+    }
+    wins.set(fighter.id, perSlot)
+  }
+
   let best: { fighterIds: string[]; seriesWinRate: number } | null = null
   for (const first of SEASON_ROSTER) {
     for (const second of SEASON_ROSTER) {
       for (const third of SEASON_ROSTER) {
         const fighterIds = [first.id, second.id, third.id]
         if (new Set(fighterIds).size !== 3) continue
-        const value = seriesWinRate(fighterIds.map((id, slot) => rate('fresh', challengeIndex, id, opponents[slot].id)))
+        let taken = 0
+        for (let index = 0; index < SEED_COUNT; index += 1) {
+          const won = fighterIds.filter((id, slot) => wins.get(id)![slot][index]).length
+          if (won >= 2) taken += 1
+        }
+        const value = taken / SEED_COUNT
         if (!best || value > best.seriesWinRate) best = { fighterIds, seriesWinRate: value }
       }
     }
@@ -207,7 +234,7 @@ describe('season roster balance cohorts (five gladiators x three challenges x 20
   // 3. Escalation is monotone and survivable
   // -------------------------------------------------------------------------
 
-  it('escalates against every veteran while keeping challenge 3 survivable for the whole roster', () => {
+  it('escalates against every veteran while keeping challenge 3 survivable for the whole roster', async () => {
     const failures: string[] = []
 
     for (const veteran of VETERANS) {
@@ -231,15 +258,10 @@ describe('season roster balance cohorts (five gladiators x three challenges x 20
     // roster where every single gladiator is a coin-flip loser, which is
     // exactly the season this slice must not ship.
     //
-    // Read off the already-measured `fresh x challenge 3` cohort, no extra
-    // bouts: the best lineup is the injective assignment of three of the five
-    // gladiators to the three slots that maximizes the probability of taking
-    // the series (two bouts of three). The three bouts are combined as
-    // independent draws because they are: `deriveBoutSeed` gives each slot
-    // its own stream, so within one series the three pairings share no
-    // randomness. Measured at 58.3% for `vitus/nerva/brutus`, the best of
-    // the sixty.
-    const best = bestLineup(CHALLENGE_3)
+    // Measured on real series under production seeding, not estimated from
+    // the cohort's marginals — see `measureBestLineup` for why the two differ
+    // and by how much.
+    const best = await measureBestLineup(CHALLENGE_3)
     if (best.seriesWinRate <= 0.5) {
       failures.push(`best challenge-3 lineup ${best.fighterIds.join('/')} takes the series only ${pct(best.seriesWinRate)} of the time, not a majority`)
     }
@@ -247,9 +269,12 @@ describe('season roster balance cohorts (five gladiators x three challenges x 20
     if (failures.length > 0) {
       reportTable('season cohorts -- fresh vs challenge 1', cohortTable('fresh', CHALLENGE_1))
       reportTable('season cohorts -- fresh vs challenge 3', cohortTable('fresh', CHALLENGE_3))
+      reportTable('best challenge-3 lineup (measured on real series)', [[best.fighterIds.join('/'), pct(best.seriesWinRate)]])
     }
     expect(failures).toEqual([])
-  })
+    // 3000 extra bouts (5 gladiators x 3 slots x 200 season seeds) on top of
+    // the shared cohorts, so this block carries its own generous budget.
+  }, COHORT_TIMEOUT_MS)
 
   // -------------------------------------------------------------------------
   // 4. Condition bites

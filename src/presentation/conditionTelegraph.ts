@@ -33,10 +33,12 @@ export function fightTelegraph(condition: FighterCondition): string {
   return `Fight: → ${onCleanWin}, or ${onLossOrLowHpWin} on a loss or a win under 25% HP`
 }
 
-/** "Rest: wounded -> bruised" -- `null` when resting would not move the
- * ladder (a `fresh` gladiator who sits out stays `fresh`). */
-export function restTelegraph(condition: FighterCondition): string | null {
+/** "Rest: wounded -> bruised". Benching is half of the decision this screen
+ * exists to support, so it is always stated -- including the no-op case,
+ * where saying "stays fresh" out loud is what tells the player that resting
+ * this gladiator buys nothing. */
+export function restTelegraph(condition: FighterCondition): string {
   const after = conditionAfterRest(condition)
-  if (after === condition) return null
+  if (after === condition) return `Rest: stays ${CONDITION_LABELS[condition].toLowerCase()}`
   return `Rest: ${CONDITION_LABELS[condition].toLowerCase()} → ${CONDITION_LABELS[after].toLowerCase()}`
 }
