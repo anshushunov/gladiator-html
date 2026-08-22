@@ -1,11 +1,13 @@
 import { advanceBattleTicks, createBattle, fighterBySide, type BattleFinishReason, type BattleState } from './battle'
 import type { CombatStyleCatalog } from './combatActions'
 import type { DecisionCollector } from './decisionDiagnostics'
+import { isDispositionId, type DispositionId } from './disposition'
 import { compareArchetypes, type FighterDefinition, type FighterSide, type MatchupComparison } from './fighters'
 import { deriveBoutSeed } from './random'
 
 export type BoutIndex = 0 | 1 | 2
 export type SeriesPhase = 'planning' | 'fighting' | 'between-bouts' | 'summary'
+export type SeriesOrders = readonly [DispositionId, DispositionId, DispositionId]
 
 /** A slot during planning: either a chosen gladiator or still empty. */
 export type PlanningSlot = { kind: 'fighter'; fighterId: string } | null
@@ -24,12 +26,13 @@ export interface BoutResult {
   endedBy: BattleFinishReason
   durationTicks: number
   remainingHpRatio: { home: number; away: number }
+  homeOrder: DispositionId
 }
 export type BoutOutcome =
   | ({ kind: 'fought' } & BoutResult)
   | { kind: 'forfeit'; boutIndex: BoutIndex; opponentId: string }
 
-export type SeriesCommandFailure = 'lineup-locked' | 'lineup-incomplete' | 'slot-empty' | 'no-bout-pending' | 'series-not-finished'
+export type SeriesCommandFailure = 'lineup-locked' | 'lineup-incomplete' | 'slot-empty' | 'no-bout-pending' | 'series-not-finished' | 'order-locked'
 export type SeriesCommandResult = { ok: true; state: SeriesState } | { ok: false; state: SeriesState; reason: SeriesCommandFailure }
 
 export interface SeriesState {
@@ -45,6 +48,8 @@ export interface SeriesState {
   activeBattle?: BattleState
   results: readonly BoutOutcome[]
   score: SeriesScore
+  orders: SeriesOrders
+  opponentDispositions: readonly DispositionId[]
 }
 
 export interface SeriesConfig {
@@ -53,6 +58,8 @@ export interface SeriesConfig {
   seed: number
   combatStyles: CombatStyleCatalog
   homeStartingHpByFighterId: Readonly<Record<string, number>>
+  /** Per-opponent-slot temperament; default all 'standard'. */
+  opponentDispositions?: readonly DispositionId[]
 }
 
 export function createSeries(config: SeriesConfig): SeriesState {
@@ -68,6 +75,8 @@ export function createSeries(config: SeriesConfig): SeriesState {
     activeBoutIndex: null,
     results: [],
     score: { home: 0, away: 0 },
+    orders: ['standard', 'standard', 'standard'],
+    opponentDispositions: config.opponentDispositions ?? config.opponents.map(() => 'standard' as const),
   }
 }
 
@@ -147,7 +156,28 @@ function startBoutBattle(state: SeriesState, boutIndex: BoutIndex): BattleState 
     seed: deriveBoutSeed(state.seed, boutIndex),
     combatStyles: state.combatStyles,
     startingHp: { home: state.homeStartingHpByFighterId[slot.fighterId] },
+    dispositions: { home: state.orders[boutIndex], away: state.opponentDispositions[boutIndex] },
   })
+}
+
+/**
+ * Sets the order one bout will be fought under. Planning: any slot. Between
+ * bouts: only the next pending slot (`activeBoutIndex + 1`) — everything at
+ * or before `activeBoutIndex` is already resolved, everything later is not
+ * yet the next decision. Started/finished bouts and other phases refuse with
+ * 'order-locked'. Invalid ids/indices are programmer errors and throw,
+ * matching unknown-fighter handling.
+ */
+export function setBoutOrder(state: SeriesState, boutIndex: number, order: DispositionId): SeriesCommandResult {
+  assertBoutIndex(boutIndex)
+  if (!isDispositionId(order)) throw new Error(`Invalid disposition: ${String(order)}`)
+  const slot = boutIndex as BoutIndex
+  const allowed = state.phase === 'planning'
+    || (state.phase === 'between-bouts' && state.activeBoutIndex !== null && slot === state.activeBoutIndex + 1)
+  if (!allowed) return { ok: false, state, reason: 'order-locked' }
+  const orders = [...state.orders] as [DispositionId, DispositionId, DispositionId]
+  orders[slot] = order
+  return { ok: true, state: { ...state, orders } }
 }
 
 export function confirmLineup(state: SeriesState): SeriesCommandResult {
@@ -185,6 +215,7 @@ export function rematch(state: SeriesState): SeriesCommandResult {
       activeBattle: undefined,
       results: [],
       score: { home: 0, away: 0 },
+      orders: ['standard', 'standard', 'standard'],
     },
   }
 }
@@ -216,6 +247,7 @@ export function advanceSeriesTicks(state: SeriesState, ticks: number, collector?
       home: home.hp / home.definition.maxHp,
       away: away.hp / away.definition.maxHp,
     },
+    homeOrder: state.orders[boutIndex],
   }
   const score: SeriesScore = {
     home: state.score.home + (battle.winnerSide === 'home' ? 1 : 0),
