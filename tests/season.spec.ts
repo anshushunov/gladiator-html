@@ -278,7 +278,16 @@ test('forfeits a slot when fewer than three gladiators are fit to fight, and the
   const activeSeries = await getActiveSeriesState(page)
   expect(activeSeries!.phase).toBe('summary')
   expect(activeSeries!.results.map(formatOutcome)).toEqual([
-    'vitus vs drusus: away',
+    // `home`, not the `away` this row froze before bout orders shipped: this
+    // is series 2, i.e. challenge 3, whose authored temperaments
+    // (`content/season.ts`'s `TEMPERAMENTS` row 2) now have Drusus fighting
+    // `press` instead of neutral. Vitus's own order is the default
+    // `standard`, which is byte-identical to the old behaviour (the state
+    // field is omitted entirely and the modifier list is empty), so the
+    // opponent's temperament is the only changed input -- a pressing Drusus
+    // trading itself into a loss is the risk half of the mechanic working,
+    // not unexplained drift.
+    'vitus vs drusus: home',
     'sura vs cassius: away',
     'forfeit vs magnus (slot 2)',
   ])
