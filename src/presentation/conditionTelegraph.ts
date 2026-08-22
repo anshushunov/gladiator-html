@@ -19,10 +19,17 @@ export const CONDITION_LABELS: Record<FighterCondition, string> = { fresh: 'Fres
 /** "Fight: → bruised, or wounded on a loss or a win under 25% HP" -- never
  * called for `broken` (not fightable). The first outcome is a clean win at
  * full remaining HP (one ladder step); the second is either a loss or a win
- * that ends under 25% HP (both cost two steps, per `conditionAfterBout`). */
+ * that ends under 25% HP (both cost two steps, per `conditionAfterBout`).
+ *
+ * The two ends collapse into one sentence when they name the same rung: a
+ * `wounded` gladiator is one step from `broken` on a clean win and two on a
+ * loss, and the ladder clamps, so both branches read `broken`. Spelling that
+ * out as "→ broken, or broken on a loss" reads as a rendering bug rather than
+ * as the warning it is. */
 export function fightTelegraph(condition: FighterCondition): string {
   const onCleanWin = CONDITION_LABELS[conditionAfterBout(condition, { won: true, remainingHpRatio: 1 })].toLowerCase()
   const onLossOrLowHpWin = CONDITION_LABELS[conditionAfterBout(condition, { won: false, remainingHpRatio: 0 })].toLowerCase()
+  if (onCleanWin === onLossOrLowHpWin) return `Fight: → ${onCleanWin}, whatever the outcome`
   return `Fight: → ${onCleanWin}, or ${onLossOrLowHpWin} on a loss or a win under 25% HP`
 }
 

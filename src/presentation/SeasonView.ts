@@ -145,16 +145,18 @@ export class SeasonView {
     card.append(el('span', { class: 'season-roster-card__school' }, entry.fighter.school))
     card.append(conditionBadge(entry.condition))
 
+    // A gladiator who rested while already `fresh` gets a delta whose ends are
+    // equal -- `conditionAfterRest` clamps at the top of the ladder. Rendering
+    // "Fresh -> Fresh (rested)" is noise on the one screen whose job is to show
+    // what the last series changed, so an unchanged delta says so plainly
+    // instead.
     const delta = deltas.find((candidate) => candidate.fighterId === entry.fighter.id)
     if (delta) {
       const causeLabel = delta.cause === 'fought' ? 'fought' : 'rested'
-      card.append(
-        el(
-          'p',
-          { class: 'condition-delta', 'data-testid': 'condition-delta' },
-          `${CONDITION_LABELS[delta.before]} ${RC.arrow} ${CONDITION_LABELS[delta.after]} (${causeLabel})`,
-        ),
-      )
+      const text = delta.before === delta.after
+        ? `Unchanged (${causeLabel})`
+        : `${CONDITION_LABELS[delta.before]} ${RC.arrow} ${CONDITION_LABELS[delta.after]} (${causeLabel})`
+      card.append(el('p', { class: 'condition-delta', 'data-testid': 'condition-delta' }, text))
     }
 
     if (isFightable(entry.condition)) {
