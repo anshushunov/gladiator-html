@@ -1,0 +1,54 @@
+# Regenerates the Linux screenshot baselines in the environment that actually
+# compares them.
+#
+# Baselines are per-OS, and until now the Linux set was captured locally in
+# `mcr.microsoft.com/playwright:v1.62.1-noble` while CI compares on
+# `ubuntu-latest` + `npx playwright install`. Those two render text
+# differently, which the old shared `maxDiffPixelRatio: 0.04` masked -- once
+# the DOM-only screens were tightened to 0.002, the mismatch surfaced as a
+# permanently red CI on a branch that was green locally and green in the
+# container.
+#
+# Guessing at a matching local image is a ten-minute round trip per attempt,
+# so this job removes the guess: it captures on the same runner image the
+# `checks` workflow uses and commits whatever moved. Run it from the Actions
+# tab (or `gh workflow run update-baselines.yml --ref <branch>`) after an
+# intentional UI change, then review the committed PNGs before merging --
+# this job regenerates baselines, it does not judge them.
+name: update baselines
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test --update-snapshots
+
+      # Only the Linux set: a run here must never touch the win32 baselines a
+      # developer captured on their own machine.
+      - name: Commit regenerated Linux baselines
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/__screenshots__/linux/
+          if git diff --cached --quiet; then
+            echo "No baseline moved -- nothing to commit."
+            exit 0
+          fi
+          git diff --cached --name-only
+          git commit -m "test(e2e): regenerate Linux baselines on the CI runner image"
+          git push origin HEAD:${{ github.ref_name }}
