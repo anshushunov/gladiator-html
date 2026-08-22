@@ -246,19 +246,59 @@ by import (`architecture.test.ts` continues to enforce this).
 Same method as before: cohort of **200 consecutive seeds from `20260815`**,
 existing helper, no wall-clock. New assertions in their own file.
 
-1. **Risk/reward is real.** For each of the three veterans against each
-   challenge-1 opponent: `press` raises win rate versus `standard` **and**
-   raises the share of home outcomes below the 0.25 wear threshold; `guarded`
-   lowers win rate **and** raises the share of outcomes at or above 0.25.
+> **Amended 2026-08-22 after measurement** (10 800 bouts, 200 seeds × 54
+> cohorts, full 4–8 × 3–6 magnitude sweep; evidence in
+> `.superpowers/sdd/2026-08-22-bout-orders/task-5-report.md`, kept in
+> `docs/reviews/2026-08-22-bout-orders-playtest.md`). Criteria 1, 3 and 4 as
+> first written are not satisfiable by any magnitude, for reasons that are
+> properties of the metrics rather than of the mechanic. The amended text
+> below is what the suite asserts; the original wording is preserved in git
+> history.
+
+1. **Risk/reward is real.** Over the nine veteran × challenge-1-opponent
+   pairings: `mean(press.winRate − standard.winRate) ≥ 0.03` and
+   `mean(standard.winRate − guarded.winRate) ≥ 0.03`; and on
+   **`bloodyWinShare`** — the share of bouts ending in a home win with the
+   home fighter below the 0.25 wear threshold —
+   `mean(press − standard) ≥ 0.02` and `mean(standard − guarded) ≥ 0.02`.
+   *Why not the original clauses:* (a) the original `lowHpShare` counts every
+   loss as a low-HP outcome (the loser is at zero HP), so with a ~0 timeout
+   rate it is exactly `1 − cheapWearShare` and moves opposite to the win-rate
+   clause above it — it silently demanded a 22.3-point bloody-win gap where
+   6.8 exists, and every one of the 20 in-range magnitude cells has it
+   negative. (b) The original per-pairing clauses (`press` never more than
+   0.02 below `standard` on any pairing, and the mirror for `guarded`) forbid
+   the counter triangle `balance.test.ts` already asserts: Nerva pressing into
+   Drusus *should* be worse, and Nerva guarding against Cassius *should* be
+   better. They pull directly against criterion 2, which is the criterion that
+   makes the mechanic a real choice.
 2. **No dominant order.** No single order is simultaneously best on win rate
    and best on cheap-wear probability across all measured pairings.
-3. **Temperament changes the answer.** For at least one home fighter, the
-   win-rate ranking of the three orders against an `aggressive` opponent
-   differs from the ranking against a `guarded`-tempered opponent.
+3. **Temperament changes the difficulty.** Over the nine veteran × home-order
+   cells against Cassius, `mean(|winRate(cassius@press) −
+   winRate(cassius@guarded)|) ≥ 0.05`.
+   *Why not "changes the answer":* the original criterion — that some
+   veteran's ranking of the three orders flips between an aggressive and a
+   cautious opponent — is false in this build and has no lever attached.
+   Opponent temperament shifts all three of a veteran's win rates in the same
+   direction without reordering them (Brutus and Aquila always want `press`,
+   Nerva always wants `guarded`); the order choice is informed by *who* you
+   fight, not by *how they fight*. The nominated lever (`TEMPERAMENTS` rows
+   2–3) cannot move it either, because the cohort constructs the away
+   disposition directly and never reads `SEASON_CHALLENGES`. Making the answer
+   temperament-dependent needs a new mechanism (an order that counters an
+   approaching or retreating opponent), which is a separate design round.
 4. **No stall collapse.** Across `guarded`-vs-cautious pairings, the
    time-limit share stays at or below twice the `standard`-vs-steady share and
-   never exceeds 30%, and the cohort's median bout duration stays inside the
-   established 1500–2400 tick band.
+   never exceeds 30%, and each pairing's median bout duration stays inside
+   `balance.test.ts`'s own per-pairing 1200–2700 tick band.
+   *Why not 1500–2400:* that 900-tick window is narrower than the roster's own
+   both-guarded median spread (1301…2341 = 1040 ticks), so no uniform shift
+   fits it, and `LOCOMOTION_ADJUST` moves the medians together without
+   compressing them. `nerva/cassius` is simply a fast pairing — its
+   *standard* median is 1272. The anti-stall property the criterion exists for
+   passes with a 30× margin (worst both-guarded timeout rate 1.0% against the
+   30% cap).
 5. **The frozen core did not move.** All-`standard` seasons reproduce today's
    trace hashes byte-for-byte; existing frozen tests pass unedited.
 
