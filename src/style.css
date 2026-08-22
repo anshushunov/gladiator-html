@@ -278,6 +278,38 @@ h1 span { color: #c78b4f; font-style: italic; }
 
 .matchup-slot__remove:hover { border-color: #8e3f33; }
 
+/* Order selector -- a three-way radio group for one bout's home order,
+   styled after `.speed-control`/`.speed-control__button` (same "small flex
+   row of buttons, active one picked out by `aria-pressed`" shape). Always a
+   sibling of the slot's `.matchup-slot__pick`/`.matchup-slot__remove`
+   buttons, never nested inside either (nested buttons are invalid HTML) --
+   `grid-column: 1 / -1` here is what lets it span the full width of
+   `.matchup-slot`'s two-column grid instead of being squeezed into the first
+   (`minmax(0, 1fr)`) column alone. */
+.order-selector { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
+.order-selector__button { padding: 8px 12px; font-size: 11px; }
+.order-selector__telegraph { flex-basis: 100%; margin: 2px 0 0; color: #8f8577; font-size: 10.5px; line-height: 1.15; }
+
+/* Temperament badge -- the opponent's counterpart to `.condition-badge`,
+   same pill shape, colour-coded by `data-temperament` instead of
+   `data-condition`: steady reads neutral (no lean either way), press reads
+   warm (the opponent commits, same warm register `.comparison-badge`'s
+   `disadvantage` variant uses for "this favours them"), guarded reads cool. */
+.temperament-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.temperament-badge[data-temperament="standard"] { color: #c9b795; border-color: #6d645d; background: rgba(109, 100, 93, 0.25); }
+.temperament-badge[data-temperament="press"] { color: #e0a06a; border-color: #7a4f2f; background: rgba(122, 79, 47, 0.24); }
+.temperament-badge[data-temperament="guarded"] { color: #8fb3d0; border-color: #2f5a7a; background: rgba(47, 90, 122, 0.22); }
+
 .planning__confirm { margin-top: 20px; }
 
 .roster-disabled {
@@ -414,6 +446,8 @@ h1 span { color: #c78b4f; font-style: italic; }
 .interstitial h2 { margin: 0 0 8px; font-family: Georgia, serif; font-size: 24px; font-weight: 500; }
 .interstitial__result { margin: 0 0 6px; font-size: 15px; font-weight: 700; }
 .interstitial__score, .interstitial__next { margin: 0 0 6px; color: #c9b795; font-size: 14px; }
+.interstitial .temperament-badge { margin-bottom: 8px; }
+.interstitial .order-selector { margin-bottom: 4px; }
 .interstitial .button { margin-top: 10px; }
 
 .summary {

@@ -19,6 +19,7 @@ import {
   continueSeason,
   createSeason,
   rematchSeason,
+  setBoutOrder,
   startNextBout,
   startNextSeries,
   unassignSlot,
@@ -29,6 +30,7 @@ import {
 import { advanceSeriesTicks, type BoutIndex, type SeriesPhase, type SeriesState } from './simulation/series'
 import { TICKS_PER_SECOND, type BattleState } from './simulation/battle'
 import type { CombatantId, EncounterEvent } from './simulation/encounter'
+import type { DispositionId } from './simulation/disposition'
 import type { Vec2 } from './simulation/movement'
 import { formatTraceHash } from './simulation/random'
 
@@ -52,6 +54,7 @@ interface GladiatorTestApi {
   assign(homeFighterId: string, boutIndex: BoutIndex): TestCommandResult
   unassign(boutIndex: BoutIndex): TestCommandResult
   confirm(): TestCommandResult
+  setBoutOrder(boutIndex: BoutIndex, order: DispositionId): TestCommandResult
   advanceTicks(ticks: number): void
   startNextBout(): TestCommandResult
   getActiveBattleTraceHash(): string | null
@@ -334,6 +337,7 @@ function applyIntent(intent: SeriesIntent): void {
       season = continueSeason(season).state
       break
     }
+    case 'set-order': season = setBoutOrder(season, intent.boutIndex, intent.order).state; break
     case 'toggle-pause': runtime.paused = !runtime.paused; break
     case 'set-speed': runtime.speed = intent.speed; break
     case 'toggle-sound': {
@@ -578,6 +582,7 @@ if (import.meta.env.DEV) {
     assign: (homeFighterId, boutIndex) => applySeasonCommand(assignFighter(season, homeFighterId, boutIndex)),
     unassign: (boutIndex) => applySeasonCommand(unassignSlot(season, boutIndex)),
     confirm: () => applySeasonCommand(confirmLineup(season)),
+    setBoutOrder: (boutIndex, order) => applySeasonCommand(setBoutOrder(season, boutIndex, order)),
     advanceTicks: (ticks) => {
       if (!Number.isInteger(ticks) || ticks < 0) throw new Error('Tick count must be a non-negative integer')
       for (let step = 0; step < ticks; step += 1) stepBattleTick()
