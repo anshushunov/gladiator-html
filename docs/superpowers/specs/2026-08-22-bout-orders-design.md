@@ -246,10 +246,13 @@ by import (`architecture.test.ts` continues to enforce this).
 Same method as before: cohort of **200 consecutive seeds from `20260815`**,
 existing helper, no wall-clock. New assertions in their own file.
 
-> **Amended 2026-08-22 after measurement** (10 800 bouts, 200 seeds × 54
-> cohorts, full 4–8 × 3–6 magnitude sweep; evidence in
+> **Amended 2026-08-22 after measurement**, in two runs of different sizes: the
+> full 4–8 × 3–6 magnitude sweep, 20 cells of cohort A at 60 seeds — 60 seeds ×
+> 27 cohorts = 1620 bouts per cell, 32 400 in all; and a separate confirmation
+> run at the shipped magnitudes over this suite's own cohort size, 200 seeds ×
+> 54 cohorts = 10 800 bouts. (Evidence in
 > `.superpowers/sdd/2026-08-22-bout-orders/task-5-report.md`, kept in
-> `docs/reviews/2026-08-22-bout-orders-playtest.md`). Criteria 1, 3 and 4 as
+> `docs/reviews/2026-08-22-bout-orders-playtest.md`.) Criteria 1, 3 and 4 as
 > first written are not satisfiable by any magnitude, for reasons that are
 > properties of the metrics rather than of the mechanic. The amended text
 > below is what the suite asserts; the original wording is preserved in git

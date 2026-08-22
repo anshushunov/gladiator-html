@@ -685,8 +685,11 @@ Assertions (exact numbers — these ARE the acceptance).
 
 > **Amended 2026-08-22 after measurement.** The first version of criteria 1, 3
 > and 4 was measured unsatisfiable at every magnitude in range; the reasons are
-> properties of the metrics, not of the mechanic. Evidence: 10 800 bouts,
-> full 4–8 × 3–6 sweep, `.superpowers/sdd/2026-08-22-bout-orders/task-5-report.md`.
+> properties of the metrics, not of the mechanic. Evidence, in two runs of
+> different sizes: the full 4–8 × 3–6 magnitude sweep, 20 cells of cohort A at
+> 60 seeds (60 × 27 = 1620 bouts per cell, 32 400 in all); and a separate
+> 200-seed confirmation run at the shipped magnitudes, 200 × 54 = 10 800 bouts.
+> `.superpowers/sdd/2026-08-22-bout-orders/task-5-report.md`.
 > The spec's "Balance acceptance" section carries the same amendment with the
 > full rationale. Below is the binding text.
 
