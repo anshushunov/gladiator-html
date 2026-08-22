@@ -32,7 +32,7 @@ interface SeasonStateLike {
   records: readonly { outcomes: readonly BoutOutcomeLike[] }[]
   score: { home: number; away: number }
 }
-interface SeriesStateLike { phase: string; results: readonly BoutOutcomeLike[] }
+interface SeriesStateLike { phase: string; results: readonly BoutOutcomeLike[]; orders: readonly string[] }
 interface CommandResult { ok: boolean; reason?: string }
 interface TestApi {
   getSeasonState: () => SeasonStateLike
@@ -43,6 +43,7 @@ interface TestApi {
   confirm: () => CommandResult
   advanceTicks: (ticks: number) => void
   startNextBout: () => CommandResult
+  setBoutOrder: (boutIndex: number, order: string) => CommandResult
 }
 
 function getSeasonState(page: Page): Promise<SeasonStateLike> {
@@ -168,6 +169,66 @@ test('plays a full three-series season through the real dev command surface, end
   expect(restarted.records).toEqual([])
   expect(restarted.score).toEqual({ home: 0, away: 0 })
   expect(restarted.roster.every((entry) => entry.condition === 'fresh')).toBe(true)
+})
+
+// Acceptance 6, the season half: `SeasonView.buildOutcomeRow` appends the order
+// each recorded bout was fought under. Series 0 is played under three DIFFERENT
+// orders so the assertion pins WHICH order printed on which row -- a summary
+// that read every row off the same bout, or off the live `orders` array rather
+// than the recorded `homeOrder`, passes an all-`standard` check happily. This
+// season is deliberately NOT the golden one above and asserts no outcome or
+// score: changing an order changes the bouts, and the frozen trace belongs to
+// the test that owns it.
+test('names the order each recorded bout was fought under on the season summary', async ({ page }) => {
+  await page.goto('/?seed=20260815&snapshot')
+  await expect(page.getByTestId('season-board')).toBeVisible()
+
+  await page.evaluate(() => {
+    const test = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
+    test.startNextSeries()
+    test.assign('brutus', 0)
+    test.assign('aquila', 1)
+    test.assign('nerva', 2)
+    // All three set during planning, where every slot is unlocked; bout 1 is
+    // left on its default so one row proves `Standard` prints rather than
+    // being omitted.
+    test.setBoutOrder(0, 'press')
+    test.setBoutOrder(2, 'guarded')
+  })
+  expect((await getActiveSeriesState(page))!.orders).toEqual(['press', 'standard', 'guarded'])
+
+  await page.evaluate(() => {
+    const test = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
+    test.confirm()
+    test.advanceTicks(20_000)
+  })
+  for (let attempt = 0; ; attempt += 1) {
+    const phase = (await getActiveSeriesState(page))?.phase
+    if (phase !== 'between-bouts') break
+    expect(attempt, `series stuck in 'between-bouts' after ${attempt} startNextBout() calls`).toBeLessThan(4)
+    await page.evaluate(() => {
+      const test = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
+      test.startNextBout()
+      test.advanceTicks(20_000)
+    })
+  }
+  await page.evaluate(() => (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__.continueSeason())
+
+  // Series 1 and 2 are played on their defaults, purely to reach the season
+  // summary -- it is the only screen that renders a `SeriesRecord`.
+  await playAndCloseSeries(page, ['vitus', 'sura', 'brutus'])
+  await playAndCloseSeries(page, ['aquila', 'nerva', 'vitus'])
+
+  await expect(page.getByTestId('season-summary')).toBeVisible()
+  const bouts = page.getByTestId('season-summary-bout')
+  await expect(bouts).toHaveCount(9)
+  await expect(bouts.nth(0)).toContainText('Order: Press.')
+  await expect(bouts.nth(1)).toContainText('Order: Standard.')
+  await expect(bouts.nth(2)).toContainText('Order: Guarded.')
+  // Row identity, so the three assertions above cannot be read off the wrong
+  // bouts if the summary is ever reordered.
+  await expect(bouts.nth(0)).toContainText('Brutus vs Drusus')
+  await expect(bouts.nth(2)).toContainText('Nerva vs Magnus')
 })
 
 test('keeps a gladiator driven to broken off the roster, says why on the planning screen, and still lets the player confirm the short lineup', async ({ page }) => {

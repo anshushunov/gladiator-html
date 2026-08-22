@@ -32,11 +32,22 @@
 // prints the grid it read, so a tuning pass sees the whole picture without a
 // rerun; a passing suite is silent.
 //
+// CRITERION 1'S THINNEST CLAUSE. At the shipped magnitudes the
+// `bloodyWinShare press-std` mean clears its 0.02 floor by only 0.0072 (0.0272
+// measured). It is the first clause that moves if the combat kernel, the action
+// tags or the roster change, and a red run there is a real finding about the
+// mechanic rather than noise -- read it before reaching for the magnitudes.
+//
 // The criteria below are the AMENDED ones (design doc, "Balance acceptance",
 // amended 2026-08-22 after measurement). The first authoring of criteria 1, 3
-// and 4 was measured unsatisfiable at every magnitude in range -- 10800 bouts
-// per cell over the full COMMITTED_ADJUST 4..8 x LOCOMOTION_ADJUST 3..6 sweep --
-// for reasons that were properties of the metrics rather than of the mechanic.
+// and 4 was measured unsatisfiable at every magnitude in range. Two runs, not
+// one, and they are different sizes: the exploratory sweep was the full
+// COMMITTED_ADJUST 4..8 x LOCOMOTION_ADJUST 3..6 grid, 20 cells of cohort A
+// over 60 seeds -- 60 seeds x 27 cohorts = 1620 bouts per cell, 32 400 in all;
+// the 10 800-bout figure above is the SEPARATE 200-seed confirmation run at the
+// shipped magnitudes, i.e. one cell measured at this suite's own cohort size.
+// The reasons the criteria failed were properties of the metrics rather than of
+// the mechanic.
 // The three that were replaced are recorded here so a future reader does not
 // re-derive them:
 //
@@ -253,7 +264,7 @@ describe('disposition balance cohorts (three orders x nine pairings x 200 consec
   // 3. Temperament changes the difficulty
   // -------------------------------------------------------------------------
 
-  it("moves every veteran's win rate materially when Cassius switches temperament", () => {
+  it("moves a veteran's win rate by five points on average when Cassius switches temperament", () => {
     // The amended property: temperament is a DIFFICULTY dial. It is measured as
     // the mean ABSOLUTE swing over all nine veteran x home-order cells, so a
     // temperament that merely renamed itself -- one that shifted nothing, or

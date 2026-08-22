@@ -61,16 +61,6 @@ describe('season content', () => {
   // a challenge's featured threat is the opponent it escalates HARDEST, not
   // merely a label on the card. Measured off `power`, which carries the factor
   // exactly -- `maxHp` is rounded to an integer and so is only approximate.
-  it('challenge 1 temperaments are all standard — the frozen baseline series', () => {
-    expect(SEASON_CHALLENGES[0].temperaments).toEqual(['standard', 'standard', 'standard'])
-  })
-
-  it('every challenge has one temperament per opponent', () => {
-    for (const challenge of SEASON_CHALLENGES) {
-      expect(challenge.temperaments).toHaveLength(challenge.opponents.length)
-    }
-  })
-
   it('escalates the featured threat harder than either other opponent', () => {
     const baseline = SEASON_CHALLENGES[0].opponents
     const featuredChallenges = SEASON_CHALLENGES.filter((challenge) => challenge.featuredThreat !== null)
@@ -87,6 +77,16 @@ describe('season content', () => {
         if (other === featured[0]) continue
         expect(featured[0].step).toBeGreaterThan(other.step)
       }
+    }
+  })
+
+  it('challenge 1 temperaments are all standard — the frozen baseline series', () => {
+    expect(SEASON_CHALLENGES[0].temperaments).toEqual(['standard', 'standard', 'standard'])
+  })
+
+  it('every challenge has one temperament per opponent', () => {
+    for (const challenge of SEASON_CHALLENGES) {
+      expect(challenge.temperaments).toHaveLength(challenge.opponents.length)
     }
   })
 })

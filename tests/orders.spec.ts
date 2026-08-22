@@ -98,6 +98,13 @@ test('picks a per-bout order on the planning screen without touching the other b
   await expect(badge).toContainText('Steady')
   await expect(page.getByTestId('temperament-1')).toHaveAttribute('data-temperament', 'standard')
   await expect(page.getByTestId('temperament-2')).toHaveAttribute('data-temperament', 'standard')
+
+  // Every order telegraphs its own trade, not only the selected one: the
+  // `.order-selector__telegraph` line describes the CURRENT order, so without
+  // the per-button `title` a player who never picks `Guarded` never learns
+  // what it costs (design.md, acceptance 1).
+  await expect(page.getByTestId('order-0-guarded')).toHaveAttribute('title', 'Guarded: keeps HP and wear down, worse odds to win.')
+  await expect(standard).toHaveAttribute('title', 'Standard: fights as trained.')
 })
 
 // ---------------------------------------------------------------------------
@@ -120,6 +127,12 @@ test('keeps the planning screen, Confirm lineup included, inside a 1280x800 view
   // each occupied slot also renders a `Remove` button beside its selector.
   await openPlannedSeries(page)
 
+  // The taller state is what is actually on screen: `openPlannedSeries` drives
+  // the assignments through the dev API, so a regression that stopped them
+  // reaching the DOM would leave this test measuring the SHORTER, unassigned
+  // planning screen and passing for the wrong reason.
+  await expect(page.getByTestId('slot-2')).toContainText('Nerva')
+
   // Nothing scrolled to get here; the assertions below are about the first
   // paint a player sees, not about what is reachable after scrolling.
   expect(await page.evaluate(() => window.scrollY)).toBe(0)
@@ -129,6 +142,11 @@ test('keeps the planning screen, Confirm lineup included, inside a 1280x800 view
     expect(box, `${testId} has no layout box`).not.toBeNull()
     expect(box!.y, `${testId} starts above the viewport`).toBeGreaterThanOrEqual(0)
     expect(box!.y + box!.height, `${testId} extends below the 800px fold`).toBeLessThanOrEqual(viewport.height)
+    // Both horizontal edges, for the same reason both vertical ones are
+    // checked: a control pushed off the LEFT of the viewport is just as
+    // unreachable as one pushed off the right, and `x + width <= 1280` alone
+    // is satisfied by any amount of negative `x`.
+    expect(box!.x, `${testId} starts left of the viewport`).toBeGreaterThanOrEqual(0)
     expect(box!.x + box!.width, `${testId} extends past the right edge`).toBeLessThanOrEqual(viewport.width)
   }
 })
@@ -175,6 +193,45 @@ test('changes the next bout\'s order from the interstitial and fights the next b
   await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'fighting')
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(1))
   await expect(page.getByTestId('battle-status')).toHaveText('Bout II · Aquila vs Cassius · Order: Guarded · Foe: Steady')
+})
+
+// ---------------------------------------------------------------------------
+// 3b. The series summary names the order each bout was fought under
+//     (acceptance 6, the series half). Three DIFFERENT orders on three bouts,
+//     so the assertion pins which order printed on which row: a summary that
+//     read every row's order off bout 0, or off `state.orders` instead of the
+//     recorded `homeOrder`, would pass an all-`standard` check happily.
+// ---------------------------------------------------------------------------
+
+test('names each bout\'s order on the series summary rows', async ({ page }) => {
+  await openPlannedSeries(page)
+  await page.getByTestId('order-0-press').click()
+  await page.getByTestId('order-2-guarded').click()
+  // Bout 1 is deliberately left on its default, so the middle row is the one
+  // that proves `Standard` is printed rather than omitted.
+  expect(await seriesOrders(page)).toEqual(['press', 'standard', 'guarded'])
+
+  await page.getByTestId('confirm-lineup').click()
+  // Three bouts: each `advanceTicks` burst exceeds `MAX_BOUT_TICKS` (3600), so
+  // one burst per bout always resolves it, and `start-next-bout` walks the two
+  // interstitials in between.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
+  for (let bout = 0; bout < 2; bout += 1) {
+    await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'between-bouts')
+    await page.getByTestId('start-next-bout').click()
+    await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
+  }
+  await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'summary')
+
+  const rows = page.getByTestId('bout-result')
+  await expect(rows).toHaveCount(3)
+  await expect(rows.nth(0)).toContainText('Order: Press.')
+  await expect(rows.nth(1)).toContainText('Order: Standard.')
+  await expect(rows.nth(2)).toContainText('Order: Guarded.')
+  // Row identity, so the three assertions above cannot be read off the wrong
+  // bouts if the summary is ever reordered.
+  await expect(rows.nth(0)).toContainText('Brutus vs Drusus')
+  await expect(rows.nth(2)).toContainText('Nerva vs Magnus')
 })
 
 // ---------------------------------------------------------------------------
