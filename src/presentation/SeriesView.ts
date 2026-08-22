@@ -1,14 +1,18 @@
 import { formatBattleFeed } from './battleFeed'
-import { getAssignmentComparison, type BoutIndex, type SeriesPhase, type SeriesState } from '../simulation/series'
+import { getAssignmentComparison, requiredAssignmentCount, type BoutIndex, type BoutOutcome, type PlanningSlot, type SeriesPhase, type SeriesState } from '../simulation/series'
 import type { Archetype, FighterDefinition, FighterSide } from '../simulation/fighters'
 import { fighterBySide, type BattleState } from '../simulation/battle'
+import { isFightable, startingHpFor } from '../simulation/condition'
+import type { RosterEntry } from '../simulation/season'
+import { CONDITION_LABELS, fightTelegraph, restTelegraph } from './conditionTelegraph'
+import { formatPower } from './formatPower'
 
 export type SeriesIntent =
   | { type: 'assign'; fighterId: string; boutIndex: BoutIndex }
   | { type: 'unassign'; boutIndex: BoutIndex }
   | { type: 'confirm' }
   | { type: 'start-next' }
-  | { type: 'rematch' }
+  | { type: 'continue' }
   | { type: 'toggle-pause' }
   | { type: 'set-speed'; speed: 1 | 2 | 4 }
   | { type: 'toggle-sound' }
@@ -21,8 +25,31 @@ const ARCHETYPE_LABELS: Record<Archetype, string> = { heavy: 'Heavy', fast: 'Fas
 
 type PendingFocus = { mode: 'after-assign' } | { mode: 'after-unassign'; fighterId: string }
 
-function isLineupComplete(state: SeriesState): boolean {
-  return state.assignments.every((id) => id !== null)
+function assignedCount(state: SeriesState): number {
+  return state.assignments.filter((slot) => slot !== null).length
+}
+
+/**
+ * Whether the lineup can be confirmed -- measured against
+ * `requiredAssignmentCount` (`min(3, fightable roster size)`, series.ts), the
+ * exact predicate `confirmLineup` itself enforces, NOT "all three slots
+ * filled". `assignFighter` moves a gladiator between slots rather than
+ * cloning them, so a short-handed series (fewer than three fightable
+ * gladiators, the forfeit case) can never fill all three: reading
+ * completeness as "every slot occupied" left the confirm button permanently
+ * disabled there and the season unfinishable in a production build, where
+ * the dev command API does not exist.
+ */
+function isLineupReady(state: SeriesState): boolean {
+  return assignedCount(state) === requiredAssignmentCount(state)
+}
+
+/** Task 3 turned `assignments` entries from a bare fighter id into a
+ * `PlanningSlot`; this is the one place that unwraps it back to an id
+ * (or `null` for an empty slot), so every read site below stays a plain
+ * string comparison. */
+function slotFighterId(slot: PlanningSlot): string | null {
+  return slot?.fighterId ?? null
 }
 
 function fighterName(roster: readonly FighterDefinition[], id: string): string {
@@ -50,6 +77,12 @@ export class SeriesView {
   private lastRenderedPhase: SeriesPhase | null = null
   private lastState: SeriesState | null = null
   private lastRuntime: RuntimeViewState | null = null
+  /** The season's full roster (fightable and broken alike), as of the last
+   * `render()` call -- `SeriesState.homeRoster` only ever carries fightable
+   * gladiators (see its own doc comment in `series.ts`), so the planning
+   * screen's condition badges/telegraphs and its disabled-broken row both
+   * need this wider list, which only the season layer can supply. */
+  private lastRoster: readonly RosterEntry[] = []
   private pendingFocus: PendingFocus | null = null
   private lastFeedEventId = -1
 
@@ -60,9 +93,10 @@ export class SeriesView {
     shell.addEventListener('keydown', (event) => this.handleKeyDown(event))
   }
 
-  render(state: SeriesState, runtime: RuntimeViewState): void {
+  render(state: SeriesState, runtime: RuntimeViewState, roster: readonly RosterEntry[]): void {
     this.lastState = state
     this.lastRuntime = runtime
+    this.lastRoster = roster
     const phaseChanged = this.lastRenderedPhase !== null && state.phase !== this.lastRenderedPhase
     if (phaseChanged) this.selectedFighterId = null
     this.shell.dataset.phase = state.phase
@@ -81,6 +115,31 @@ export class SeriesView {
     else this.updateBattleUi(state, runtime)
     this.lastRenderedPhase = state.phase
     this.applyFocus(state, phaseChanged)
+  }
+
+  /** Empties the series screen while the season board/summary owns it
+   * instead (`main.ts`, whenever `SeasonState.activeSeries` is `null`).
+   * Deliberately does NOT reset `lastRenderedPhase`: the season board can sit
+   * between two series for an arbitrary number of renders, and keeping it at
+   * whatever `SeriesPhase` the last series ended on ('summary', ordinarily)
+   * means the next series's first render is still correctly detected as a
+   * phase change (`'summary' !== 'planning'`) -- so "Plan the series" keeps
+   * getting auto-focused exactly like every other phase transition.
+   * Resetting to `null` here would silently suppress that, since `null` is
+   * reserved for "no real render has ever happened yet" (this class's own
+   * initial value). */
+  clear(): void {
+    this.selectedFighterId = null
+    this.pendingFocus = null
+    const seriesUi = this.shell.querySelector<HTMLElement>('#series-ui')
+    seriesUi?.replaceChildren()
+    const battleUi = this.shell.querySelector<HTMLElement>('#battle-ui')
+    if (battleUi) battleUi.hidden = true
+    const battleFeed = this.shell.querySelector<HTMLElement>('.battle-feed')
+    if (battleFeed) battleFeed.hidden = true
+    this.clearBattleUi()
+    const controls = this.shell.querySelector<HTMLElement>('[data-testid="runtime-controls"]')
+    controls?.replaceChildren()
   }
 
   private rebuildShell(state: SeriesState, runtime: RuntimeViewState): void {
@@ -133,16 +192,24 @@ export class SeriesView {
       case 'pick-slot': {
         const boutIndex = this.parseSlot(target)
         if (boutIndex === null || this.selectedFighterId === null) return
-        this.pendingFocus = { mode: 'after-assign' }
-        this.onIntent({ type: 'assign', fighterId: this.selectedFighterId, boutIndex })
+        // Clear the selection BEFORE dispatching: `onIntent` re-renders
+        // synchronously, and the render reads `selectedFighterId`. Clearing
+        // afterwards left the instruction line promising "choose a different
+        // slot to move them, or press Escape to clear" against a selection
+        // that was already gone -- and since the runtime re-renders only when
+        // the season object changes, that stale sentence survived until the
+        // player's next action, not merely one frame.
+        const fighterId = this.selectedFighterId
         this.selectedFighterId = null
+        this.pendingFocus = { mode: 'after-assign' }
+        this.onIntent({ type: 'assign', fighterId, boutIndex })
         return
       }
       case 'remove-assignment': {
         const boutIndex = this.parseSlot(target)
         if (boutIndex === null) return
-        const returned = this.lastState?.assignments[boutIndex]
-        if (returned !== null && returned !== undefined) this.pendingFocus = { mode: 'after-unassign', fighterId: returned }
+        const returned = slotFighterId(this.lastState?.assignments[boutIndex] ?? null)
+        if (returned !== null) this.pendingFocus = { mode: 'after-unassign', fighterId: returned }
         this.onIntent({ type: 'unassign', boutIndex })
         return
       }
@@ -152,8 +219,8 @@ export class SeriesView {
       case 'start-next':
         this.onIntent({ type: 'start-next' })
         return
-      case 'rematch':
-        this.onIntent({ type: 'rematch' })
+      case 'continue':
+        this.onIntent({ type: 'continue' })
         return
       case 'toggle-pause':
         this.onIntent({ type: 'toggle-pause' })
@@ -196,10 +263,10 @@ export class SeriesView {
     }
     if (state.phase !== 'planning' || this.pendingFocus === null) return
     if (this.pendingFocus.mode === 'after-assign') {
-      if (isLineupComplete(state)) {
+      if (isLineupReady(state)) {
         this.shell.querySelector<HTMLElement>('[data-testid="confirm-lineup"]')?.focus()
       } else {
-        const firstUnassigned = state.homeRoster.find(({ id }) => !state.assignments.includes(id))
+        const firstUnassigned = state.homeRoster.find(({ id }) => !state.assignments.some((slot) => slotFighterId(slot) === id))
         if (firstUnassigned) this.shell.querySelector<HTMLElement>(`[data-testid="fighter-${firstUnassigned.id}"]`)?.focus()
       }
     } else {
@@ -252,20 +319,90 @@ export class SeriesView {
     const heading = el('h2', { id: 'planning-heading', tabindex: '-1' }, 'Plan the series')
     const instruction = el('p', { id: 'assignment-instruction', class: 'planning__instruction' }, this.instructionText(state))
     const counterRule = el('p', { class: 'planning__counter-rule' }, `Heavy ${RC.arrow} Fast ${RC.arrow} Technical ${RC.arrow} Heavy`)
+    // Every gladiator in the season roster gets a card, in roster order:
+    // fightable ones as buttons, broken ones as disabled cards carrying the
+    // rest forecast. The design doc's UI section calls for exactly that
+    // ("`broken` cards are disabled and labelled"); dropping them from the
+    // grid entirely hid one half of the decision the screen exists to
+    // support -- what fielding costs versus what resting would restore.
     const roster = el('div', { class: 'roster-grid' })
-    for (const fighter of state.homeRoster) roster.append(this.buildFighterOption(state, fighter))
+    const fightableIds = new Set(state.homeRoster.map(({ id }) => id))
+    for (const entry of this.lastRoster) {
+      roster.append(fightableIds.has(entry.fighter.id)
+        ? this.buildFighterOption(state, entry.fighter)
+        : this.buildUnavailableFighterCard(entry))
+    }
     const matchups = el('ol', { class: 'matchup-list', 'aria-label': 'Matchup slots' })
     for (let index = 0; index < state.opponents.length; index += 1) {
       matchups.append(this.buildMatchupSlot(state, index as BoutIndex))
     }
     const confirm = el('button', { class: 'button button--primary planning__confirm', type: 'button', 'data-action': 'confirm', 'data-testid': 'confirm-lineup' }, 'Confirm lineup')
-    confirm.disabled = !isLineupComplete(state)
+    confirm.disabled = !isLineupReady(state)
     section.append(heading, instruction, counterRule, roster, matchups, confirm)
+    // The season only ever hands the planning screen its fightable
+    // gladiators (`SeriesState.homeRoster`) -- a broken one is simply absent
+    // from the cards above, with no on-screen trace of them at all. This row
+    // (present only while the wider season roster actually has one) makes
+    // that absence explicit, and its reason, rather than silent.
+    const disabled = this.buildDisabledRosterRow(state)
+    if (disabled) section.append(disabled)
+    // `requiredAssignmentCount` is `min(3, fightable)` -- below three, the
+    // series will forfeit whichever slots the player cannot fill, and the
+    // player should know that before confirming, not discover it in the
+    // between-bouts screen.
+    if (requiredAssignmentCount(state) < 3) section.append(this.buildForfeitNotice(state))
     return section
   }
 
+  /** A broken gladiator's card: same shape as a fightable one, disabled, and
+   * carrying the rest forecast — the only move available for them this series. */
+  private buildUnavailableFighterCard(entry: RosterEntry): HTMLButtonElement {
+    const card = el('button', {
+      class: 'fighter-option fighter-option--unavailable',
+      type: 'button',
+      'data-fighter-id': entry.fighter.id,
+      'data-testid': `fighter-${entry.fighter.id}`,
+      'data-role': 'unavailable-fighter',
+    })
+    card.disabled = true
+    const title = el('span', { class: 'fighter-option__title' })
+    title.append(
+      el('span', { class: 'fighter-option__name' }, entry.fighter.name),
+      el('span', { class: 'fighter-option__archetype' }, ARCHETYPE_LABELS[entry.fighter.archetype]),
+    )
+    const conditionRow = el('span', { class: 'fighter-option__condition' })
+    conditionRow.append(
+      el('span', { class: 'condition-badge', 'data-testid': 'condition-badge', 'data-condition': entry.condition }, CONDITION_LABELS[entry.condition]),
+      el('span', { class: 'fighter-option__hp' }, 'Cannot fight this series'),
+    )
+    card.append(title, conditionRow, el('span', { class: 'fighter-option__telegraph' }, restTelegraph(entry.condition)))
+    return card
+  }
+
+  private buildDisabledRosterRow(state: SeriesState): HTMLElement | null {
+    const broken = this.lastRoster.filter((entry) => !isFightable(entry.condition) && !state.homeRoster.some(({ id }) => id === entry.fighter.id))
+    if (broken.length === 0) return null
+    const wrap = el('div', { class: 'roster-disabled', 'data-testid': 'roster-disabled' })
+    wrap.append(el('h3', { class: 'roster-disabled__heading' }, 'Unavailable this series'))
+    const list = el('ul', { class: 'roster-disabled__list' })
+    for (const entry of broken) {
+      list.append(el('li', { class: 'roster-disabled__item' }, `${entry.fighter.name} ${RC.emDash} broken, cannot fight this series.`))
+    }
+    wrap.append(list)
+    return wrap
+  }
+
+  private buildForfeitNotice(state: SeriesState): HTMLElement {
+    const forfeitCount = 3 - requiredAssignmentCount(state)
+    return el(
+      'p',
+      { class: 'planning__forfeit-notice', 'data-testid': 'forfeit-notice' },
+      `Only ${state.homeRoster.length} gladiator${state.homeRoster.length === 1 ? ' is' : 's are'} fit to fight ${RC.emDash} ${forfeitCount} slot${forfeitCount === 1 ? '' : 's'} will be forfeited.`,
+    )
+  }
+
   private buildFighterOption(state: SeriesState, fighter: FighterDefinition): HTMLButtonElement {
-    const assignedIndex = state.assignments.indexOf(fighter.id)
+    const assignedIndex = state.assignments.findIndex((slot) => slotFighterId(slot) === fighter.id)
     const selected = this.selectedFighterId === fighter.id
     const button = el('button', {
       class: 'fighter-option',
@@ -284,16 +421,31 @@ export class SeriesView {
     )
     button.append(
       title,
-      el('span', { class: 'fighter-option__school' }, fighter.school),
-      el('span', { class: 'fighter-option__stats' }, `HP ${fighter.maxHp} ${RC.middleDot} Power ${fighter.power} ${RC.middleDot} Defense ${Math.round(fighter.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(fighter.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(fighter.criticalChance * 100)}%`),
+      // `formatPower` here too, not the raw number: the opponent's power in
+      // the matchup slot beside this card already goes through it, so a home
+      // gladiator read `Power 22` next to `Power 19.0` for the same stat.
+      el('span', { class: 'fighter-option__stats' }, `HP ${fighter.maxHp} ${RC.middleDot} Power ${formatPower(fighter.power)} ${RC.middleDot} Defense ${Math.round(fighter.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(fighter.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(fighter.criticalChance * 100)}%`),
       el('span', { class: 'fighter-option__assignment' }, assignedIndex === -1 ? 'Unassigned' : `Bout ${BOUT_NUMERALS[assignedIndex]}`),
     )
+    const entry = this.lastRoster.find((candidate) => candidate.fighter.id === fighter.id)
+    if (entry) {
+      const conditionRow = el('span', { class: 'fighter-option__condition' })
+      conditionRow.append(
+        el('span', { class: 'condition-badge', 'data-testid': 'condition-badge', 'data-condition': entry.condition }, CONDITION_LABELS[entry.condition]),
+        el('span', { class: 'fighter-option__hp' }, `Starting HP ${startingHpFor(entry.condition, fighter.maxHp)}`),
+      )
+      button.append(
+        conditionRow,
+        el('span', { class: 'fighter-option__telegraph' }, fightTelegraph(entry.condition)),
+        el('span', { class: 'fighter-option__telegraph' }, restTelegraph(entry.condition)),
+      )
+    }
     return button
   }
 
   private buildMatchupSlot(state: SeriesState, boutIndex: BoutIndex): HTMLLIElement {
     const opponent = state.opponents[boutIndex]
-    const assignedId = state.assignments[boutIndex]
+    const assignedId = slotFighterId(state.assignments[boutIndex])
     const item = el('li', { class: 'matchup-slot' })
     if (assignedId !== null) item.classList.add('matchup-slot--occupied')
 
@@ -315,7 +467,12 @@ export class SeriesView {
     pick.append(
       el('span', { class: 'matchup-slot__numeral' }, BOUT_NUMERALS[boutIndex]),
       opponentBlock,
-      el('span', { class: 'matchup-slot__stats' }, `HP ${opponent.maxHp} ${RC.middleDot} Power ${opponent.power} ${RC.middleDot} Defense ${Math.round(opponent.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(opponent.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(opponent.criticalChance * 100)}%`),
+      // `formatPower`: see its own doc comment -- challenge scaling
+      // (`content/season.ts`'s `scaleOpponent`) rounds `maxHp` but
+      // deliberately leaves `power` a raw float (the balance tuning it feeds
+      // needs the unrounded value); shared with `SeasonView.buildChallengeCard`
+      // so the two screens never disagree on the same opponent's power.
+      el('span', { class: 'matchup-slot__stats' }, `HP ${opponent.maxHp} ${RC.middleDot} Power ${formatPower(opponent.power)} ${RC.middleDot} Defense ${Math.round(opponent.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(opponent.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(opponent.criticalChance * 100)}%`),
     )
 
     if (assignedId !== null) {
@@ -342,15 +499,18 @@ export class SeriesView {
   private instructionText(state: SeriesState): string {
     if (this.selectedFighterId !== null) {
       const name = fighterName(state.homeRoster, this.selectedFighterId)
-      const assignedIndex = state.assignments.indexOf(this.selectedFighterId)
+      const assignedIndex = state.assignments.findIndex((slot) => slotFighterId(slot) === this.selectedFighterId)
       return assignedIndex === -1
         ? `${name} selected. Choose a bout slot, or press Escape to clear.`
         : `${name} is assigned to bout ${BOUT_NUMERALS[assignedIndex]}. Choose a different slot to move them, or press Escape to clear.`
     }
-    const assignedCount = state.assignments.filter((id) => id !== null).length
-    return assignedCount === 0
+    const assigned = assignedCount(state)
+    // `requiredAssignmentCount`, not a literal 3: a short-handed series needs
+    // fewer assignments (the rest are forfeited), and "2 of 3" there would
+    // describe a lineup the player is never allowed to reach.
+    return assigned === 0
       ? 'Select a gladiator, then choose one of the three bout slots.'
-      : `${assignedCount} of 3 matchups assigned. Select a gladiator, then choose a bout slot.`
+      : `${assigned} of ${requiredAssignmentCount(state)} matchups assigned. Select a gladiator, then choose a bout slot.`
   }
 
   private buildInterstitial(state: SeriesState): HTMLElement {
@@ -358,16 +518,24 @@ export class SeriesView {
     const section = el('section', { class: 'interstitial', 'aria-labelledby': 'interstitial-heading' })
     if (!result) return section
     const heading = el('h2', { id: 'interstitial-heading', tabindex: '-1' }, 'Between bouts')
-    const homeName = fighterName(state.homeRoster, result.homeFighterId)
-    const awayName = fighterName(state.opponents, result.opponentId)
-    const winnerName = result.winnerSide === 'home' ? homeName : awayName
-    const endedText = result.endedBy === 'defeat' ? 'by defeat' : 'on the time limit'
-    const resultLine = el('p', { class: 'interstitial__result', 'aria-live': 'polite', 'data-testid': 'bout-result-summary' }, `Bout ${BOUT_NUMERALS[result.boutIndex]}: ${winnerName} wins ${endedText}.`)
+    // A forfeit is only reachable here because the planning screen already
+    // telegraphed it in advance (`buildForfeitNotice`, above) -- this line
+    // just reports which slot it was, distinctly from a fought bout's result.
+    const resultText = result.kind === 'forfeit'
+      ? `Bout ${BOUT_NUMERALS[result.boutIndex]}: forfeited, no fighter available.`
+      : (() => {
+          const homeName = fighterName(state.homeRoster, result.homeFighterId)
+          const awayName = fighterName(state.opponents, result.opponentId)
+          const winnerName = result.winnerSide === 'home' ? homeName : awayName
+          const endedText = result.endedBy === 'defeat' ? 'by defeat' : 'on the time limit'
+          return `Bout ${BOUT_NUMERALS[result.boutIndex]}: ${winnerName} wins ${endedText}.`
+        })()
+    const resultLine = el('p', { class: 'interstitial__result', 'aria-live': 'polite', 'data-testid': 'bout-result-summary' }, resultText)
     const scoreLine = el('p', { class: 'interstitial__score' }, `Series ${state.score.home}${RC.enDash}${state.score.away}`)
     const nextLine = el('p', { class: 'interstitial__next', 'data-testid': 'next-matchup' })
     const nextBoutIndex = state.results.length as BoutIndex
     const nextOpponent = state.opponents[nextBoutIndex]
-    const nextHomeId = state.assignments[nextBoutIndex]
+    const nextHomeId = slotFighterId(state.assignments[nextBoutIndex])
     if (nextOpponent && nextHomeId) {
       const comparison = getAssignmentComparison(state, nextHomeId, nextBoutIndex)
       nextLine.textContent = `Next: ${fighterName(state.homeRoster, nextHomeId)} vs ${nextOpponent.name} ${RC.emDash} ${comparison}.`
@@ -385,12 +553,26 @@ export class SeriesView {
     const verdict = el('p', { class: 'summary__verdict', 'aria-live': 'polite' }, victory ? 'Victory for the House of Mars!' : 'Defeat for the House of Mars.')
     const list = el('ol', { class: 'summary__bouts' })
     for (const result of state.results) list.append(this.buildSummaryBout(state, result))
-    const rematch = el('button', { class: 'button button--primary', type: 'button', 'data-action': 'rematch', 'data-testid': 'rematch' }, 'Rematch')
-    section.append(heading, scoreLine, verdict, list, rematch)
+    // `Continue`, not `Rematch` (design.md, "Series summary"): `main.ts` runs
+    // this button as the season-level `continueSeason` -- it charges the
+    // roster's wear, appends the `SeriesRecord` and advances the season, none
+    // of it undoable. Labelling that "Rematch" promised a replay and spent
+    // three gladiators' condition instead.
+    const advance = el('button', { class: 'button button--primary', type: 'button', 'data-action': 'continue', 'data-testid': 'continue-series' }, 'Continue')
+    section.append(heading, scoreLine, verdict, list, advance)
     return section
   }
 
-  private buildSummaryBout(state: SeriesState, result: NonNullable<SeriesState['results'][number]>): HTMLLIElement {
+  private buildSummaryBout(state: SeriesState, result: BoutOutcome): HTMLLIElement {
+    // Same forfeit reporting as `buildInterstitial`, for the series's own
+    // summary screen (the season-wide summary across all three series is
+    // `SeasonView.buildOutcomeRow`, a separate rendering of the same
+    // `BoutOutcome` union at the season layer).
+    if (result.kind === 'forfeit') {
+      const awayName = fighterName(state.opponents, result.opponentId)
+      return el('li', { class: 'summary__bout', 'data-testid': 'bout-result' },
+        `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} forfeited: no gladiator available to face ${awayName}.`)
+    }
     const homeName = fighterName(state.homeRoster, result.homeFighterId)
     const awayName = fighterName(state.opponents, result.opponentId)
     const winnerName = result.winnerSide === 'home' ? homeName : awayName

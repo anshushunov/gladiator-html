@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createRandom,
   deriveBoutSeed,
+  deriveSeriesSeed,
   nextRandom,
   createCombatantRandomState,
   drawPair,
@@ -59,5 +60,12 @@ describe('seeded random', () => {
 
   it('folds and formats trace hashes correctly', () => {
     expect(formatTraceHash(foldTraceHash(0x811c9dc5, 'combat'))).toBe('1ce36e21')
+  })
+
+  it('passes series 0 through unchanged and derives the rest', () => {
+    expect(deriveSeriesSeed(20260815, 0)).toBe(20260815)
+    expect(deriveSeriesSeed(20260815, 1)).not.toBe(20260815)
+    expect(deriveSeriesSeed(20260815, 1)).toBe(deriveSeriesSeed(20260815, 1))
+    expect(deriveSeriesSeed(20260815, 1)).not.toBe(deriveSeriesSeed(20260815, 2))
   })
 })

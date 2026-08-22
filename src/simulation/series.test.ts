@@ -4,18 +4,39 @@ import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
 import { advanceBattleTicks, fighterBySide, MAX_BOUT_TICKS } from './battle'
 import type { FighterDefinition } from './fighters'
 import { formatTraceHash } from './random'
-import { advanceSeriesTicks, assignFighter, confirmLineup, createSeries, rematch, startNextBout, unassignSlot } from './series'
+import { advanceSeriesTicks, assignFighter, confirmLineup, createSeries, rematch, requiredAssignmentCount, startNextBout, unassignSlot, type BoutOutcome, type PlanningSlot, type SeriesState } from './series'
 
-const createMvpSeries = () => createSeries({ homeRoster, opponents, seed: BASELINE_TEST_SEED, combatStyles: COMBAT_STYLES })
+const createMvpSeries = () => createSeries({
+  homeRoster,
+  opponents,
+  seed: BASELINE_TEST_SEED,
+  combatStyles: COMBAT_STYLES,
+  homeStartingHpByFighterId: Object.fromEntries(homeRoster.map((fighter) => [fighter.id, fighter.maxHp])),
+})
+
+const brutus = homeRoster.find(({ id }) => id === 'brutus')!
+const aquila = homeRoster.find(({ id }) => id === 'aquila')!
+const nerva = homeRoster.find(({ id }) => id === 'nerva')!
+
+/** Test-only planning-slot literal, for asserting `state.assignments` shape. */
+const slot = (fighterId: string): PlanningSlot => ({ kind: 'fighter', fighterId })
+
+/** Narrows a `BoutOutcome` to its fought variant, for tests where every bout
+ * in the series is known (by construction: a full lineup) to have actually
+ * been fought rather than forfeited. */
+function asFought(outcome: BoutOutcome) {
+  if (outcome.kind !== 'fought') throw new Error(`Expected a fought bout outcome, got '${outcome.kind}'`)
+  return outcome
+}
 
 describe('series planning', () => {
   it('moves and displaces unique assignments', () => {
     let state = createMvpSeries()
     state = assignFighter(state, 'brutus', 0).state
     state = assignFighter(state, 'aquila', 0).state
-    expect(state.assignments).toEqual(['aquila', null, null])
+    expect(state.assignments).toEqual([slot('aquila'), null, null])
     state = assignFighter(state, 'aquila', 2).state
-    expect(state.assignments).toEqual([null, null, 'aquila'])
+    expect(state.assignments).toEqual([null, null, slot('aquila')])
   })
 
   it('rejects incomplete confirmation with the same state object', () => {
@@ -36,7 +57,7 @@ describe('series planning', () => {
     expect(state.assignments).toEqual([null, null, null])
     const reassigned = assignFighter(state, 'brutus', 1)
     expect(reassigned.ok).toBe(true)
-    expect(reassigned.state.assignments).toEqual([null, 'brutus', null])
+    expect(reassigned.state.assignments).toEqual([null, slot('brutus'), null])
   })
 
   it('rejects startNextBout outside between-bouts with the same state object', () => {
@@ -92,12 +113,13 @@ it('records exactly three results and a matching score', () => {
   expect(state.results).toHaveLength(3)
   expect(state.score.home + state.score.away).toBe(3)
   expect(state.results.map(({ boutIndex }) => boutIndex)).toEqual([0, 1, 2])
-  expect(state.results.map(({ homeFighterId, opponentId }) => [homeFighterId, opponentId])).toEqual([
+  expect(state.results.map((result) => { const fought = asFought(result); return [fought.homeFighterId, fought.opponentId] })).toEqual([
     ['aquila', 'drusus'],
     ['nerva', 'cassius'],
     ['brutus', 'magnus'],
   ])
-  for (const result of state.results) {
+  for (const outcome of state.results) {
+    const result = asFought(outcome)
     expect(['home', 'away']).toContain(result.winnerSide)
     expect(['advantage', 'neutral', 'disadvantage']).toContain(result.advantage)
     expect(['defeat', 'time-limit']).toContain(result.endedBy)
@@ -120,7 +142,7 @@ it('copies the finished battle fields into BoutResult in the same transition', (
   const home = fighterBySide(battle, 'home')
   const away = fighterBySide(battle, 'away')
   expect(transitioned.phase).toBe('between-bouts')
-  expect(transitioned.results[0]).toMatchObject({
+  expect(asFought(transitioned.results[0])).toMatchObject({
     boutIndex: 0,
     homeFighterId: 'aquila',
     opponentId: 'drusus',
@@ -143,13 +165,14 @@ it('records a time-limit endedBy when a bout survives to the tick cap', () => {
     opponents: [away, { ...filler, id: 'filler-3' }, { ...filler, id: 'filler-4' }],
     seed: 41,
     combatStyles: COMBAT_STYLES,
+    homeStartingHpByFighterId: { home: home.maxHp, filler: filler.maxHp, 'filler-2': filler.maxHp },
   })
   state = assignFighter(state, 'home', 0).state
   state = assignFighter(state, 'filler', 1).state
   state = assignFighter(state, 'filler-2', 2).state
   state = confirmLineup(state).state
   const transitioned = advanceSeriesTicks(state, MAX_BOUT_TICKS)
-  const result = transitioned.results[0]
+  const result = asFought(transitioned.results[0])
   expect(transitioned.phase).toBe('between-bouts')
   expect(result.endedBy).toBe('time-limit')
   expect(result.durationTicks).toBe(MAX_BOUT_TICKS)
@@ -217,7 +240,7 @@ it('makes stats matter more than blindly taking all counters', () => {
 
   // Every bout resolves by defeat, not by running out the 3600-tick clock.
   for (const result of [...allCounters.results, ...statsLed.results]) {
-    expect(result.endedBy).toBe('defeat')
+    expect(asFought(result).endedBy).toBe('defeat')
   }
 })
 
@@ -262,8 +285,8 @@ it('matches the frozen canonical trace hashes for the Aquila/Nerva/Brutus lineup
   // Pin the trace's shape alongside its hashes, so a differently-shaped series
   // cannot coincidentally satisfy the literals.
   expect(state.score).toEqual({ home: 2, away: 1 })
-  expect(state.results.map((result) => result.endedBy)).toEqual(['defeat', 'defeat', 'defeat'])
-  expect(state.results.map((result) => result.durationTicks)).toEqual([1721, 2183, 1202])
+  expect(state.results.map((result) => asFought(result).endedBy)).toEqual(['defeat', 'defeat', 'defeat'])
+  expect(state.results.map((result) => asFought(result).durationTicks)).toEqual([1721, 2183, 1202])
 
   for (const hash of boutHashes) expect(hash).toMatch(/^[0-9a-f]{8}$/)
   expect(boutHashes).toEqual(['3600fb53', 'dee79f52', '563432bd'])
@@ -300,7 +323,7 @@ it('produces at least two distinct scores across all six lineups (amended from t
   ] as const
   const byLineup = new Map(lineups.map((lineup) => {
     const { score, results } = playSeries(lineup)
-    for (const result of results) expect(result.endedBy).toBe('defeat')
+    for (const result of results) expect(asFought(result).endedBy).toBe('defeat')
     return [lineup.join('/'), `${score.home}-${score.away}`]
   }))
   const scores = new Set(byLineup.values())
@@ -313,4 +336,153 @@ it('produces at least two distinct scores across all six lineups (amended from t
   // alone cannot tell "some lineup sweeps" from "the forbidden one sweeps".
   expect(scores.has('3-0')).toBe(false)
   expect(byLineup.get('brutus/aquila/nerva')).toBe('1-2')
+})
+
+describe('short-handed series', () => {
+  const twoFighterConfig = () => ({
+    homeRoster: [brutus, aquila],
+    opponents,
+    seed: 20260815,
+    combatStyles: COMBAT_STYLES,
+    homeStartingHpByFighterId: { brutus: brutus.maxHp, aquila: aquila.maxHp },
+  })
+
+  it('requires exactly as many assignments as there are gladiators', () => {
+    const state = createSeries(twoFighterConfig())
+    expect(requiredAssignmentCount(state)).toBe(2)
+    expect(confirmLineup(state).ok).toBe(false)
+
+    const one = assignFighter(state, 'brutus', 0).state
+    expect(confirmLineup(one).ok).toBe(false)
+    const two = assignFighter(one, 'aquila', 2).state
+    expect(confirmLineup(two).ok).toBe(true)
+  })
+
+  /** Plays a short-handed series to completion, alternating `startNextBout`
+   * and `advanceSeriesTicks` exactly like `playSeries` does for full
+   * lineups -- the forfeit walk can land a series straight in `summary`
+   * without ever visiting `between-bouts`, so this loop (unlike `playSeries`)
+   * has to tolerate `fighting` finishing directly into `summary`. */
+  function playShortHandedSeries(state: SeriesState): SeriesState {
+    if (state.phase === 'fighting') state = advanceSeriesTicks(state, 20_000)
+    while (state.phase === 'between-bouts') {
+      state = advanceSeriesTicks(startNextBout(state).state, 20_000)
+    }
+    return state
+  }
+
+  it('forfeits the uncovered slot and still reaches three outcomes', () => {
+    let state = createSeries(twoFighterConfig())
+    state = assignFighter(state, 'brutus', 0).state
+    state = assignFighter(state, 'aquila', 2).state
+    state = confirmLineup(state).state
+    state = playShortHandedSeries(state)
+
+    expect(state.phase).toBe('summary')
+    expect(state.results).toHaveLength(3)
+    const forfeited = state.results.filter((outcome) => outcome.kind === 'forfeit')
+    expect(forfeited).toHaveLength(1)
+    expect(forfeited[0]).toMatchObject({ boutIndex: 1, opponentId: opponents[1].id })
+    // Every bout (fought or forfeited) contributes exactly one point, so the
+    // exact score is fully determined once the forfeit's contribution (one
+    // away point) and the two fought bouts' winners are known -- pinned here
+    // (read from the actual run, not guessed) rather than left as a >= 1
+    // lower bound, which would stay green even if a fought bout's winner
+    // silently flipped.
+    expect(state.score).toEqual({ home: 0, away: 3 })
+  })
+
+  it('completes a series with no fightable gladiators at all', () => {
+    let state = createSeries({ ...twoFighterConfig(), homeRoster: [], homeStartingHpByFighterId: {} })
+    expect(requiredAssignmentCount(state)).toBe(0)
+    state = confirmLineup(state).state
+    expect(state.phase).toBe('summary')
+    expect(state.results).toHaveLength(3)
+    expect(state.score).toEqual({ home: 0, away: 3 })
+    expect(state.activeBattle).toBeUndefined()
+  })
+
+  it('forfeits a leading slot before any bout is fought', () => {
+    let state = createSeries(twoFighterConfig())
+    state = assignFighter(state, 'brutus', 1).state
+    state = assignFighter(state, 'aquila', 2).state
+    state = confirmLineup(state).state
+    state = playShortHandedSeries(state)
+
+    expect(state.phase).toBe('summary')
+    expect(state.results).toHaveLength(3)
+    const forfeited = state.results.filter((outcome) => outcome.kind === 'forfeit')
+    expect(forfeited).toHaveLength(1)
+    expect(forfeited[0]).toMatchObject({ boutIndex: 0, opponentId: opponents[0].id })
+    expect(state.score).toEqual({ home: 1, away: 2 })
+  })
+
+  // Regression coverage for a fix-round finding: a series that ends by
+  // walking off the end right after its *last fought* bout (rather than
+  // fighting bout index 2 itself) used to null out `activeBattle` in that
+  // branch of `advancePastForfeits`, unlike a series that ends by actually
+  // fighting bout 2. `main.ts`'s `stepBattleTick` only rebuilds its render
+  // frame when `currentBattle !== previousBattle` and both are defined, so a
+  // `summary` state with `activeBattle: undefined` silently dropped the
+  // final bout's own event batch. Asserted here by checking `activeBattle`
+  // is the finished battle for the last *fought* slot (bout 1, aquila vs
+  // `opponents[1]`), not merely that it is defined.
+  it('forfeits a trailing slot and keeps the last fought battle active', () => {
+    let state = createSeries(twoFighterConfig())
+    state = assignFighter(state, 'brutus', 0).state
+    state = assignFighter(state, 'aquila', 1).state
+    state = confirmLineup(state).state
+    state = playShortHandedSeries(state)
+
+    expect(state.phase).toBe('summary')
+    expect(state.results).toHaveLength(3)
+    const forfeited = state.results.filter((outcome) => outcome.kind === 'forfeit')
+    expect(forfeited).toHaveLength(1)
+    expect(forfeited[0]).toMatchObject({ boutIndex: 2, opponentId: opponents[2].id })
+
+    if (!state.activeBattle) throw new Error('Expected the last fought bout\'s battle to still be active')
+    expect(state.activeBattle.phase).toBe('finished')
+    const home = fighterBySide(state.activeBattle, 'home')
+    const away = fighterBySide(state.activeBattle, 'away')
+    expect(home.definition.id).toBe('aquila')
+    expect(away.definition.id).toBe(opponents[1].id)
+    expect(state.score).toEqual({ home: 0, away: 3 })
+  })
+
+  it('forfeits two consecutive slots when only one gladiator is available', () => {
+    let state = createSeries({
+      homeRoster: [brutus],
+      opponents,
+      seed: 20260815,
+      combatStyles: COMBAT_STYLES,
+      homeStartingHpByFighterId: { brutus: brutus.maxHp },
+    })
+    expect(requiredAssignmentCount(state)).toBe(1)
+    state = assignFighter(state, 'brutus', 0).state
+    state = confirmLineup(state).state
+    state = playShortHandedSeries(state)
+
+    expect(state.phase).toBe('summary')
+    expect(state.results).toHaveLength(3)
+    const forfeited = state.results.filter((outcome) => outcome.kind === 'forfeit')
+    expect(forfeited).toHaveLength(2)
+    expect(forfeited.map((outcome) => outcome.boutIndex)).toEqual([1, 2])
+    expect(forfeited.map((outcome) => outcome.opponentId)).toEqual([opponents[1].id, opponents[2].id])
+    expect(state.score).toEqual({ home: 0, away: 3 })
+  })
+})
+
+it('starts an assigned gladiator at the HP the season gave them', () => {
+  let state = createSeries({
+    homeRoster: [brutus, aquila, nerva],
+    opponents,
+    seed: 20260815,
+    combatStyles: COMBAT_STYLES,
+    homeStartingHpByFighterId: { brutus: 100, aquila: aquila.maxHp, nerva: nerva.maxHp },
+  })
+  state = assignFighter(state, 'brutus', 0).state
+  state = assignFighter(state, 'aquila', 1).state
+  state = assignFighter(state, 'nerva', 2).state
+  state = confirmLineup(state).state
+  expect(fighterBySide(state.activeBattle!, 'home').hp).toBe(100)
 })

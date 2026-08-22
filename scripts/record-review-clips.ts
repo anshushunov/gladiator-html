@@ -110,7 +110,8 @@ function parseArgs(argv: readonly string[]): Args {
 // declaration: `scripts/` is outside the tsconfig program (no `@types/node`
 // here), and a second global merge would clash with the real one anyway.
 interface TestApi {
-  getState: () => { phase: string; activeBoutIndex: number | null; activeBattle?: { events: readonly unknown[]; encounter: { tick: number } } }
+  getActiveSeriesState: () => { phase: string; activeBoutIndex: number | null; activeBattle?: { events: readonly unknown[]; encounter: { tick: number } } } | null
+  startNextSeries: () => { ok: boolean; reason?: string }
   assign: (fighterId: string, slot: number) => void
   confirm: () => void
   advanceTicks: (ticks: number) => void
@@ -122,8 +123,18 @@ async function openSeries(context: BrowserContext, seed: number, lineup: readonl
   await page.goto(`http://127.0.0.1:${PORT}/?seed=${seed}`)
   await page.waitForFunction(() => Boolean((window as unknown as { __GLADIATOR_TEST__?: unknown }).__GLADIATOR_TEST__))
   if (hideHud) await page.addStyleTag({ content: HIDE_HUD_CSS })
+  // Task 8 removed the season auto-advance bridge entirely: the app now boots
+  // straight onto the season board (`season.phase === 'season-board'`,
+  // `activeSeries === null`), and only an explicit `startNextSeries()` call
+  // (or a real click on the board's own "Start series N" button) opens
+  // series 0's planning screen. Without this call `assign`/`confirm` below
+  // return `{ ok: false, reason: 'no-active-series' }` (`delegateToSeries`,
+  // season.ts), leaving the lineup unset -- the failure this script used to
+  // hit, surfacing only later as a `null` from `getActiveSeriesState()!` in
+  // `skipToSlot`.
   await page.evaluate((assignments) => {
     const api = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
+    api.startNextSeries()
     assignments.forEach((fighterId, slot) => api.assign(fighterId, slot))
     api.confirm()
   }, [...lineup])
@@ -135,7 +146,7 @@ async function skipToSlot(page: Page, slot: number): Promise<void> {
   for (let index = 0; index < slot; index += 1) {
     await page.evaluate(() => {
       const api = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
-      while (api.getState().phase === 'fighting') api.advanceTicks(120)
+      while (api.getActiveSeriesState()!.phase === 'fighting') api.advanceTicks(120)
       api.startNextBout()
     })
   }
@@ -145,12 +156,12 @@ async function skipToSlot(page: Page, slot: number): Promise<void> {
 async function playBout(page: Page, speed: 1 | 2): Promise<{ events: unknown[]; ticks: number }> {
   await page.click(`[data-testid="speed-${speed}"]`)
   await page.waitForFunction(
-    () => (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__.getState().phase !== 'fighting',
+    () => (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__.getActiveSeriesState()!.phase !== 'fighting',
     undefined,
     { timeout: BOUT_TIMEOUT_MS },
   )
   return page.evaluate(() => {
-    const battle = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__.getState().activeBattle
+    const battle = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle
     return { events: [...(battle?.events ?? [])], ticks: battle?.encounter.tick ?? 0 }
   })
 }
@@ -334,14 +345,16 @@ The e2e suite's own discipline works by hand too:
   it to. Combined with the dev-only test API this pins an exact frame:
 
 \`\`\`js
-// in the dev console, on a ?seed=${args.seed}&snapshot page
+// in the dev console, on a ?seed=${args.seed}&snapshot page -- the app boots
+// onto the season board, so this opens series 0 before assigning a lineup
+__GLADIATOR_TEST__.startNextSeries()
 __GLADIATOR_TEST__.assign('brutus', 0)
 __GLADIATOR_TEST__.assign('aquila', 1)
 __GLADIATOR_TEST__.assign('nerva', 2)
 __GLADIATOR_TEST__.confirm()
 __GLADIATOR_TEST__.advanceTicks(700)          // exactly 700 ticks, then stop
 __GLADIATOR_TEST__.settleCameraSeconds(4)     // let the camera finish damping
-__GLADIATOR_TEST__.getState().activeBattle.events.filter((e) => e.tick === 700)
+__GLADIATOR_TEST__.getActiveSeriesState().activeBattle.events.filter((e) => e.tick === 700)
 \`\`\`
 
 ## Key-pose storyboard

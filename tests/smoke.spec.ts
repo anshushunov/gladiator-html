@@ -1,10 +1,27 @@
 import { expect, test } from '@playwright/test'
 import { preview, type PreviewServer } from 'vite'
 
+// ---------------------------------------------------------------------------
+// Task 8: `main.ts` boots straight onto the season board (`SeasonState.phase
+// === 'season-board'`), with `season.activeSeries` still `null` -- there is
+// no bridge past it, so a `window.__GLADIATOR_TEST__.startNextSeries()` call
+// (or a real click on the season board's own "Start series N" button) is
+// what actually opens series 0's planning screen. Every setup block below
+// needs one, not just the mid-season `continueSeason()` cases (which need a
+// second one, to open the following series after the board reappears).
+// ---------------------------------------------------------------------------
+
 test('plans and locks three matchups', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  // The season board is the real front door -- click its own "Start series
+  // 1" control (not the dev test API) so this test also proves the board
+  // itself is live, not just the planning screen it leads to.
+  await expect(page.getByTestId('season-board')).toBeVisible()
+  await page.getByTestId('start-series').click()
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
-  await expect(page.locator('[data-role="home-fighter"]')).toHaveCount(3)
+  // Season 0 opens with all five season roster members fightable (nobody has
+  // fought yet), not just the original three -- `SEASON_ROSTER` (Task 4/6).
+  await expect(page.locator('[data-role="home-fighter"]')).toHaveCount(5)
   await expect(page.locator('[data-role="opponent-slot"]')).toHaveCount(3)
   await expect(page.getByTestId('confirm-lineup')).toBeDisabled()
 
@@ -25,6 +42,7 @@ async function finishActiveBout(page: import('@playwright/test').Page) {
 async function startSeededFirstBout(page: import('@playwright/test').Page) {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -59,7 +77,17 @@ test('clears render snapshots and combatant data on rematch, with no leak from t
     if (bout < 2) await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
   }
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveBattleTraceHash())).not.toBeNull()
-  await page.evaluate(() => window.__GLADIATOR_TEST__.rematch())
+  // `rematch()` is gone -- `continueSeason()` is its season-level successor:
+  // closes out the series that just finished (roster wear, its own
+  // `SeriesRecord`, the season score) and returns to the season board. This
+  // is series 0 of three, so `season.activeSeries` becomes `null` here --
+  // there is no bridge past the board at any point, whole-season or not --
+  // but the render frame still resets the exact same way either way:
+  // `activeSeries`'s own `activeBattle` reference changes from the finished
+  // third bout to `undefined`, whether that is because `activeSeries` itself
+  // became `null` (this test's case) or because a freshly-opened next series
+  // has not started its own first bout yet.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.continueSeason())
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState())).toMatchObject({
     previousTick: null,
     currentTick: null,
@@ -71,6 +99,7 @@ test('clears render snapshots and combatant data on rematch, with no leak from t
 test('resets arena presentation for the second bout', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -92,6 +121,7 @@ test('resets arena presentation for the second bout', async ({ page }) => {
 test('resets rig identity, pose, trails, flashes, camera framing, the audio cursor, and event cursor for every new bout', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -152,6 +182,7 @@ test('resets rig identity, pose, trails, flashes, camera framing, the audio curs
 test('resets rig identity, pose, trails, flashes, the audio cursor, and event cursor on rematch, and again for the bout that follows it', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -183,20 +214,27 @@ test('resets rig identity, pose, trails, flashes, the audio cursor, and event cu
   // still read a stale non-zero value here depending on exactly which tick
   // range the final `consume()` call landed in (see the comment above), so
   // this test deliberately makes no claim about its value at this exact
-  // instant -- only about `rematch()`'s own, unconditional effect on it,
-  // asserted next.
+  // instant -- only about `continueSeason()`'s own, unconditional effect on
+  // it, asserted next.
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3000))
   await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
   await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
 
-  await page.evaluate(() => window.__GLADIATOR_TEST__.rematch())
+  // `rematch()` is gone -- `continueSeason()` closes out the series that just
+  // finished (roster wear, its own `SeriesRecord`, the season score) and
+  // lands back on the season board. This is series 0 of three, so it does
+  // NOT auto-open series 1 -- there is no bridge (Task 8) -- the explicit
+  // `startNextSeries()` call further down is what actually opens it, right
+  // before this test re-assigns fighters.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.continueSeason())
   const afterRematch = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
-  // `series.ts`'s own `rematch()` clears `activeBattle`, which `main.ts`'s
-  // `resetRenderFrame` (reached because `activeBattle` changed) tears every
-  // rig down for, and unconditionally resets `CombatAudio` via
-  // `resetBout()` -- regardless of whatever value the cursor held going in.
+  // `season.ts`'s own `continueSeason()` clears `activeSeries.activeBattle`,
+  // which `main.ts`'s `resetRenderFrame` (reached because `activeBattle`
+  // changed) tears every rig down for, and unconditionally resets
+  // `CombatAudio` via `resetBout()` -- regardless of whatever value the
+  // cursor held going in.
   expect(afterRematch!.rootPositions).toEqual({})
   expect(afterRematch!.activeEffectIds).toEqual([])
   expect(afterRematch!.trailPointCounts).toEqual({})
@@ -206,7 +244,14 @@ test('resets rig identity, pose, trails, flashes, the audio cursor, and event cu
   // The same reset guarantees `smoke.spec.ts`'s bout-boundary test proves for
   // bout 1/2 hold again for the fresh bout that follows a rematch -- rematch
   // is not a special case the ordinary per-bout reset path skips.
+  //
+  // A second `startNextSeries()` here, beyond the one this test already made
+  // above: `continueSeason()` closed out series 0 mid-season (only one of
+  // three series has been played), landing back on the season board with
+  // `activeSeries` `null` again -- exactly like right after `page.goto`, so
+  // this call opens season 1 the same way the first one opened season 0.
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -234,12 +279,13 @@ test('resets rig identity, pose, trails, flashes, the audio cursor, and event cu
 
 test('reduced motion removes trails and flashes while a hit, its stagger, and its result still land unchanged', async ({ page }) => {
   const seenEvents = async (targetPage: import('@playwright/test').Page, tick: number) =>
-    targetPage.evaluate((t) => window.__GLADIATOR_TEST__.getState().activeBattle!.events.filter((event) => event.tick === t), tick)
+    targetPage.evaluate((t) => window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!.events.filter((event) => event.tick === t), tick)
 
   // Baseline: the same seeded matchup, ordinary motion.
   const normalPage = page
   await normalPage.goto('/?seed=20260815&snapshot')
   await normalPage.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('brutus', 0)
     window.__GLADIATOR_TEST__.assign('aquila', 1)
     window.__GLADIATOR_TEST__.assign('nerva', 2)
@@ -258,6 +304,7 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('brutus', 0)
     window.__GLADIATOR_TEST__.assign('aquila', 1)
     window.__GLADIATOR_TEST__.assign('nerva', 2)
@@ -272,7 +319,7 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
   // of reduced motion -- a presentation preference never touches simulation.
   expect(reducedEvents).toEqual(normalEvents)
   const reducedCombatants = await page.evaluate(() => {
-    const battle = window.__GLADIATOR_TEST__.getState().activeBattle!
+    const battle = window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!
     return { brutus: battle.encounter.combatants['home.brutus'], drusus: battle.encounter.combatants['away.drusus'] }
   })
   expect(reducedCombatants.brutus.hp).toBe(297)
@@ -329,7 +376,7 @@ test('carries events from every tick in a multi-tick batch to the arena, not jus
 
   const { maxEventId, contactEventCount } = await page.evaluate(() => {
     const contactTypes = new Set(['damage-dealt', 'attack-blocked', 'attack-parried'])
-    const events = window.__GLADIATOR_TEST__.getState().activeBattle!.events
+    const events = window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!.events
     return {
       maxEventId: Math.max(...events.map((event) => event.id)),
       contactEventCount: events.filter((event) => contactTypes.has(event.type)).length,
@@ -391,7 +438,7 @@ test('shows a readable fallback and keeps the series running after WebGL context
   await startSeededFirstBout(page)
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))
 
-  const tickBefore = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  const tickBefore = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()?.activeBattle?.encounter.tick)
   expect(tickBefore).toEqual(expect.any(Number))
 
   await page.evaluate(() => {
@@ -404,7 +451,7 @@ test('shows a readable fallback and keeps the series running after WebGL context
   // The series and runtime continue after the presentation failure: ticks
   // still advance, and the fallback stays up rather than crashing the page.
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))
-  const tickAfter = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  const tickAfter = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()?.activeBattle?.encounter.tick)
   expect(tickAfter).toBeGreaterThan(tickBefore as number)
   await expect(page.locator('.arena__webgl-fallback')).toBeVisible()
 
@@ -445,14 +492,15 @@ test('falls back gracefully instead of crashing when WebGL is unavailable at sta
 
   await page.goto('/?seed=20260815&snapshot')
 
-  // The app boots normally -- planning screen and controls -- despite zero
-  // WebGL from the very first frame. `#battle-ui` (the fallback text's own
-  // ancestor) is only unhidden once a bout starts (`SeriesView.render`), so
-  // the fallback's own visibility is checked after that below, matching how
-  // the mid-session context-loss test above orders its assertions.
-  await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
+  // The app boots normally -- the season board and its controls -- despite
+  // zero WebGL from the very first frame. `#battle-ui` (the fallback text's
+  // own ancestor) is only unhidden once a bout starts (`SeriesView.render`),
+  // so the fallback's own visibility is checked after that below, matching
+  // how the mid-session context-loss test above orders its assertions.
+  await expect(page.getByTestId('season-board')).toBeVisible()
 
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -463,7 +511,7 @@ test('falls back gracefully instead of crashing when WebGL is unavailable at sta
   await expect(page.locator('canvas')).toBeHidden()
 
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))
-  const tick = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  const tick = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()?.activeBattle?.encounter.tick)
   expect(tick).toBeGreaterThan(0)
   await expect(page.locator('.arena__webgl-fallback')).toBeVisible()
 })
@@ -484,6 +532,7 @@ test('a throwing presentation frame latches a disabled-presentation flag but nev
   // goes through `frame()` at all).
   await page.goto('/?seed=20260815')
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -500,19 +549,19 @@ test('a throwing presentation frame latches a disabled-presentation flag but nev
 
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState().presentationDisabled)).toBe(true)
 
-  const tickAfterDisable = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  const tickAfterDisable = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()?.activeBattle?.encounter.tick)
   expect(tickAfterDisable).toEqual(expect.any(Number))
 
   // Ticks keep advancing from real wall-clock time even though presentation
   // stays latched off -- the failure never re-throws (a real frame already
   // ran since it fired) and never stops the simulation loop above it.
   await page.waitForTimeout(200)
-  const tickLater = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  const tickLater = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()?.activeBattle?.encounter.tick)
   expect(tickLater).toBeGreaterThan(tickAfterDisable as number)
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState().presentationDisabled)).toBe(true)
 })
 
-test('plays three bouts, reports a 2–1 win, and rematches the same seed', async ({ page }) => {
+test('plays three bouts, reports a 2–1 win, then the summary "Continue" button continues into the next series', async ({ page }) => {
   // A stats-led ordering, deliberately NOT the all-counter one. Under Task 13's
   // final balance the all-counter lineup (Brutus->Drusus, Aquila->Cassius,
   // Nerva->Magnus) actually loses 1-2, which is the design's golden scenario
@@ -521,6 +570,7 @@ test('plays three bouts, reports a 2–1 win, and rematches the same seed', asyn
   // golden-scenario block for the full six-lineup table.
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('brutus', 1)
     window.__GLADIATOR_TEST__.assign('nerva', 2)
@@ -534,10 +584,48 @@ test('plays three bouts, reports a 2–1 win, and rematches the same seed', asyn
   await expect(page.getByTestId('series-score')).toHaveText('2–1')
   await expect(page.getByTestId('bout-result')).toHaveCount(3)
   await expect(page.getByTestId('bout-result').first()).toContainText('%')
-  await page.getByTestId('rematch').click()
+
+  // The series summary's `Continue` button (`data-action="continue"`, run by
+  // `main.ts`'s `applyIntent` as the season-level `continueSeason`): it does
+  // NOT replay series 0's own challenge. It closes series 0 out (roster wear,
+  // its own `SeriesRecord`, the season score) and lands back on the season
+  // board, since two series remain. Assert that real progression directly
+  // through `getSeasonState()`, not just DOM text that would read the same
+  // either way.
+  await expect(page.getByTestId('continue-series')).toHaveText('Continue')
+  await page.getByTestId('continue-series').click()
+  const afterContinue = await page.evaluate(() => window.__GLADIATOR_TEST__.getSeasonState())
+  expect(afterContinue.phase).toBe('season-board') // mid-season: two more series to play
+  expect(afterContinue.seriesIndex).toBe(1)
+  expect(afterContinue.records).toHaveLength(1)
+  expect(afterContinue.records[0].score).toEqual({ home: 2, away: 1 })
+  // The condition ladder actually moved for the three gladiators who fought.
+  // `lastDeltas` carries one row per roster member, fought and rested alike,
+  // and a rested row is NOT necessarily a change: `conditionAfterRest` clamps
+  // at `fresh`, so the two who sat out series 0 record `fresh > fresh`. The
+  // real statement is about the three who fought.
+  expect(afterContinue.lastDeltas).toHaveLength(5)
+  const conditionById = Object.fromEntries(afterContinue.roster.map((entry) => [entry.fighter.id, entry.condition]))
+  expect(conditionById.aquila).not.toBe('fresh')
+  expect(conditionById.brutus).not.toBe('fresh')
+  expect(conditionById.nerva).not.toBe('fresh')
+
+  // The "Rematch" click above landed the season back on its own board
+  // (asserted above); this opens series 1 from it, the same call every other
+  // setup block in this file makes right after `page.goto` (see the
+  // file-header comment) -- needed again here because this is the one point
+  // in the file that deliberately drives the season past its first series.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeFocused()
   await expect(page.getByTestId('confirm-lineup')).toBeDisabled()
+  // The season keeps its own seed across series -- `resolveSeasonSeed` only
+  // ever writes the URL once, at boot, so this is true on every code path,
+  // not evidence specific to this one. `getActiveSeriesState()`'s own
+  // (derived) `seed` is the real per-series proof the new series is not a
+  // literal replay of series 0's bouts.
   expect(new URL(page.url()).searchParams.get('seed')).toBe('20260815')
+  const series1Seed = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()!.seed)
+  expect(series1Seed).not.toBe(20260815)
 })
 
 // ---------------------------------------------------------------------------
@@ -554,6 +642,7 @@ test('plays three bouts, reports a 2–1 win, and rematches the same seed', asyn
 test('flushes the series-ending bout\'s final event batch to audio instead of dropping it', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('brutus', 1)
     window.__GLADIATOR_TEST__.assign('nerva', 2)
@@ -566,7 +655,7 @@ test('flushes the series-ending bout\'s final event batch to audio instead of dr
   await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'summary')
 
   const { finalEvents, audioCursor } = await page.evaluate(() => ({
-    finalEvents: window.__GLADIATOR_TEST__.getState().activeBattle!.events,
+    finalEvents: window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!.events,
     audioCursor: window.__GLADIATOR_TEST__.getAudioEventCursor!(),
   }))
   // Sanity: the finished battle's own event log really does end with the
@@ -598,6 +687,7 @@ test('reports school defeat in the summary heading for a losing lineup', async (
   // series.test.ts's golden-scenario block for the full six-lineup table.
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('nerva', 0)
     window.__GLADIATOR_TEST__.assign('aquila', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -613,6 +703,7 @@ test('reports school defeat in the summary heading for a losing lineup', async (
 
 test('supports keyboard planning and deterministic focus', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   const aquila = page.getByTestId('fighter-aquila')
   await aquila.focus()
   await page.keyboard.press('Enter')
@@ -632,12 +723,16 @@ test('normalizes an invalid URL seed', async ({ page }) => {
   expect(seed).toMatch(/^\d+$/)
   expect(Number(seed)).toBeGreaterThanOrEqual(0)
   expect(Number(seed)).toBeLessThanOrEqual(0xffff_ffff)
-  await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'planning')
+  // Boots onto the season board (Task 8) -- seed normalization is orthogonal
+  // to season/series phase, so this only has to prove the app rendered at
+  // all with the corrected seed, not that any particular series is open.
+  await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'season-board')
 })
 
 test('changes speed without advancing while paused', async ({ page }) => {
   await page.goto('/?seed=20260815')
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -645,18 +740,19 @@ test('changes speed without advancing while paused', async ({ page }) => {
   })
   await page.getByTestId('speed-4').click()
   await expect(page.getByTestId('speed-4')).toHaveAttribute('aria-pressed', 'true')
-  await expect.poll(() => page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick ?? 0)).toBeGreaterThan(0)
+  await expect.poll(() => page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()?.activeBattle?.encounter.tick ?? 0)).toBeGreaterThan(0)
   await page.getByTestId('toggle-pause').click()
-  const before = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  const before = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()?.activeBattle?.encounter.tick)
   expect(before).toEqual(expect.any(Number))
   await page.waitForTimeout(150)
-  const after = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  const after = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()?.activeBattle?.encounter.tick)
   expect(after).toBe(before)
 })
 
 test('shows both interstitials with result and next matchup context', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -679,9 +775,32 @@ test('shows both interstitials with result and next matchup context', async ({ p
 test('matches the stable planning snapshot', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 820 })
   await page.goto('/?seed=20260815&snapshot')
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
   await expect(page.locator('canvas')).toBeHidden()
-  await expect(page).toHaveScreenshot('planning.png', { fullPage: true })
+
+  // Task 9 review: this baseline used to be captured against three fighter
+  // cards (before Task 4/6's bench specialists) and kept passing unregenerated
+  // for two whole gladiators' worth of new cards plus fifteen lines of new
+  // telegraph text -- ~20,600 differing pixels against this suite's shared
+  // `maxDiffPixelRatio: 0.04` (~41,900 px on this frame), so the baseline had
+  // gone silently stale. Structural assertions below carry the actual
+  // regression-catching weight now (they fail on any content change
+  // regardless of how few pixels it costs); the screenshot is a tight,
+  // frame-level guard on top, not the only check.
+  await expect(page.locator('[data-role="home-fighter"]')).toHaveCount(5)
+  await expect(page.locator('[data-testid="condition-badge"][data-condition="fresh"]')).toHaveCount(5)
+  await expect(page.getByTestId('roster-disabled')).toHaveCount(0)
+  await expect(page.getByTestId('forfeit-notice')).toHaveCount(0)
+  await expect(page.getByTestId('fighter-brutus')).toContainText('Fight: → bruised, or wounded on a loss or a win under 25% HP')
+  await expect(page.getByTestId('fighter-brutus')).toContainText('Rest: stays fresh')
+  // The stats line is asserted as text, not left to the screenshot: even at
+  // 0.002 the pixel check swallowed `Power 22` -> `Power 22.0` across all five
+  // cards, so a short text change is exactly what it cannot see.
+  await expect(page.getByTestId('fighter-brutus')).toContainText('HP 324 · Power 22.0')
+  await expect(page.locator('.matchup-slot').first()).toContainText('HP 350 · Power 21.0')
+
+  await expect(page).toHaveScreenshot('planning.png', { fullPage: true, maxDiffPixelRatio: 0.002 })
 })
 
 // ---------------------------------------------------------------------------
@@ -690,6 +809,7 @@ test('matches the stable planning snapshot', async ({ page }) => {
 
 test('turns sound on by default after a real lineup-confirm click, and Sound off mutes without affecting the series', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   for (const [fighterId, boutIndex] of [['aquila', 0], ['nerva', 1], ['brutus', 2]] as const) {
     await page.getByTestId(`fighter-${fighterId}`).click()
     await page.getByTestId(`slot-${boutIndex}`).click()
@@ -713,7 +833,7 @@ test('turns sound on by default after a real lineup-confirm click, and Sound off
 
   // A presentation/audio control can never stop or mutate the simulation.
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))
-  const tick = await page.evaluate(() => window.__GLADIATOR_TEST__.getState().activeBattle?.encounter.tick)
+  const tick = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()?.activeBattle?.encounter.tick)
   expect(tick).toBeGreaterThan(0)
 })
 
@@ -733,6 +853,7 @@ test('keeps the sound control (and its audio voice/cursor reset) working across 
 
 test('audio debug: triggers all nine cues via the dev-only ?audioDebug=1 panel without starting a bout', async ({ page }) => {
   await page.goto('/?audioDebug=1&seed=20260815&snapshot')
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
   await expect(page.locator('[data-testid="audio-debug"]')).toBeVisible()
 
@@ -754,7 +875,7 @@ test('audio debug: triggers all nine cues via the dev-only ?audioDebug=1 panel w
 
   await expect.poll(() => page.evaluate(() => window.__GLADIATOR_TEST__.getAudioDebugLog?.())).toEqual(cues)
   // No bout was ever started by exercising the debug panel.
-  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getState().phase)).toBe('planning')
+  expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()!.phase)).toBe('planning')
 })
 
 /**
@@ -780,8 +901,15 @@ async function withProductionPreview<T>(run: (baseUrl: string) => Promise<T>): P
 test('a production build renders no audio debug UI even with ?audioDebug=1, and exposes no test API at all (base or debug)', async ({ page }) => {
   await withProductionPreview(async (baseUrl) => {
     await page.goto(`${baseUrl}/?audioDebug=1&seed=20260815&snapshot`)
-    await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
+    // No dev test API exists in production (asserted below), so the season
+    // board's own "Start series 1" button -- a real click, not
+    // `window.__GLADIATOR_TEST__.startNextSeries()` -- is the only way past
+    // it. This is the exact gap Task 8 closes: before it, a production build
+    // had no bridge and no board, so nothing could ever leave `season-board`.
+    await expect(page.getByTestId('season-board')).toBeVisible()
     await expect(page.locator('[data-testid="audio-debug"]')).toHaveCount(0)
+    await page.getByTestId('start-series').click()
+    await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
 
     // Task 6: the decision trace panel is the same kind of dev-only surface
     // as the audio debug panel above -- `?debugDecisions=1` must render
@@ -810,6 +938,10 @@ test('a production build ignores ?snapshot and never starts a real session pause
     // canvas's own `data-last-event-id` attribute keeps climbing over real
     // wall-clock time -- proving ticks are not stuck paused.
     await page.goto(`${baseUrl}/?seed=20260815&snapshot`)
+    // Real click, not the dev test API (production has none, see the test
+    // above): the season board's own "Start series 1" button is what opens
+    // series 0's planning screen here.
+    await page.getByTestId('start-series').click()
     for (const [fighterId, boutIndex] of [['aquila', 0], ['nerva', 1], ['brutus', 2]] as const) {
       await page.getByTestId(`fighter-${fighterId}`).click()
       await page.getByTestId(`slot-${boutIndex}`).click()

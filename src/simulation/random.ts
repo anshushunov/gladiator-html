@@ -32,6 +32,14 @@ export function deriveSeed(seed: number, label: string): number {
 
 export const deriveBoutSeed = (seriesSeed: number, boutIndex: number): number => deriveSeed(seriesSeed, `bout:${boutIndex}`)
 
+/**
+ * Series 0 deliberately reuses the season seed: `combat-visuals.spec.ts`
+ * freezes key poses at ticks derived from `deriveBoutSeed(20260815, 0)`, and
+ * the season simply opens with the series the game already plays.
+ */
+export const deriveSeriesSeed = (seasonSeed: number, seriesIndex: number): number =>
+  seriesIndex === 0 ? seasonSeed >>> 0 : deriveSeed(seasonSeed, `series:${seriesIndex}`)
+
 export function createCombatantRandomState(seed: number, combatantId: string): CombatantRandomState {
   return {
     decision: createRandom(deriveSeed(seed, `${combatantId}:decision`)),

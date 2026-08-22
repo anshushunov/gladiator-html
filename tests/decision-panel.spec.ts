@@ -7,6 +7,14 @@ test('shows the decision panel only when asked for, actually within the viewport
   const viewport = { width: 1280, height: 800 }
   await page.setViewportSize(viewport)
   await page.goto('/?seed=20260815&snapshot&debugDecisions=1')
+  // Task 8 removed the old auto-advance bridge: a fresh load now lands on
+  // the season board, not the planning screen. This test exists to catch
+  // `.below-arena-row` (and the panel it can hold) being pushed below the
+  // viewport by the planning screen's five fighter cards -- a defect the
+  // season board's own, shorter layout cannot reproduce -- so it must
+  // actually open the series before measuring, or it silently measures the
+  // wrong screen.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   const panel = page.getByTestId('decision-panel')
   await expect(panel).toBeVisible()
 
@@ -25,8 +33,20 @@ test('shows the decision panel only when asked for, actually within the viewport
   expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height)
 })
 
+/**
+ * Shared by every test below, in two different situations: right after
+ * `page.goto` (the app boots onto the season board -- Task 8 removed the old
+ * auto-advance bridge -- so this `startNextSeries()` is what actually opens
+ * series 0's planning screen), and once, in `'clears decisions on
+ * rematch...'` below, right after a mid-season `continueSeason()` -- which
+ * leaves `season.activeSeries` `null` on the season board again, where this
+ * same call is what opens the next series. Kept unconditional here, rather
+ * than split into two variants, because this one helper has to stay correct
+ * in both call sites.
+ */
 async function assignAndConfirm(page: import('@playwright/test').Page) {
   await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
     window.__GLADIATOR_TEST__.assign('nerva', 1)
     window.__GLADIATOR_TEST__.assign('brutus', 2)
@@ -152,8 +172,9 @@ test('clears decisions on rematch, with no leak into the next bout', async ({ pa
   await page.goto('/?seed=20260815&snapshot&debugDecisions=1')
   await assignAndConfirm(page)
 
-  // Play out all three bouts of the series so `rematch()` (which only
-  // applies from the series' `summary` phase) is actually callable.
+  // Play out all three bouts of the series so `continueSeason()` (which only
+  // applies once the active series has reached its own `summary` phase) is
+  // actually callable.
   for (let bout = 0; bout < 3; bout += 1) {
     await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
     if (bout < 2) await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
@@ -164,7 +185,15 @@ test('clears decisions on rematch, with no leak into the next bout', async ({ pa
   const boutThreeCount = await rows.count()
   expect(boutThreeCount).toBeGreaterThan(0)
 
-  await page.evaluate(() => window.__GLADIATOR_TEST__.rematch())
+  // `rematch()` is gone -- `continueSeason()` closes out the series that just
+  // finished (roster wear, its own `SeriesRecord`, the season score) and
+  // returns to the season board. Mid-season (only one of three series
+  // played), that board does not auto-open the next series -- `main.ts`
+  // simply renders it and waits for a real `start-series` click (or, here,
+  // the dev API's equivalent) -- so `season.activeSeries` is genuinely `null`
+  // here, and stays that way until the `assignAndConfirm(page)` call below's
+  // own `startNextSeries()` opens it (see that helper's own doc comment).
+  await page.evaluate(() => window.__GLADIATOR_TEST__.continueSeason())
   await expect(rows).toHaveCount(0)
   await expect(page.getByTestId('decision-panel-skipped-count')).toHaveText('')
 

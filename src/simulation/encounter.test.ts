@@ -12,6 +12,7 @@ import {
   finishEncounter,
   sortContactIntents,
   type ContactIntent,
+  type EncounterCombatantDefinition,
   type EncounterConfig,
   type EncounterEvent,
   type FighterCombatState,
@@ -50,6 +51,18 @@ function duelEncounterConfig(overrides: Partial<EncounterConfig> & { seed: numbe
     combatStyles: COMBAT_STYLES,
     ...overrides,
   }
+}
+
+/**
+ * `duelEncounterConfig` above, with `overrides` spread onto the home
+ * combatant (`home.brutus`, 100 HP per `combatFixtures.ts`'s
+ * `DEFAULT_FIGHTER`) only -- the fixture this task's optional-`startingHp`
+ * tests need, built on the existing duel shape rather than a second one.
+ */
+function hundredHpDuelConfig(overrides: Partial<EncounterCombatantDefinition> = {}): EncounterConfig {
+  const config = duelEncounterConfig({ seed: 7 })
+  const [home, away] = config.combatants
+  return { ...config, combatants: [{ ...home, ...overrides }, away] }
 }
 
 function distanceBetween(a: Readonly<Vec2>, b: Readonly<Vec2>): number {
@@ -3483,5 +3496,21 @@ describe('Task 10 Step 4: informational pacing probe -- Brutus vs. Drusus, 20 se
         `median duration ${medianDuration} ticks; ` +
         `geometry-miss fraction ${(geometryMissFraction * 100).toFixed(1)}% (${geometryMisses}/${totalResolutions} attack resolutions).`,
     )
+  })
+})
+
+describe('optional starting HP', () => {
+  it('starts a combatant below max when asked, and at max when not', () => {
+    const withWear = createEncounter(hundredHpDuelConfig({ startingHp: 40 }))
+    expect(withWear.state.combatants['home.brutus'].hp).toBe(40)
+
+    const untouched = createEncounter(hundredHpDuelConfig({}))
+    expect(untouched.state.combatants['home.brutus'].hp).toBe(untouched.state.combatants['home.brutus'].definition.maxHp)
+  })
+
+  it('rejects a starting HP that is not an integer inside 1..maxHp', () => {
+    expect(() => createEncounter(hundredHpDuelConfig({ startingHp: 0 }))).toThrow(/startingHp/)
+    expect(() => createEncounter(hundredHpDuelConfig({ startingHp: 12.5 }))).toThrow(/startingHp/)
+    expect(() => createEncounter(hundredHpDuelConfig({ startingHp: 100_000 }))).toThrow(/startingHp/)
   })
 })

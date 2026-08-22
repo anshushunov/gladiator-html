@@ -7,12 +7,13 @@
     <title>Blood &amp; Sand — Prototype</title>
   </head>
   <body>
-    <main class="game-shell" data-testid="series-phase" data-phase="planning">
+    <main class="game-shell" data-testid="series-phase" data-phase="season-board">
       <header class="masthead">
         <div><p class="eyebrow">House of Mars &middot; Series challenge</p><h1>Blood <span>&amp;</span> Sand</h1></div>
         <div class="controls" data-testid="runtime-controls"></div>
       </header>
       <div class="page-body" data-testid="page-body">
+        <section id="season-ui" aria-label="Season overview"></section>
         <section id="series-ui" aria-label="Series management"></section>
         <section id="battle-ui" hidden>
           <div class="battle-grid" data-testid="arena-shell">

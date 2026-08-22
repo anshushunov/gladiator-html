@@ -1,6 +1,7 @@
 import './style.css'
 import { ArenaView, type ArenaDebugSnapshot, type BattleRenderFrame } from './presentation/ArenaView'
 import { SeriesView, type RuntimeViewState, type SeriesIntent } from './presentation/SeriesView'
+import { SeasonView } from './presentation/SeasonView'
 import {
   ALL_COMBAT_CUES,
   createBrowserAudioBackend,
@@ -11,26 +12,27 @@ import {
 import { collectFootstepThresholds, type PlantedFootByCombatant } from './presentation/footstepThresholds'
 import { DecisionPanel } from './presentation/DecisionPanel'
 import { COMBAT_STYLES } from './content/combatStyles'
-import { homeRoster, opponents } from './content/mvpSeries'
+import { SEASON_CHALLENGES, SEASON_ROSTER } from './content/season'
 import {
-  advanceSeriesTicks,
   assignFighter,
   confirmLineup,
-  createSeries,
-  rematch,
+  continueSeason,
+  createSeason,
+  rematchSeason,
   startNextBout,
+  startNextSeries,
   unassignSlot,
-  type BoutIndex,
-  type SeriesCommandFailure,
-  type SeriesCommandResult,
-  type SeriesState,
-} from './simulation/series'
+  type SeasonCommandFailure,
+  type SeasonCommandResult,
+  type SeasonState,
+} from './simulation/season'
+import { advanceSeriesTicks, type BoutIndex, type SeriesPhase, type SeriesState } from './simulation/series'
 import { TICKS_PER_SECOND, type BattleState } from './simulation/battle'
 import type { CombatantId, EncounterEvent } from './simulation/encounter'
 import type { Vec2 } from './simulation/movement'
 import { formatTraceHash } from './simulation/random'
 
-type TestCommandResult = { ok: true } | { ok: false; reason: SeriesCommandFailure }
+type TestCommandResult = { ok: true } | { ok: false; reason: SeasonCommandFailure }
 
 interface RenderDebugState {
   previousTick: number | null
@@ -42,13 +44,16 @@ interface RenderDebugState {
 }
 
 interface GladiatorTestApi {
-  getState(): SeriesState
+  getSeasonState(): SeasonState
+  getActiveSeriesState(): SeriesState | null
+  startNextSeries(): TestCommandResult
+  continueSeason(): TestCommandResult
+  rematchSeason(): TestCommandResult
   assign(homeFighterId: string, boutIndex: BoutIndex): TestCommandResult
   unassign(boutIndex: BoutIndex): TestCommandResult
   confirm(): TestCommandResult
   advanceTicks(ticks: number): void
   startNextBout(): TestCommandResult
-  rematch(): TestCommandResult
   getActiveBattleTraceHash(): string | null
   getActiveCombatantPositions(): Readonly<Record<CombatantId, Vec2>>
   getRenderDebugState(): Readonly<RenderDebugState>
@@ -91,7 +96,7 @@ interface GladiatorTestApi {
 type RenderSnapshot = Omit<BattleRenderFrame, 'alpha'>
 
 const url = new URL(window.location.href)
-const seed = resolveSeriesSeed(url)
+const seed = resolveSeasonSeed(url)
 
 // Dev/test-only (final-review fix #4): `?snapshot` pauses the app on load so
 // Playwright fixtures get a stable first frame -- reading it unconditionally
@@ -109,15 +114,32 @@ const shell = required<HTMLElement>('.game-shell')
 const canvas = required<HTMLCanvasElement>('canvas')
 
 const seriesView = new SeriesView(shell, applyIntent)
+const seasonView = new SeasonView(required<HTMLElement>('#season-ui'))
+// `SeasonView`'s own constructor takes no intent callback (its buttons are
+// plain markup, `data-action="start-series"`/`"rematch-season"`) -- routed
+// here instead, as a second click listener on the same `shell` `SeriesView`
+// already listens on. Both listeners fire on every click; `SeriesView`'s own
+// `handleClick` simply has no `case` for these two action names, the same
+// way this one ignores every action it does not recognize.
+shell.addEventListener('click', handleSeasonClick)
 const arenaView = new ArenaView(canvas)
 const combatAudio = new CombatAudio(createBrowserAudioBackend())
 
-let series: SeriesState = createSeries({ homeRoster, opponents, seed, combatStyles: COMBAT_STYLES })
+/**
+ * The season is the runtime's real unit of state (Task 7): the app lives a
+ * whole three-series season, not a single standalone series. It boots
+ * straight onto `season-board` -- `SeasonView` (Task 8) owns that screen and
+ * its "Start series N" control (`handleSeasonClick`, below) is what actually
+ * opens series 0's planning screen, the same as it opens every series after
+ * it. There is no bridge past this screen: a production build (zero dev API)
+ * relies on that real control exactly like a developer testing by hand does.
+ */
+let season: SeasonState = createSeason({ seed, roster: SEASON_ROSTER, challenges: SEASON_CHALLENGES, combatStyles: COMBAT_STYLES })
 const runtime: RuntimeViewState = { paused: snapshotMode, speed: 1, soundEnabled: false }
 let previousFrame = performance.now()
-let lastPhase = series.phase
-let lastActiveBoutIndex: number | null = series.activeBoutIndex
-let lastRenderedSeries: SeriesState = series
+let lastPhase: SeriesPhase | null = season.activeSeries?.phase ?? null
+let lastActiveBoutIndex: number | null = season.activeSeries?.activeBoutIndex ?? null
+let lastRenderedSeason: SeasonState = season
 let accumulator = 0
 const tickDuration = 1 / TICKS_PER_SECOND
 
@@ -215,9 +237,9 @@ let nextFootstepId = 0
  * given battle's current tick (tick 0 for a freshly created battle), with an
  * empty event batch -- or clears them entirely when no battle is active
  * (planning/summary). Called only from command paths (`applyIntent`/
- * `applyCommand`), never from tick-stepping, so an `activeBattle` reference
- * change reaching here always means a bout started or ended, never a tick
- * advanced. Also the one place that resets `CombatAudio`'s own event/
+ * `applySeasonCommand`), never from tick-stepping, so an `activeBattle`
+ * reference change reaching here always means a bout started or ended, never
+ * a tick advanced. Also the one place that resets `CombatAudio`'s own event/
  * footstep cursors and stops its voices (design.md: "Arena reset clears
  * pose, trails, flashes, audio voices, event cursors... at each new bout and
  * on rematch") -- every path that reaches here is exactly a bout change or a
@@ -244,16 +266,24 @@ function resetRenderFrame(battle: BattleState | undefined): void {
  * every tick's events to `ArenaView` regardless of how many ticks run
  * before the next render.
  *
- * A no-op (series and renderFrame both untouched) whenever there is no
+ * Steps `season.activeSeries` directly through `advanceSeriesTicks` (rather
+ * than `season.ts`'s own `advanceSeasonTicks`) so the dev-only decision
+ * collector keeps flowing to it -- `advanceSeasonTicks` does not accept one.
+ * Ticking never itself closes out a series (that is `continueSeason`'s job,
+ * triggered explicitly), so `season.phase` never changes here, only
+ * `season.activeSeries`.
+ *
+ * A no-op (season and renderFrame both untouched) whenever there is no
  * active bout to advance.
  */
 function stepBattleTick(): void {
-  const previousSeries = series
-  const previousBattle = series.activeBattle
-  const nextSeries = advanceSeriesTicks(series, 1, decisionPanel)
-  if (nextSeries === previousSeries) return
-  series = nextSeries
-  const currentBattle = series.activeBattle
+  const activeSeries = season.activeSeries
+  if (!activeSeries) return
+  const previousBattle = activeSeries.activeBattle
+  const nextActiveSeries = advanceSeriesTicks(activeSeries, 1, decisionPanel)
+  if (nextActiveSeries === activeSeries) return
+  season = { ...season, activeSeries: nextActiveSeries }
+  const currentBattle = nextActiveSeries.activeBattle
   if (previousBattle && currentBattle && currentBattle !== previousBattle) {
     pendingEvents.push(...currentBattle.events.slice(previousBattle.events.length))
     const footsteps = collectFootstepThresholds(currentBattle.encounter, lastPlantedFoot, nextFootstepId)
@@ -271,10 +301,10 @@ function currentAlpha(): number {
 }
 
 function applyIntent(intent: SeriesIntent): void {
-  const previousBattle = series.activeBattle
+  const previousBattle = season.activeSeries?.activeBattle
   switch (intent.type) {
-    case 'assign': series = assignFighter(series, intent.fighterId, intent.boutIndex).state; break
-    case 'unassign': series = unassignSlot(series, intent.boutIndex).state; break
+    case 'assign': season = assignFighter(season, intent.fighterId, intent.boutIndex).state; break
+    case 'unassign': season = unassignSlot(season, intent.boutIndex).state; break
     case 'confirm': {
       // Gesture lifecycle (brief resolution #5): `enableAfterGesture` is
       // fired synchronously, without `await`, as the very first statement
@@ -284,14 +314,26 @@ function applyIntent(intent: SeriesIntent): void {
       // is asynchronous, so `AudioContext.resume()` still begins inside the
       // browser gesture's own call stack even though this promise only
       // settles later. `.then`/`.catch` both just refresh the visible
-      // Sound on/off control; the synchronous series command below runs
+      // Sound on/off control; the synchronous season command below runs
       // immediately regardless of whether audio ends up enabled.
       void combatAudio.enableAfterGesture().then(refreshAudioUi).catch(refreshAudioUi)
-      series = confirmLineup(series).state
+      season = confirmLineup(season).state
       break
     }
-    case 'start-next': series = startNextBout(series).state; break
-    case 'rematch': series = rematch(series).state; break
+    case 'start-next': season = startNextBout(season).state; break
+    case 'continue': {
+      // The series-summary screen's own "Continue" button (`SeriesView`):
+      // close out the series that just finished (roster wear, the record, the
+      // score) and land on whichever screen `SeasonView` owns next:
+      // `season-board` (more series left; the player's own "Start series N"
+      // click is what opens the next one, `handleSeasonClick` below) or
+      // `season-summary` (the whole season is over; "Rematch season" is the
+      // only way forward from there). No bridging -- the season genuinely
+      // stops on that screen until a real click moves it, in production
+      // exactly as in dev.
+      season = continueSeason(season).state
+      break
+    }
     case 'toggle-pause': runtime.paused = !runtime.paused; break
     case 'set-speed': runtime.speed = intent.speed; break
     case 'toggle-sound': {
@@ -304,49 +346,83 @@ function applyIntent(intent: SeriesIntent): void {
       break
     }
   }
-  if (series.activeBattle !== previousBattle) resetRenderFrame(series.activeBattle)
+  if (season.activeSeries?.activeBattle !== previousBattle) resetRenderFrame(season.activeSeries?.activeBattle)
+  renderDom()
+}
+
+/**
+ * The season board/summary's own two controls -- `SeasonView` renders them
+ * as plain `data-action` markup rather than taking an intent callback (see
+ * its constructor's signature), so this is where they actually run,
+ * mirroring `applyIntent`'s switch for `SeriesView`'s own actions. Neither
+ * command can ever leave `season.activeSeries` non-null (`startNextSeries`
+ * always lands on `series`; `rematchSeason` always lands on a fresh
+ * `season-board`), so unlike `applyIntent` there is no `activeBattle`
+ * reference to compare and no `resetRenderFrame` call needed here.
+ */
+function handleSeasonClick(event: MouseEvent): void {
+  const target = (event.target as Element | null)?.closest<HTMLElement>('[data-action="start-series"], [data-action="rematch-season"]')
+  if (!target) return
+  if (target.dataset.action === 'start-series') season = startNextSeries(season).state
+  else season = rematchSeason(season).state
   renderDom()
 }
 
 /** Refreshes only the visible Sound on/off control after an async audio
  * gesture settles -- deliberately not `renderDom()` (which also drives
  * phase-change bookkeeping/focus), since an audio settlement is never a
- * `series`-changing event. */
+ * `season`-changing event. */
 function refreshAudioUi(): void {
   runtime.soundEnabled = combatAudio.isSoundEnabled()
-  seriesView.render(series, runtime)
+  if (season.activeSeries) seriesView.render(season.activeSeries, runtime, season.roster)
 }
 
-function applyCommand(result: SeriesCommandResult): TestCommandResult {
-  const previousBattle = series.activeBattle
-  series = result.state
-  if (series.activeBattle !== previousBattle) resetRenderFrame(series.activeBattle)
+/** Applies a season command's result, exactly the way `applyIntent` applies
+ * a UI intent: writes `season` back, resets the render frame on any
+ * `activeBattle` reference change, and re-renders. Every dev test API
+ * command below is a thin wrapper around this, matching `applyCommand`'s
+ * shape from before the season layer existed -- `result.state` is written
+ * back as-is, unbridged, exactly like every other command that touches
+ * `season`. */
+function applySeasonCommand(result: SeasonCommandResult): TestCommandResult {
+  const previousBattle = season.activeSeries?.activeBattle
+  season = result.state
+  if (season.activeSeries?.activeBattle !== previousBattle) resetRenderFrame(season.activeSeries?.activeBattle)
   renderDom()
   return result.ok ? { ok: true } : { ok: false, reason: result.reason }
 }
 
 function renderDom(): void {
-  lastRenderedSeries = series
-  if (series.phase !== lastPhase) {
+  lastRenderedSeason = season
+  const activeSeries = season.activeSeries
+  const currentPhase = activeSeries?.phase ?? null
+  if (currentPhase !== lastPhase) {
     // Final-review fix #3: `series.ts` can flip `phase` straight from
     // `fighting` to `summary` on the very tick the series-ending (third)
     // bout resolves -- unlike bouts 1/2, which always land in
     // `between-bouts` first. `syncArena`'s own gate (below) only forwards
     // batches while `fighting`/`between-bouts`, and `handleArenaPhaseChange`
-    // (also below) clears the arena outright on `summary` -- so without this,
+    // (also below) clears the arena outright otherwise -- so without this,
     // the third bout's final `damage-dealt`/`fighter-staggered`/
     // `fighter-defeated`/`encounter-finished` batch (and its defeat cue)
     // would never reach `ArenaView`/`CombatAudio` at all. Flush it here,
     // before the arena clears, using the same accumulator-reset-then-alpha
     // sequence `syncArena` uses for the between-bouts case, so bout 3 is
     // presented exactly like bouts 1 and 2.
-    const needsFinalFlush = (lastPhase === 'fighting' || lastPhase === 'between-bouts') && series.phase !== 'fighting' && series.phase !== 'between-bouts'
+    const needsFinalFlush = (lastPhase === 'fighting' || lastPhase === 'between-bouts') && currentPhase !== 'fighting' && currentPhase !== 'between-bouts'
     accumulator = 0
     if (needsFinalFlush) flushRenderBatch(currentAlpha())
     handleArenaPhaseChange()
-    lastPhase = series.phase
+    lastPhase = currentPhase
   }
-  seriesView.render(series, runtime)
+  if (activeSeries) {
+    seasonView.clear()
+    seriesView.render(activeSeries, runtime, season.roster)
+  } else {
+    seriesView.clear()
+    shell.dataset.phase = season.phase
+    seasonView.render(season)
+  }
   syncArena()
   // Once per render, after this frame's ticks (and their decisions, if any)
   // have already been recorded above -- a presentation read, never a write
@@ -355,14 +431,15 @@ function renderDom(): void {
 }
 
 function handleArenaPhaseChange(): void {
-  if (series.phase === 'fighting') {
-    if (series.activeBoutIndex !== null && series.activeBoutIndex !== lastActiveBoutIndex && series.activeBattle) {
-      arenaView.startBout(series.activeBoutIndex, series.activeBattle)
+  const activeSeries = season.activeSeries
+  if (activeSeries?.phase === 'fighting') {
+    if (activeSeries.activeBoutIndex !== null && activeSeries.activeBoutIndex !== lastActiveBoutIndex && activeSeries.activeBattle) {
+      arenaView.startBout(activeSeries.activeBoutIndex, activeSeries.activeBattle)
     }
-  } else if (series.phase === 'planning' || series.phase === 'summary') {
+  } else if (!activeSeries || activeSeries.phase === 'planning' || activeSeries.phase === 'summary') {
     arenaView.clearBout()
   }
-  lastActiveBoutIndex = series.activeBoutIndex
+  lastActiveBoutIndex = activeSeries?.activeBoutIndex ?? null
 }
 
 /**
@@ -390,7 +467,7 @@ function flushRenderBatch(alpha: number): void {
   combatAudio.consume({
     events: pendingEvents,
     footsteps: pendingFootsteps,
-    boutIndex: series.activeBoutIndex ?? 0,
+    boutIndex: season.activeSeries?.activeBoutIndex ?? 0,
     speed: runtime.speed,
     paused: runtime.paused,
   })
@@ -403,7 +480,8 @@ function flushRenderBatch(alpha: number): void {
 }
 
 function syncArena(): void {
-  if (series.phase === 'fighting' || series.phase === 'between-bouts') flushRenderBatch(currentAlpha())
+  const phase = season.activeSeries?.phase
+  if (phase === 'fighting' || phase === 'between-bouts') flushRenderBatch(currentAlpha())
 }
 
 function frame(now: number): void {
@@ -411,7 +489,7 @@ function frame(now: number): void {
     const elapsed = Math.min((now - previousFrame) / 1000, 0.1)
     previousFrame = now
 
-    if (series.phase === 'fighting' && !runtime.paused) {
+    if (season.activeSeries?.phase === 'fighting' && !runtime.paused) {
       accumulator += elapsed
       while (accumulator >= tickDuration) {
         accumulator -= tickDuration
@@ -430,7 +508,7 @@ function frame(now: number): void {
         forcePresentationThrowOnce = false
         throw new Error('Forced presentation failure (dev-only test hook)')
       }
-      if (series !== lastRenderedSeries) renderDom()
+      if (season !== lastRenderedSeason) renderDom()
       syncArena()
     }
   } catch (error) {
@@ -446,7 +524,7 @@ function frame(now: number): void {
   }
 }
 
-function resolveSeriesSeed(target: URL): number {
+function resolveSeasonSeed(target: URL): number {
   const raw = target.searchParams.get('seed')
   const parsed = raw !== null && /^\d+$/.test(raw) ? Number(raw) : Number.NaN
   if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 0xffff_ffff) return parsed >>> 0
@@ -492,17 +570,20 @@ declare global {
 // the emitted bundle for these names (see the task report).
 if (import.meta.env.DEV) {
   window.__GLADIATOR_TEST__ = {
-    getState: () => structuredClone(series),
-    assign: (homeFighterId, boutIndex) => applyCommand(assignFighter(series, homeFighterId, boutIndex)),
-    unassign: (boutIndex) => applyCommand(unassignSlot(series, boutIndex)),
-    confirm: () => applyCommand(confirmLineup(series)),
+    getSeasonState: () => structuredClone(season),
+    getActiveSeriesState: () => (season.activeSeries ? structuredClone(season.activeSeries) : null),
+    startNextSeries: () => applySeasonCommand(startNextSeries(season)),
+    continueSeason: () => applySeasonCommand(continueSeason(season)),
+    rematchSeason: () => applySeasonCommand(rematchSeason(season)),
+    assign: (homeFighterId, boutIndex) => applySeasonCommand(assignFighter(season, homeFighterId, boutIndex)),
+    unassign: (boutIndex) => applySeasonCommand(unassignSlot(season, boutIndex)),
+    confirm: () => applySeasonCommand(confirmLineup(season)),
     advanceTicks: (ticks) => {
       if (!Number.isInteger(ticks) || ticks < 0) throw new Error('Tick count must be a non-negative integer')
       for (let step = 0; step < ticks; step += 1) stepBattleTick()
       renderDom()
     },
-    startNextBout: () => applyCommand(startNextBout(series)),
-    rematch: () => applyCommand(rematch(series)),
+    startNextBout: () => applySeasonCommand(startNextBout(season)),
     getActiveBattleTraceHash: () => (renderFrame ? formatTraceHash(renderFrame.current.traceHash) : null),
     getActiveCombatantPositions: () => {
       if (!renderFrame) return {}
