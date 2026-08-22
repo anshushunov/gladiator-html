@@ -56,6 +56,8 @@ export interface BoutOutcome {
   firstResolutionTick: number
   /** False when the bout ended without a single resolution -- there was no window to measure, and `firstResolutionTick` above is a floor, not a measurement. */
   resolved: boolean
+  /** Home fighter's remaining HP as a share of maxHp when the bout ended — the wear-threshold input (condition.ts's 0.25 boundary). */
+  homeRemainingHpRatio: number
 }
 
 /**
@@ -84,14 +86,21 @@ export interface BoutOutcome {
  * which is what `createBattle` already does for an absent key. It exists so the
  * season cohorts can measure a `wounded` gladiator on the same method rather
  * than a parallel one.
+ *
+ * `dispositions` is optional on the same terms and for the same reason: absent,
+ * it reaches `createBattle` as `undefined`, which is byte-identical to never
+ * having passed the key -- so every cohort that predates orders keeps measuring
+ * exactly what it measured before. It exists so the disposition cohorts can
+ * measure an ordered bout on this method rather than a parallel one.
  */
 export function runBout(
   home: FighterDefinition,
   away: FighterDefinition,
   seed: number,
   startingHp?: BattleConfig['startingHp'],
+  dispositions?: BattleConfig['dispositions'],
 ): BoutOutcome {
-  let battle = createBattle({ home, away, seed, combatStyles: COMBAT_STYLES, startingHp })
+  let battle = createBattle({ home, away, seed, combatStyles: COMBAT_STYLES, startingHp, dispositions })
   const ids = [battle.descriptor.homeId, battle.descriptor.awayId]
   let firstResolutionTick = -1
   let maxGap = 0
@@ -103,6 +112,8 @@ export function runBout(
     if (firstResolutionTick >= 0) maxGap = Math.max(maxGap, battle.encounter.tick - lastResolution)
   }
 
+  const homeCombatant = battle.encounter.combatants[battle.descriptor.homeId]
+
   return {
     homeWon: battle.winnerSide === 'home',
     durationTicks: battle.encounter.tick,
@@ -110,6 +121,7 @@ export function runBout(
     maxResolutionGapTicks: firstResolutionTick < 0 ? battle.encounter.tick : maxGap,
     firstResolutionTick: firstResolutionTick < 0 ? battle.encounter.tick : firstResolutionTick,
     resolved: firstResolutionTick >= 0,
+    homeRemainingHpRatio: homeCombatant.hp / homeCombatant.definition.maxHp,
   }
 }
 
@@ -153,10 +165,11 @@ export async function cohort(
   away: FighterDefinition,
   seedCount: number,
   startingHp?: BattleConfig['startingHp'],
+  dispositions?: BattleConfig['dispositions'],
 ): Promise<BoutOutcome[]> {
   const outcomes: BoutOutcome[] = []
   for (let index = 0; index < seedCount; index += 1) {
-    outcomes.push(runBout(home, away, cohortSeed(index), startingHp))
+    outcomes.push(runBout(home, away, cohortSeed(index), startingHp, dispositions))
     if ((index + 1) % BOUTS_PER_YIELD === 0) await yieldToEventLoop()
   }
   return outcomes
