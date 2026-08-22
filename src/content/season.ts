@@ -1,3 +1,4 @@
+import type { DispositionId } from '../simulation/disposition'
 import type { ChallengeDefinition } from '../simulation/season'
 import type { Archetype, FighterDefinition } from '../simulation/fighters'
 import { homeRoster, opponents } from './mvpSeries'
@@ -175,6 +176,20 @@ const SCALING: readonly (readonly [number, number, number])[] = [
 
 const FEATURED: readonly (Archetype | null)[] = [null, 'technical', 'heavy']
 
+/**
+ * Per-challenge opponent temperaments, in `opponents` order (Drusus, Cassius,
+ * Magnus). Challenge 1 is all 'standard': it IS the frozen baseline series,
+ * and it teaches orders against neutral opponents (design.md, "Temperaments").
+ * Challenges 2–3 are initial authored rows — tuning inputs to
+ * dispositionBalance.test.ts, adjustable there alongside the modifier
+ * magnitudes; the challenge-1 row is not.
+ */
+const TEMPERAMENTS: readonly (readonly DispositionId[])[] = [
+  ['standard', 'standard', 'standard'],
+  ['press', 'guarded', 'standard'],
+  ['press', 'guarded', 'press'],
+]
+
 function scaleOpponent(definition: FighterDefinition, factor: number): FighterDefinition {
   if (factor === 1) return definition
   return { ...definition, maxHp: Math.round(definition.maxHp * factor), power: definition.power * factor }
@@ -184,4 +199,5 @@ export const SEASON_CHALLENGES: readonly ChallengeDefinition[] = SCALING.map((fa
   index: index as 0 | 1 | 2,
   opponents: opponents.map((opponent, slot) => scaleOpponent(opponent, factors[slot])),
   featuredThreat: FEATURED[index],
+  temperaments: TEMPERAMENTS[index],
 }))

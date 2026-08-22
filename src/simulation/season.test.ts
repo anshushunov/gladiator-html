@@ -3,7 +3,7 @@ import { COMBAT_STYLES } from '../content/combatStyles'
 import { SEASON_CHALLENGES, SEASON_ROSTER } from '../content/season'
 import {
   advanceSeasonTicks, confirmLineup, continueSeason, createSeason, rematchSeason,
-  startNextBout, startNextSeries, assignFighter, unassignSlot,
+  startNextBout, startNextSeries, assignFighter, unassignSlot, setBoutOrder,
   type SeasonCommandResult, type SeasonState,
 } from './season'
 
@@ -104,6 +104,20 @@ describe('season', () => {
       expect(`${name}: ${result.ok} ${result.reason}`).toBe(`${name}: false no-active-series`)
       expect(result.state).toBe(board)
     }
+  })
+
+  it('startNextSeries hands the challenge temperaments to the series', () => {
+    const state = startNextSeries(createSeason(config())).state
+    expect(state.activeSeries!.opponentDispositions).toEqual(state.challenges[0].temperaments)
+  })
+
+  it('setBoutOrder delegates to the active series and fails with no-active-series on the board', () => {
+    const board = createSeason(config())
+    expect(setBoutOrder(board, 0, 'press')).toMatchObject({ ok: false, reason: 'no-active-series' })
+    const started = startNextSeries(board).state
+    const result = setBoutOrder(started, 1, 'guarded')
+    expect(result.ok).toBe(true)
+    expect(result.state.activeSeries!.orders[1]).toBe('guarded')
   })
 
   it('resets the whole roster on a season rematch', () => {
