@@ -68,11 +68,11 @@ you may deviate, but note where and why if you do:
 | 1 | I | Brutus vs Drusus | Steady (ch. 1) | Press | Heavy beats fast — push the counter-triangle advantage while Brutus is fresh. |
 | 1 | II | Aquila vs Cassius | Steady (ch. 1) | Press | Fast beats technical — same idea, still fresh. |
 | 1 | III | Nerva vs Magnus | Steady (ch. 1) | Standard | Also favourable, but keep one bout as a baseline before trying the other two orders. |
-| 2 | I | Vitus vs Drusus | Aggressive (ch. 2) | Guarded | Opponent is scaled up and pressing; Vitus is the bench specialist here, not a veteran — play it safe. |
-| 2 | II | Sura vs Cassius | Cautious (ch. 2) | Press | Favourable matchup against an opponent who is himself playing cautious — push it. |
+| 2 | I | Vitus vs Drusus | Aggressive (ch. 2) | Guarded | Vitus is the bench specialist standing in for a veteran here, on a scaled-up opponent — play his first outing conservatively rather than commit into an untested matchup. |
+| 2 | II | Sura vs Cassius | Cautious (ch. 2) | Press | Favourable matchup for a fast fighter against technical — push the counter-triangle advantage. |
 | 2 | III | Brutus vs Magnus | Steady (ch. 2) | Guarded | Second bout of the series for Brutus — conserve him for series 3. |
-| 3 | I | Aquila vs Drusus | Aggressive (ch. 3) | Guarded | Mirror-archetype matchup (fast vs fast) against an aggressive opponent — no counter-triangle help here. |
-| 3 | II | Nerva vs Cassius | Cautious (ch. 3) | Standard | Mirror-archetype matchup (technical vs technical), both sides cautious. |
+| 3 | I | Aquila vs Drusus | Aggressive (ch. 3) | Guarded | Mirror-archetype matchup (fast vs fast) — no counter-triangle edge either way, so favour caution over commitment. |
+| 3 | II | Nerva vs Cassius | Cautious (ch. 3) | Standard | Mirror-archetype matchup (technical vs technical) — no counter-triangle edge; a baseline order is as good a guess as any. |
 | 3 | III | Vitus vs Magnus | Aggressive (ch. 3) | Press | Final, deciding bout — commit. |
 
 Before confirming each order, write down *why* you picked it (or why you
@@ -175,8 +175,12 @@ reviewer, per the spec's "Human playtest gate":
    and which under `guarded` in a prepared pair of clips — the visibility
    quality;
 3. describes at least one wear outcome as caused by their own order choice —
-   the attribution quality that Q5 found missing in the school-season
-   playtest.
+   the attribution quality that Q5 found missing.
+
+(Q5 here is `2026-08-22-school-season-playtest.md`'s question 5, "By
+challenge 3, did the roster feel worn in a way you had caused — or in a way
+that just happened to you?" — the gap this slice's attribution criterion is
+answering.)
 
 ---
 
