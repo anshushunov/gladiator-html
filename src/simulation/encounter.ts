@@ -68,7 +68,7 @@ import {
   type IncomingThreat,
 } from './combatDecision'
 import type { DecisionCollector, DecisionRecord } from './decisionDiagnostics'
-import { dispositionModifiers, isDispositionId, type DispositionId } from './disposition'
+import { DISPOSITION_IDS, dispositionModifiers, isDispositionId, type DispositionId } from './disposition'
 import type { FighterDefinition } from './fighters'
 import { compareArchetypes, comparisonDamageMultiplier, validateFighterDefinition } from './fighters'
 import type { CombatArenaDefinition, LocomotionIntent, MovementRequest, TurnStep, Vec2 } from './movement'
@@ -599,7 +599,7 @@ export function createEncounter(config: EncounterConfig): EncounterTransition {
     requireValidId(combatant.id, 'combatants id')
     requireValidId(combatant.factionId, 'combatants factionId')
     if (combatant.disposition !== undefined && !isDispositionId(combatant.disposition)) {
-      throw new Error(`EncounterConfig combatant '${combatant.id}' disposition must be one of standard|press|guarded`)
+      throw new Error(`EncounterConfig combatant '${combatant.id}' disposition must be one of ${DISPOSITION_IDS.join('|')}`)
     }
   }
   if (config.hostility.mode === 'relation-table') {

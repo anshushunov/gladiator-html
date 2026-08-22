@@ -1,7 +1,7 @@
 import { advanceBattleTicks, createBattle, fighterBySide, type BattleFinishReason, type BattleState } from './battle'
 import type { CombatStyleCatalog } from './combatActions'
 import type { DecisionCollector } from './decisionDiagnostics'
-import { isDispositionId, type DispositionId } from './disposition'
+import { DISPOSITION_IDS, isDispositionId, type DispositionId } from './disposition'
 import { compareArchetypes, type FighterDefinition, type FighterSide, type MatchupComparison } from './fighters'
 import { deriveBoutSeed } from './random'
 
@@ -63,6 +63,21 @@ export interface SeriesConfig {
 }
 
 export function createSeries(config: SeriesConfig): SeriesState {
+  // Same discipline as `createEncounter`'s config validation: a caller who
+  // supplies a row is supplying one per opponent slot. Without this the
+  // simulation degrades a short row silently (`combatant.disposition` is
+  // `undefined`, i.e. 'standard'), but the UI has no such default and prints a
+  // literal `undefined` in the temperament badge and the HUD's `Foe:` field.
+  if (config.opponentDispositions !== undefined) {
+    if (config.opponentDispositions.length !== config.opponents.length) {
+      throw new Error(`SeriesConfig opponentDispositions must have one entry per opponent (got ${config.opponentDispositions.length}, expected ${config.opponents.length})`)
+    }
+    for (const [slot, disposition] of config.opponentDispositions.entries()) {
+      if (!isDispositionId(disposition)) {
+        throw new Error(`SeriesConfig opponentDispositions[${slot}] must be one of ${DISPOSITION_IDS.join('|')}, got ${String(disposition)}`)
+      }
+    }
+  }
   return {
     phase: 'planning',
     homeRoster: config.homeRoster,

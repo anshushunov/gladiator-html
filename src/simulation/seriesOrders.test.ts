@@ -94,6 +94,16 @@ describe('setBoutOrder', () => {
     expect(pressResult.homeOrder).toBe('press')
     expect(pressRun.activeBattle!.traceHash).not.toBe(standardRun.activeBattle!.traceHash)
   })
+  // `createEncounter`'s discipline, one layer up: a short or malformed
+  // temperament row is a programmer error, not a state the series degrades
+  // into. The simulation would silently read the missing slot as `standard`,
+  // but the UI has no such default and renders a literal `undefined` in the
+  // temperament badge and the battle HUD's `Foe:` field.
+  it('rejects a temperament row that does not match the opponents', () => {
+    expect(() => createMvpSeries(['press', 'standard'])).toThrow(/one entry per opponent/)
+    expect(() => createMvpSeries(['press', 'standard', 'standard', 'press'])).toThrow(/one entry per opponent/)
+    expect(() => createMvpSeries(['press', 'aggressive' as DispositionId, 'standard'])).toThrow(/opponentDispositions\[1\]/)
+  })
   it('opponent dispositions flow into the bout', () => {
     const steady = advanceSeriesTicks(confirmed(createMvpSeries()), MAX_BOUT_TICKS)
     const aggressive = advanceSeriesTicks(confirmed(createMvpSeries(['press', 'standard', 'standard'])), MAX_BOUT_TICKS)

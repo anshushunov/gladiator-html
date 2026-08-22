@@ -4,7 +4,7 @@ import type { Archetype, FighterDefinition, FighterSide } from '../simulation/fi
 import { fighterBySide, type BattleState } from '../simulation/battle'
 import { isFightable, startingHpFor } from '../simulation/condition'
 import type { RosterEntry } from '../simulation/season'
-import type { DispositionId } from '../simulation/disposition'
+import { DISPOSITION_IDS, isDispositionId, type DispositionId } from '../simulation/disposition'
 import { CONDITION_LABELS, fightTelegraph, restTelegraph } from './conditionTelegraph'
 import { ORDER_LABELS, ORDER_TELEGRAPHS, TEMPERAMENT_DESCRIPTIONS, TEMPERAMENT_LABELS } from './dispositionLabels'
 import { formatPower } from './formatPower'
@@ -239,8 +239,8 @@ export class SeriesView {
       case 'set-order': {
         const boutIndex = this.parseSlot(target)
         const order = target.dataset.order
-        if (boutIndex === null || order === undefined || !['standard', 'press', 'guarded'].includes(order)) return
-        this.onIntent({ type: 'set-order', boutIndex, order: order as DispositionId })
+        if (boutIndex === null || !isDispositionId(order)) return
+        this.onIntent({ type: 'set-order', boutIndex, order })
         this.shell.querySelector<HTMLElement>(`[data-testid="order-${boutIndex}-${order}"]`)?.focus()
         return
       }
@@ -530,7 +530,7 @@ export class SeriesView {
    * HTML); appended to the slot item / interstitial as a sibling. */
   private buildOrderSelector(state: SeriesState, boutIndex: BoutIndex): HTMLElement {
     const wrap = el('div', { class: 'order-selector', role: 'group', 'aria-label': `Bout ${BOUT_NUMERALS[boutIndex]} order` })
-    for (const order of ['standard', 'press', 'guarded'] as const) {
+    for (const order of DISPOSITION_IDS) {
       wrap.append(el('button', {
         class: 'button order-selector__button',
         type: 'button',
@@ -539,6 +539,13 @@ export class SeriesView {
         'data-order': order,
         'data-testid': `order-${boutIndex}-${order}`,
         'aria-pressed': String(state.orders[boutIndex] === order),
+        // Each order's trade, reachable without selecting it first: the
+        // telegraph line below only ever describes the CURRENT order, so a
+        // player who never clicks `Press` would otherwise never learn what it
+        // costs (design.md, acceptance 1). `title` adds no layout and no
+        // accessible-name change, so the DOM contract and the screenshot
+        // baselines are untouched.
+        title: ORDER_TELEGRAPHS[order],
       }, ORDER_LABELS[order]))
     }
     wrap.append(el('span', { class: 'order-selector__telegraph' }, ORDER_TELEGRAPHS[state.orders[boutIndex]]))
