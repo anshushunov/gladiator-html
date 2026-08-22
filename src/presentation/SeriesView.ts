@@ -509,11 +509,16 @@ export class SeriesView {
     return item
   }
 
-  /** Three-way order radio group for one bout slot. Not nested inside the
-   * slot's pick button (nested buttons are invalid HTML); appended to the
-   * slot item / interstitial as a sibling. */
+  /** Three-way order button group for one bout slot. `role="group"`, not
+   * `radiogroup`: the options below are plain `<button aria-pressed>`
+   * elements (the same shape `.speed-control`'s three speed buttons already
+   * use, `buildControls` above), not `role="radio"`/`aria-checked` --
+   * `radiogroup` requires radio-role children, and the project has no
+   * roving-tabindex/arrow-key navigation anywhere to back that pattern up.
+   * Not nested inside the slot's pick button (nested buttons are invalid
+   * HTML); appended to the slot item / interstitial as a sibling. */
   private buildOrderSelector(state: SeriesState, boutIndex: BoutIndex): HTMLElement {
-    const wrap = el('div', { class: 'order-selector', role: 'radiogroup', 'aria-label': `Bout ${BOUT_NUMERALS[boutIndex]} order` })
+    const wrap = el('div', { class: 'order-selector', role: 'group', 'aria-label': `Bout ${BOUT_NUMERALS[boutIndex]} order` })
     for (const order of ['standard', 'press', 'guarded'] as const) {
       wrap.append(el('button', {
         class: 'button order-selector__button',
