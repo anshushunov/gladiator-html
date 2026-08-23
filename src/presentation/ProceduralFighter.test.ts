@@ -241,10 +241,18 @@ describe('createProceduralFighter', () => {
         ).toBe(false)
       }
 
+      // None of the three types wore torso armour: the murmillo and the
+      // hoplomachus fought bare-chested, and the retiarius' whole identity is
+      // that he is the least-armoured man in the arena -- his attested kit is
+      // a loincloth, a belt, an arm sleeve and a shoulder guard, nothing on
+      // the chest (see `docs/reference/gladiator-equipment.md` §3). So the
+      // expectation is that *no* kit builds one, which is a stronger statement
+      // than the per-archetype check it replaces: that one pinned `fast`'s
+      // pre-authoring placeholder rather than any claim about the type. The
+      // parentage rule below stays, so it still holds the day a kit that
+      // really did wear a cuirass is added.
       const armorMeshes = meshesBySlot.get('armor') ?? []
-      if (archetype === 'fast') {
-        expect(armorMeshes.length, 'fast should have a light-armor mesh').toBeGreaterThan(0)
-      }
+      expect(armorMeshes.length, `${archetype} wore no torso armour`).toBe(0)
       for (const mesh of armorMeshes) {
         expect(isDescendantOf(mesh, chest), `${archetype} armor should be under the chest joint`).toBe(true)
         expect(
@@ -501,6 +509,193 @@ describe('equipment kinds', () => {
     })
     expect(f.horizontalEquipmentRadius).toBeCloseTo(expected, 2)
     f.dispose()
+  })
+})
+
+describe('type silhouettes', () => {
+  it('separates the three by horizontal equipment reach', () => {
+    const reach = (a: Archetype): number => {
+      const f = createProceduralFighter({ archetype: a }); const v = f.horizontalEquipmentRadius; f.dispose(); return v
+    }
+    const [murmillo, retiarius, hoplomachus] = [reach('heavy'), reach('fast'), reach('technical')]
+    expect(Math.abs(hoplomachus - murmillo)).toBeGreaterThan(0.3)
+    expect(Math.abs(retiarius - murmillo)).toBeGreaterThan(0.3)
+  })
+  it('gives the retiarius a net and no helmet', () => {
+    const f = createProceduralFighter({ archetype: 'fast' })
+    expect(propSlots(f)).toContain('net')
+    expect(propSlots(f)).not.toContain('helmet')
+    f.dispose()
+  })
+})
+
+/**
+ * `buildGreaves`, `buildShoulderGuard` and `helmetKind: 'brimmed'` had no kit
+ * using them before this task, so these are their first execution and this
+ * block is their only coverage. It checks placement, not just presence: a
+ * greave floating off the shin or a galerus buried inside the neck compiles
+ * perfectly well.
+ *
+ * Every expectation here traces to a row of `docs/reference/gladiator-equipment.md`.
+ */
+describe('type kits', () => {
+  const meshesWithSlot = (f: ProceduralFighter, slot: string): THREE.Mesh[] => {
+    const found: THREE.Mesh[] = []
+    f.root.traverse((o) => {
+      if (o instanceof THREE.Mesh && o.userData.slot === slot) found.push(o)
+    })
+    return found
+  }
+
+  it('gives the murmillo one low ocrea on the lead leg, the hoplomachus two high greaves, and the retiarius none', () => {
+    const murmillo = createProceduralFighter({ archetype: 'heavy' })
+    const hoplomachus = createProceduralFighter({ archetype: 'technical' })
+    const retiarius = createProceduralFighter({ archetype: 'fast' })
+
+    const murmilloGreaves = meshesWithSlot(murmillo, 'greave')
+    expect(murmilloGreaves, 'the murmillo wears one ocrea').toHaveLength(1)
+    // The lead leg is the shield side, and the off hand is the left hand.
+    expect(murmilloGreaves[0].parent).toBe(murmillo.joints.get('lowerLeg.L'))
+
+    const hoplomachusGreaves = meshesWithSlot(hoplomachus, 'greave')
+    expect(hoplomachusGreaves, 'the hoplomachus wears a pair').toHaveLength(2)
+    expect(new Set(hoplomachusGreaves.map((greave) => greave.parent))).toEqual(
+      new Set([hoplomachus.joints.get('lowerLeg.L'), hoplomachus.joints.get('lowerLeg.R')]),
+    )
+
+    expect(meshesWithSlot(retiarius, 'greave'), 'the retiarius fights bare-legged').toHaveLength(0)
+
+    // Placement: every greave grows up the shin from the ankle and stops at
+    // the knee it hangs from, rather than sinking through the floor or riding
+    // up over the thigh. `shinCoverage` is height as a fraction of the shin,
+    // so "high" and "low" are compared as shapes, not as raw world units on
+    // two differently proportioned bodies.
+    const shinCoverage = (fighter: ProceduralFighter, greave: THREE.Mesh): number => {
+      fighter.root.updateMatrixWorld(true)
+      const box = new THREE.Box3().setFromObject(greave)
+      const knee = new THREE.Vector3()
+      greave.parent!.getWorldPosition(knee)
+      expect(box.min.y, 'a greave starts at the ankle, not through the floor').toBeGreaterThan(-0.02)
+      expect(box.max.y, 'a greave stops at or below the knee').toBeLessThanOrEqual(knee.y + 1e-6)
+      return (box.max.y - box.min.y) / knee.y
+    }
+
+    const low = shinCoverage(murmillo, murmilloGreaves[0])
+    for (const greave of hoplomachusGreaves) {
+      expect(shinCoverage(hoplomachus, greave), 'a high greave covers more shin than a low one').toBeGreaterThan(low + 0.15)
+    }
+
+    murmillo.dispose()
+    hoplomachus.dispose()
+    retiarius.dispose()
+  })
+
+  it('gives only the retiarius a galerus, on the shoulder above his netted hand', () => {
+    for (const archetype of ARCHETYPES) {
+      const fighter = createProceduralFighter({ archetype })
+      const guards = meshesWithSlot(fighter, 'shoulderGuard')
+
+      if (archetype === 'fast') {
+        expect(guards, 'the retiarius wears one galerus').toHaveLength(1)
+        expect(guards[0].parent).toBe(fighter.joints.get('shoulder.L'))
+
+        fighter.root.updateMatrixWorld(true)
+        const box = new THREE.Box3().setFromObject(guards[0])
+        const shoulder = new THREE.Vector3()
+        guards[0].parent!.getWorldPosition(shoulder)
+        // Rises above the shoulder it guards (that is what it is for) and sits
+        // outboard of the body's centre line rather than inside the neck.
+        expect(box.max.y, 'the galerus rises above the shoulder').toBeGreaterThan(shoulder.y)
+        expect(box.min.x, 'the galerus sits outboard on the left side').toBeGreaterThan(0)
+      } else {
+        expect(guards, `${archetype} wears no galerus`).toHaveLength(0)
+      }
+
+      fighter.dispose()
+    }
+  })
+
+  it('crowns only the murmillo, and leaves the hoplomachus brimmed but bare-crowned', () => {
+    const murmillo = createProceduralFighter({ archetype: 'heavy' })
+    expect(meshesWithSlot(murmillo, 'helmet').length, 'the murmillo wears a brimmed helmet').toBeGreaterThan(0)
+    expect(meshesWithSlot(murmillo, 'crest'), 'the murmillo carries the crest').toHaveLength(1)
+    murmillo.dispose()
+
+    // The hoplomachus' helmet did carry a crest tube historically, but the rig
+    // has exactly one crown cue and spending it on both types would make the
+    // pair harder to tell apart, not easier -- see the equipment bible's
+    // "attested but deliberately not drawn" note.
+    const hoplomachus = createProceduralFighter({ archetype: 'technical' })
+    expect(meshesWithSlot(hoplomachus, 'helmet').length, 'the hoplomachus wears a brimmed helmet').toBeGreaterThan(0)
+    expect(meshesWithSlot(hoplomachus, 'crest'), 'the crest stays the murmillo\'s alone').toHaveLength(0)
+    hoplomachus.dispose()
+  })
+
+  it('makes the parma read as a small shield beside the scutum slab', () => {
+    // Frontal area, because that is the quantity a viewer resolves at 50-90 px:
+    // "small round shield" has to mean small *against the other one*, not
+    // merely round.
+    const frontalArea = (archetype: Archetype): number => {
+      const fighter = createProceduralFighter({ archetype })
+      const size = new THREE.Box3().setFromObject(findBySlot(fighter, 'shield')!).getSize(new THREE.Vector3())
+      fighter.dispose()
+      return size.x * size.y
+    }
+    expect(frontalArea('heavy')).toBeGreaterThan(frontalArea('technical') * 2.5)
+  })
+
+  it('draws both polearm shafts thick enough to survive the shipped framing', () => {
+    // `weaponWidth: 0.045` landed at roughly two pixels at the shipped framing,
+    // which is why the spear was reported as unreadable. Measured on the
+    // geometry's own bounds, not the world AABB: every weapon part is modelled
+    // along local +Y and then rotated onto the hand -> tip line, so the world
+    // box of a nearly-horizontal shaft says nothing about its cross-section.
+    const MIN_SHAFT_CROSS_SECTION = 0.06
+    for (const archetype of ['technical', 'fast'] as const) {
+      const fighter = createProceduralFighter({ archetype })
+      // The full-length part goes in first, so this is the shaft itself.
+      const shaft = findBySlot(fighter, 'weapon') as THREE.Mesh
+      shaft.geometry.computeBoundingBox()
+      const size = shaft.geometry.boundingBox!.getSize(new THREE.Vector3())
+      expect(Math.min(size.x, size.z), `${archetype}'s shaft is too thin to read`).toBeGreaterThan(MIN_SHAFT_CROSS_SECTION)
+      fighter.dispose()
+    }
+  })
+
+  it('keeps the type palette clear of the red/blue that already means home/away', () => {
+    // The HUD marks sides with `.fighter-card--home` #b34d3a and
+    // `.fighter-card--away` #4383a0 (src/style.css). A type colour sitting on
+    // either hue makes the two channels collide: a murmillo would read as
+    // "home" whichever side he is actually fighting for.
+    const SIDE_HUES = [new THREE.Color(0xb34d3a), new THREE.Color(0x4383a0)].map((c) => c.getHSL({ h: 0, s: 0, l: 0 }).h)
+    const hueDistance = (a: number, b: number): number => Math.min(Math.abs(a - b), 1 - Math.abs(a - b))
+
+    const typeHsl = ARCHETYPES.map((archetype) => {
+      const fighter = createProceduralFighter({ archetype })
+      let cloth: THREE.Color | undefined
+      fighter.root.traverse((object) => {
+        if (!cloth && object instanceof THREE.Mesh && object.userData.slot === 'cloth') {
+          cloth = (object.material as THREE.MeshStandardMaterial).color
+        }
+      })
+      fighter.dispose()
+      return { archetype, hsl: cloth!.getHSL({ h: 0, s: 0, l: 0 }) }
+    })
+
+    for (const { archetype, hsl } of typeHsl) {
+      for (const sideHue of SIDE_HUES) {
+        expect(hueDistance(hsl.h, sideHue), `${archetype}'s type colour collides with a side colour`).toBeGreaterThan(0.08)
+      }
+    }
+
+    // And the three separate by *value* as well as hue, so the types survive
+    // the greyscale/colour-blind check the design spec asks for. The widest
+    // gap is spent on the hoplomachus/retiarius pair, which is the one the
+    // two long polearms put at risk.
+    const lightnesses = typeHsl.map(({ hsl }) => hsl.l).sort((a, b) => a - b)
+    for (let i = 1; i < lightnesses.length; i += 1) {
+      expect(lightnesses[i] - lightnesses[i - 1], 'two type colours share a value').toBeGreaterThan(0.08)
+    }
   })
 })
 

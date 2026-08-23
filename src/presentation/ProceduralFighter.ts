@@ -264,24 +264,40 @@ const STYLE_SPECS: Readonly<Record<Archetype, StyleSpec>> = {
       limbRadius: 0.10,
       headRadius: 0.16,
     },
+    // Murmillo. Every element traces to a row of
+    // `docs/reference/gladiator-equipment.md` §1; the scutum is the type's
+    // "large positive prop" and carries the identity almost on its own.
     equipment: {
       weaponKind: 'gladius',
       weaponLength: 0.55,
-      weaponWidth: 0.06,
+      // The gladius is a short blade beside a shield that dwarfs it, so it is
+      // never going to be the cue -- but at ~0.06 it was a hairline. Widened
+      // enough to read as a blade rather than as a scratch.
+      weaponWidth: 0.075,
       weaponThickness: 0.05,
       weaponForwardBias: 0.5,
       shieldKind: 'scutum',
-      shieldWidth: 0.70,
-      shieldHeight: 1.00,
-      shieldCurvature: 0.5,
+      // Chord 0.72 x height 1.10 -- roughly knee-to-chin on a 1.74-tall rig,
+      // the proportion the reliefs show. Curvature 0.75 of the 120-degree
+      // maximum is a 90-degree wrap, the commonly reconstructed value; it
+      // bows the slab ~0.15 forward, which is what makes the shield read as a
+      // curved body rather than as a flat door at the shipped framing.
+      shieldWidth: 0.72,
+      shieldHeight: 1.10,
+      shieldCurvature: 0.75,
       shieldThickness: 0.08,
-      shieldForwardOffset: 0.10,
+      shieldForwardOffset: 0.12,
       helmetKind: 'brimmed-crested',
-      greaves: 'none',
+      // One short ocrea on the lead (shield-side, i.e. left) leg. The crest
+      // and this single greave are the murmillo's two silhouette asymmetries.
+      greaves: 'one-low',
       shoulderGuard: false,
       hasLightArmor: false,
     },
-    clothColor: 0xb83b34,
+    // Deep violet-slate: the darkest of the three type values, and clear of
+    // both the HUD's home red (#b34d3a) and away blue (#4383a0), so type and
+    // side never argue. See the equipment bible's palette note.
+    clothColor: 0x3d3358,
   },
   fast: {
     body: {
@@ -306,28 +322,58 @@ const STYLE_SPECS: Readonly<Record<Archetype, StyleSpec>> = {
       limbRadius: 0.075,
       headRadius: 0.13,
     },
+    // Retiarius. `docs/reference/gladiator-equipment.md` §3. The three
+    // absences (no shield, no helmet, no greaves) are all attested, but
+    // absence is a weak cue at 50-90 px, so the identity is carried by two
+    // positive props: the net and the trident.
     equipment: {
       weaponKind: 'trident',
-      weaponLength: 0.50,
-      weaponWidth: 0.05,
-      weaponThickness: 0.04,
-      weaponForwardBias: 0.5,
+      // The fuscina is a polearm, not a short weapon: 0.50 made the most
+      // heavily-armed silhouette of the three read as the emptiest. This is
+      // hand-to-tip (the builder draws no butt behind the grip) and the
+      // retiarius grips well up the shaft, so the drawn 1.15 sits below the
+      // hoplomachus' 1.30 -- deliberately, so the two polearms differ in
+      // length as well as in head, and the hoplomachus keeps the longest
+      // reach his content already gives him.
+      weaponLength: 1.15,
+      weaponWidth: 0.07,
+      // Prong stoutness. The head spans ~0.33 across three prongs -- drawn
+      // wider than scale so the *fork* is what separates this polearm from
+      // the hoplomachus' single-point spear, which is the slice's main
+      // legibility risk.
+      weaponThickness: 0.06,
+      // Angled down-and-forward rather than levelled like the spear: two
+      // polearms held at the same angle would read as the same weapon.
+      weaponForwardBias: 0.70,
       shieldKind: 'none',
-      // No shield, so these size the net instead -- kept at the footprint the
-      // dropped 0.28-radius shield had, so the off-hand silhouette is not
-      // silently resized by this task. Task 4 authors the real net.
-      shieldWidth: 0.56,
-      shieldHeight: 0.56,
+      // No shield, so these size the net -- and the aspect ratio matters more
+      // than the size, because `offHand` inherits the hand's rotation and the
+      // guard pose lays whatever hangs there along the forearm. Authored flat
+      // (0.62 x 0.72 x 0.08) the net rendered as a tan board angled across the
+      // body, i.e. exactly like the shield this type is attested *not* to
+      // carry; authored long it would have jutted out as a second polearm.
+      // A near-cubic 0.50 x 0.50 x 0.45 gathered bundle reads as a held mass
+      // from every angle and as neither. Step 4 finding, checked on screen.
+      shieldWidth: 0.50,
+      shieldHeight: 0.50,
       shieldCurvature: 0,
-      shieldThickness: 0.06,
+      // Doubles as the bundle's depth (halved by `buildOffhandProp`).
+      shieldThickness: 0.90,
       shieldForwardOffset: 0.08,
       helmetKind: 'none',
       greaves: 'none',
-      shoulderGuard: false,
+      // The galerus on the off-hand (left) shoulder -- the type's diagnostic
+      // piece, and the asymmetry that reads even when the polearms do not.
+      shoulderGuard: true,
       offhandProp: 'net',
-      hasLightArmor: true,
+      // No torso armour: the retiarius is the least-armoured man in the
+      // arena, and a bronze chest band would blur exactly the "bare" read
+      // that separates him from the hoplomachus.
+      hasLightArmor: false,
     },
-    clothColor: 0x2a6f8e,
+    // Pale undyed linen: the lightest of the three type values, so the pair
+    // the polearms put at risk is separated by a full value swing.
+    clothColor: 0xd8cfa8,
   },
   technical: {
     body: {
@@ -352,24 +398,48 @@ const STYLE_SPECS: Readonly<Record<Archetype, StyleSpec>> = {
       limbRadius: 0.08,
       headRadius: 0.14,
     },
+    // Hoplomachus. `docs/reference/gladiator-equipment.md` §2. The long level
+    // spear line plus the tall pair of greaves; the small parma is a cue by
+    // contrast with the murmillo's slab, not on its own.
     equipment: {
       weaponKind: 'spear',
+      // Deliberately unchanged. `weaponLength` sets the `weaponTip` anchor,
+      // from which `PoseController` derives its weapon-arm IK reach gate, and
+      // that boundary is frozen by
+      // `PoseController.test.ts`'s "gates the weapon-arm IK at a frozen reach
+      // boundary" test. Nothing about this task needs the spear longer -- the
+      // reported defect was that it was too thin to see, not too short.
       weaponLength: 1.30,
-      weaponWidth: 0.045,
-      weaponThickness: 0.045,
+      // 0.045 landed at roughly two pixels at the shipped framing: a spear
+      // that measured right and was invisible. Drawn far thicker than a real
+      // shaft on purpose (equipment bible, "deliberate departures").
+      weaponWidth: 0.08,
+      // Head stoutness: a single leaf point ~0.18 across and ~0.21 long. Kept
+      // narrower than the trident's fork, since one point versus three is the
+      // whole distinction between the two polearms.
+      weaponThickness: 0.055,
       weaponForwardBias: 0.95,
       shieldKind: 'parma',
-      shieldWidth: 0.80,
-      shieldHeight: 0.80,
+      // A *small* round shield: 0.45 across, against the murmillo's
+      // 0.72 x 1.10 slab. At 0.80 it was the same size class as the scutum
+      // and the contrast that names both types was gone.
+      shieldWidth: 0.45,
+      shieldHeight: 0.45,
       shieldCurvature: 0,
-      shieldThickness: 0.07,
+      shieldThickness: 0.05,
       shieldForwardOffset: 0.10,
-      helmetKind: 'none',
-      greaves: 'none',
+      // Brimmed, but no crest: the crest block is the murmillo's exclusive
+      // crown cue. See the equipment bible's "attested but deliberately not
+      // drawn" note -- this is a legibility omission, not a claim that the
+      // hoplomachus' helmet was crestless.
+      helmetKind: 'brimmed',
+      // The tall pair, this type's most distinctive leg signature.
+      greaves: 'two-high',
       shoulderGuard: false,
       hasLightArmor: false,
     },
-    clothColor: 0x4f6b3d,
+    // Mid olive-green: the middle of the three type values.
+    clothColor: 0x77914a,
   },
 }
 
