@@ -15,7 +15,7 @@
     "benchmark:duel-log": "vite-node scripts/benchmark-duel-log.ts",
     "review:clips": "vite-node scripts/record-review-clips.ts",
     "check": "npm run test && npm run build && npm run test:e2e",
-    "check:allowlist": "bash -c 'scripts/check-allowlist.sh \"$(git merge-base main HEAD)\"'"
+    "check:allowlist": "bash -c 'bash scripts/check-allowlist.sh \"$(git merge-base main HEAD)\"'"
   },
   "dependencies": {
     "three": "^0.179.1"
