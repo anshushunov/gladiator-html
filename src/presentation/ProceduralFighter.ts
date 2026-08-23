@@ -346,19 +346,15 @@ const STYLE_SPECS: Readonly<Record<Archetype, StyleSpec>> = {
       // polearms held at the same angle would read as the same weapon.
       weaponForwardBias: 0.70,
       shieldKind: 'none',
-      // No shield, so these size the net -- and the aspect ratio matters more
-      // than the size, because `offHand` inherits the hand's rotation and the
-      // guard pose lays whatever hangs there along the forearm. Authored flat
-      // (0.62 x 0.72 x 0.08) the net rendered as a tan board angled across the
-      // body, i.e. exactly like the shield this type is attested *not* to
-      // carry; authored long it would have jutted out as a second polearm.
-      // A near-cubic 0.50 x 0.50 x 0.45 gathered bundle reads as a held mass
-      // from every angle and as neither. Step 4 finding, checked on screen.
-      shieldWidth: 0.50,
-      shieldHeight: 0.50,
+      // No shield, so these size the net's fall (see `buildOffhandProp`):
+      // how far it spreads, its longest cord, and a cord's cross-section. Two
+      // solid-box versions of this prop (flat, then near-cubic) both read as a
+      // shield on screen, which is the one thing this type must not read as;
+      // the shape is now cords with gaps, and these are its dimensions.
+      shieldWidth: 0.42,
+      shieldHeight: 0.78,
       shieldCurvature: 0,
-      // Doubles as the bundle's depth (halved by `buildOffhandProp`).
-      shieldThickness: 0.90,
+      shieldThickness: 0.075,
       shieldForwardOffset: 0.08,
       helmetKind: 'none',
       greaves: 'none',
@@ -703,6 +699,69 @@ function buildWeapon(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Body-oriented attachments
+//
+// Everything held in a hand inherits that hand's rotation, and the combat poses
+// swing the shield forearm through roughly 75 degrees. A shield authored as an
+// upright slab therefore rendered lying *along* the forearm -- a plank jutting
+// forward at shoulder height, covering no part of the body, at roughly 4:1
+// wide-to-tall on screen. That was the Task 4 review's blocking finding, and it
+// was confirmed over 120 ticks across two bouts and both facings, so it is not
+// pose-dependent and no `STYLE_SPECS` value can right it: the tilt does not come
+// from the shield.
+//
+// A body-oriented attachment is the fix. It follows its parent joint's world
+// *position*, so the shield still travels with the hand, but takes its world
+// *orientation* from the rig root, i.e. from where the fighter faces. A slab
+// authored upright stays upright and keeps bowing around the body; a net
+// authored hanging keeps hanging, instead of swinging up into the shield
+// position it must never occupy.
+//
+// Both `Object3D` matrix entry points are overridden because Three.js uses them
+// for different things: the renderer and this module's own
+// `root.updateMatrixWorld(true)` go through `updateMatrixWorld`, while
+// `Box3.setFromObject` goes through `updateWorldMatrix`. Overriding one and not
+// the other would leave the measured bounds disagreeing with the drawn pixels.
+// Neither override consults `matrixWorldNeedsUpdate`: this transform depends on
+// an object that is *not* its parent, so a dirty flag on the local chain cannot
+// tell it whether it is stale. It recomposes every time, which is two extra
+// matrix compositions per fighter per frame.
+// ---------------------------------------------------------------------------
+
+const ATTACHMENT_POSITION = new THREE.Vector3()
+const ATTACHMENT_ORIENTATION = new THREE.Quaternion()
+const ATTACHMENT_UNIT_SCALE = new THREE.Vector3(1, 1, 1)
+const ATTACHMENT_FRAME = new THREE.Matrix4()
+
+function createBodyOrientedAttachment(name: string, orientationSource: THREE.Object3D): THREE.Group {
+  const group = new THREE.Group()
+  group.name = name
+
+  const composeWorld = (): void => {
+    if (group.parent) ATTACHMENT_POSITION.setFromMatrixPosition(group.parent.matrixWorld)
+    else ATTACHMENT_POSITION.set(0, 0, 0)
+    ATTACHMENT_ORIENTATION.setFromRotationMatrix(orientationSource.matrixWorld)
+    ATTACHMENT_FRAME.compose(ATTACHMENT_POSITION, ATTACHMENT_ORIENTATION, ATTACHMENT_UNIT_SCALE)
+    if (group.matrixAutoUpdate) group.updateMatrix()
+    group.matrixWorld.multiplyMatrices(ATTACHMENT_FRAME, group.matrix)
+    group.matrixWorldNeedsUpdate = false
+  }
+
+  group.updateMatrixWorld = function (): void {
+    composeWorld()
+    for (const child of this.children) child.updateMatrixWorld(true)
+  }
+
+  group.updateWorldMatrix = function (updateParents: boolean, updateChildren: boolean): void {
+    if (updateParents && this.parent !== null) this.parent.updateWorldMatrix(true, false)
+    composeWorld()
+    if (updateChildren) for (const child of this.children) child.updateWorldMatrix(false, true)
+  }
+
+  return group
+}
+
 /** The shield, under `shieldCenter`. `'none'` builds no shield mesh at all. */
 function buildShield(owned: Owned, equipment: EquipmentProportions, shieldCenter: THREE.Object3D, bronze: THREE.Material): void {
   if (equipment.shieldKind === 'none') return
@@ -716,17 +775,66 @@ function buildShield(owned: Owned, equipment: EquipmentProportions, shieldCenter
 }
 
 /**
- * A held off-hand prop that is not a shield -- the Retiarius' net, gathered
- * into a flattened bundle hanging from the fist. Carried rather than worn, so
- * it is anchor-addressable like the shield it stands in for.
+ * The fall of the net: each cord's drop as a share of the whole fall. The
+ * lengths are deliberately unequal and deliberately not monotonic, because the
+ * ragged bottom edge is the cue -- see `buildOffhandProp`.
  */
-function buildOffhandProp(owned: Owned, equipment: EquipmentProportions, offHand: THREE.Object3D, wood: THREE.Material): void {
+const NET_CORD_DROPS: readonly number[] = [1, 0.54, 0.83, 0.41]
+
+/**
+ * A held off-hand prop that is not a shield -- the Retiarius' net. Carried
+ * rather than worn, so it is anchor-addressable like the shield it stands in
+ * for.
+ *
+ * Drawn as a gathered head in the fist plus a fall of unequal cords, for one
+ * reason: **a solid box reads as a board at every set of dimensions we tried.**
+ * A flat 0.62 x 0.72 x 0.08 net read as a shield; re-authored near-cubic at
+ * 0.50 x 0.50 x 0.45 it still read as a shield, and on the type whose entire
+ * diagnostic is that he has none. Only a *broken outline* -- gaps between the
+ * cords and an uneven hem -- reads as a net at 50-90 px. It also hangs from a
+ * body-oriented attachment rather than from the hand's own frame, so it falls
+ * under the fist instead of swinging up across the chest into the position a
+ * shield occupies.
+ */
+function buildOffhandProp(
+  owned: Owned,
+  equipment: EquipmentProportions,
+  offHand: THREE.Object3D,
+  orientationSource: THREE.Object3D,
+  wood: THREE.Material,
+): void {
   if (equipment.offhandProp !== 'net') return
-  const geometry = trackedGeometry(owned, new THREE.BoxGeometry(equipment.shieldWidth, equipment.shieldHeight, equipment.shieldThickness * 0.5))
-  const net = new THREE.Mesh(geometry, wood)
-  net.position.set(0, -equipment.shieldHeight / 2, 0)
-  net.userData.slot = 'net'
-  offHand.add(net)
+
+  const hang = createBodyOrientedAttachment('netHang', orientationSource)
+  offHand.add(hang)
+
+  // Read off the off-hand footprint fields: `shieldWidth` is how far the fall
+  // spreads, `shieldHeight` the longest cord, `shieldThickness` a cord's
+  // cross-section.
+  const { shieldWidth: spread, shieldHeight: fall, shieldThickness: cord } = equipment
+
+  const addPart = (geometry: THREE.BufferGeometry, x: number, y: number, z: number): void => {
+    const mesh = new THREE.Mesh(trackedGeometry(owned, geometry), wood)
+    mesh.position.set(x, y, z)
+    mesh.userData.slot = 'net'
+    hang.add(mesh)
+  }
+
+  // The gathered head, bunched in the fist. Goes in first, so it is the mesh
+  // anything looking up "the net" finds.
+  const headHeight = cord * 2.4
+  addPart(new THREE.BoxGeometry(spread * 0.58, headHeight, spread * 0.46), 0, -headHeight / 2, 0)
+
+  NET_CORD_DROPS.forEach((drop, index) => {
+    const across = NET_CORD_DROPS.length === 1 ? 0 : index / (NET_CORD_DROPS.length - 1) - 0.5
+    const length = fall * drop
+    addPart(
+      new THREE.BoxGeometry(cord, length, cord),
+      across * spread,
+      -headHeight - length / 2,
+      (index % 2 === 0 ? 1 : -1) * cord * 0.9,
+    )
+  })
 }
 
 /**
@@ -757,9 +865,23 @@ function buildHelmet(
 
   if (equipment.helmetKind !== 'brimmed-crested') return
 
-  const crestGeometry = trackedGeometry(owned, new THREE.BoxGeometry(0.08, 0.32, body.headRadius * 1.6))
+  // A semicircular comb sitting *on* the dome, front to back. The previous
+  // crest was a 0.08 x 0.32 x 0.26 box floating a head-radius above the skull:
+  // at the shipped framing it read as a pale rectangle hovering over the
+  // helmet, and -- being the most tall-rectangle-shaped object on the fighter
+  // -- it competed with the scutum for the cue the scutum is supposed to
+  // carry (Task 4 review). Modelled as a half-cylinder whose axis is the
+  // thickness, so its flat diameter beds into the dome and only the arc shows.
+  const crestRadius = body.headRadius * 1.05
+  const crestGeometry = trackedGeometry(
+    owned,
+    new THREE.CylinderGeometry(crestRadius, crestRadius, body.headRadius * 0.24, 14, 1, false, 0, Math.PI),
+  )
+  // Stands the half-disc up in the fighter's sagittal plane: the cylinder's
+  // own axis becomes the crest's (thin) width, and its flat edge its base.
+  crestGeometry.rotateZ(Math.PI / 2)
   const crest = new THREE.Mesh(crestGeometry, wood)
-  crest.position.set(0, body.headRadius * 1.4, 0)
+  crest.position.set(0, body.headRadius * 0.52, 0)
   crest.userData.slot = 'crest'
   head.add(crest)
 }
@@ -806,10 +928,17 @@ function buildShoulderGuard(
 ): void {
   if (!equipment.shoulderGuard) return
 
+  // Broader than it is tall, and set well outboard. The first version was a
+  // tall box rising `chestHeight * 0.18` above the shoulder: since the arena
+  // camera looks *down*, the far shoulder projects upward on screen, so on
+  // roughly half the facings it silhouetted over the crown and read as a
+  // squared-off hat -- on the one type whose diagnostic is that he wears no
+  // helmet (Task 4 review). A plate that stops short of the head and sits
+  // clearly to the side of it reads as a pauldron from both facings.
   const shoulder = joints.get('shoulder.L')!
-  const geometry = trackedGeometry(owned, new THREE.BoxGeometry(body.limbRadius * 1.5, body.chestHeight * 0.62, body.limbRadius * 2.4))
+  const geometry = trackedGeometry(owned, new THREE.BoxGeometry(body.limbRadius * 3.4, body.chestHeight * 0.40, body.limbRadius * 2.6))
   const guard = new THREE.Mesh(geometry, bronze)
-  guard.position.set(body.limbRadius * 0.5, body.chestHeight * 0.18, 0)
+  guard.position.set(body.limbRadius * 1.35, -body.chestHeight * 0.04, 0)
   guard.userData.slot = 'shoulderGuard'
   shoulder.add(guard)
 }
@@ -819,6 +948,8 @@ function buildEquipment(
   spec: StyleSpec,
   joints: ReadonlyMap<JointName, THREE.Object3D>,
   anchors: Map<EquipmentAnchorName, THREE.Object3D>,
+  /** The rig root, used only as the orientation source for the body-oriented off-hand attachments. */
+  root: THREE.Object3D,
 ): void {
   const { equipment } = spec
   const bronze = trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: BRONZE_COLOR, metalness: 0.7, roughness: 0.35 }))
@@ -859,14 +990,18 @@ function buildEquipment(
   // Both anchors exist for every kit, shield or no shield: the five anchor
   // names are a closed contract (see `EquipmentAnchorName`), and a kit that
   // carries nothing in that hand still has an off hand to address.
-  const shieldCenter = new THREE.Group()
-  shieldCenter.name = 'shieldCenter'
+  //
+  // Body-oriented (see `createBodyOrientedAttachment`): it travels with the
+  // fist but stands the way the fighter stands, so `shieldForwardOffset` is a
+  // step forward *for the fighter* and a shield authored upright is drawn
+  // upright at every point of the pose cycle.
+  const shieldCenter = createBodyOrientedAttachment('shieldCenter', root)
   shieldCenter.position.set(0, 0, equipment.shieldForwardOffset)
   offHand.add(shieldCenter)
   anchors.set('shieldCenter', shieldCenter)
 
   buildShield(owned, equipment, shieldCenter, bronze)
-  buildOffhandProp(owned, equipment, offHand, wood)
+  buildOffhandProp(owned, equipment, offHand, root, wood)
 
   // hitCenter -- contact marker only, no equipment mesh of its own.
   const hitCenter = new THREE.Group()
@@ -1002,7 +1137,7 @@ export function createProceduralFighter(options: ProceduralFighterOptions): Proc
   buildLeg(owned, joints, 'R', pelvis, -body.hipWidth, body, cloth)
 
   const anchors = new Map<EquipmentAnchorName, THREE.Object3D>()
-  buildEquipment(owned, spec, joints, anchors)
+  buildEquipment(owned, spec, joints, anchors, root)
 
   const horizontalEquipmentRadius = computeHorizontalEquipmentRadius(root)
 

@@ -54,8 +54,8 @@ the named chapter or object group.
 | Curved rectangular **scutum** | Tall slab, bowed forward about a vertical axis; chord clearly narrower than its height; carried on the off (left) arm | `shieldKind: 'scutum'`, `shieldWidth`, `shieldHeight`, `shieldCurvature`, `shieldThickness`, `shieldForwardOffset` | **attested** | `Junkelmann-2000`, `Zliten`, `Nennig` |
 | **Gladius** | Short straight blade with a crossguard, held point-forward-and-down | `weaponKind: 'gladius'`, `weaponLength`, `weaponWidth`, `weaponThickness`, `weaponForwardBias` | **attested** | `Junkelmann-2000`, `Pompeii-arms`, `Borghese` |
 | Broad-**brimmed helmet** with face guard | Bronze dome plus a wide flaring brim, worn on the `head` joint | `helmetKind: 'brimmed-crested'` (dome + brim half) | **attested** | `Pompeii-arms`, `Junkelmann-2000` |
-| Tall angular **crest** (*crista*) | Plain fin block rising from the crown, front-to-back | `helmetKind: 'brimmed-crested'` (crest half) | **attested** *(the crest; see §4 for its decoration)* | `Pompeii-arms`, `Junkelmann-2000` |
-| One low **ocrea** on the lead (left) leg | Box greave growing up from the ankle over roughly half the shin | `greaves: 'one-low'` | **attested** | `Junkelmann-2000`, `Pompeii-arms`, `Zliten` |
+| **Crest** (*crista*) | Semicircular comb bedded into the helmet dome, running front to back | `helmetKind: 'brimmed-crested'` (crest half) | **attested** *(the crest; see §4 for its decoration, and §6 for why it is drawn low)* | `Pompeii-arms`, `Junkelmann-2000` |
+| One low **ocrea** on the lead (left) leg | Box greave growing up from the ankle over roughly half the shin. **Drawn but not observable** — it is on the far leg from the shipped camera and review could not find it in any frame at any magnification, so it is not a working cue and nothing should be built on it | `greaves: 'one-low'` | **attested** | `Junkelmann-2000`, `Pompeii-arms`, `Zliten` |
 | No shoulder guard | — (nothing drawn) | `shoulderGuard: false` | **attested** (the *galerus* is the retiarius' piece) | `Junkelmann-2000` |
 | Bare torso | No armour mesh; only the shared value blocks of §6 | `hasLightArmor: false` | **attested** | `Junkelmann-2000`, `Zliten`, `Nennig` |
 | Type colour | Deep violet-slate on the loincloth and legs | `clothColor` | **not a historical claim** — a legibility channel, see §6 | — |
@@ -96,11 +96,11 @@ here.
 
 | Element | Shape as drawn | `STYLE_SPECS` field | Confidence | Source |
 |---|---|---|---|---|
-| **Net** (*rete*) | Near-cubic gathered bundle held in the off (left) fist — the net taken up ready to cast, not spread | `offhandProp: 'net'`, `shieldWidth`, `shieldHeight`, `shieldThickness` (these size the off-hand prop when `shieldKind` is `'none'`) | **attested** *(the net; the bundled form is a rendering choice — see §6)* | `Juvenal-8`, `Zliten`, `Junkelmann-2000` |
+| **Net** (*rete*) | A gathered head gripped in the off (left) fist plus a fall of four cords of unequal length, hanging under the fist. `shieldWidth` is the spread, `shieldHeight` the longest cord, `shieldThickness` a cord's cross-section | `offhandProp: 'net'`, `shieldWidth`, `shieldHeight`, `shieldThickness` (these size the off-hand prop when `shieldKind` is `'none'`) | **attested** *(the net; the gathered-and-falling form is a rendering choice — see §6)* | `Juvenal-8`, `Zliten`, `Junkelmann-2000` |
 | **Trident** (*fuscina*) | Long shaft with three bronze prongs on a spread head | `weaponKind: 'trident'`, `weaponLength`, `weaponWidth`, `weaponThickness`, `weaponForwardBias` | **attested** | `Juvenal-8`, `Zliten`, `Borghese`, `Junkelmann-2000` |
 | **No shield** | Nothing under `shieldCenter` | `shieldKind: 'none'` | **attested** — the absence is the attestation, not an inference | `Juvenal-8`, `Suetonius-Cal-30`, `Junkelmann-2000` |
 | **No helmet** | Bare head; only the shared visor slot of §6 | `helmetKind: 'none'` | **attested** — the one type that fought bare-faced | `Juvenal-8`, `Suetonius-Cal-30`, `Zliten` |
-| **Galerus** on the off (left) shoulder | Bronze slab rising off the left shoulder, outboard of the neck | `shoulderGuard: true` | **attested** — a galerus is in the Pompeii corpus and is this type's diagnostic piece | `Pompeii-arms`, `Junkelmann-2000`, `Zliten` |
+| **Galerus** on the off (left) shoulder | Broad bronze plate over the left shoulder, set outboard and stopping short of the head (see §6) | `shoulderGuard: true` | **attested** — a galerus is in the Pompeii corpus and is this type's diagnostic piece | `Pompeii-arms`, `Junkelmann-2000`, `Zliten` |
 | No greaves | — (nothing drawn) | `greaves: 'none'` | **attested** — the least-armoured type; the legs are unprotected | `Junkelmann-2000`, `Zliten` |
 | Bare torso | No armour mesh | `hasLightArmor: false` | **attested** — the retiarius' defining characteristic is minimal armour: loincloth, belt, arm and shoulder only | `Juvenal-8`, `Junkelmann-2000` |
 | Type colour | Pale bone / undyed linen on the loincloth and legs | `clothColor` | **not a historical claim** — see §6 | — |
@@ -166,19 +166,34 @@ Listed here so they are not mistaken for historical claims:
   grip, so a polearm's drawn length is the part in front of the fist, not the
   weapon's real overall length.
 - **The galerus and the greaves are sized and placed by the builder**, from
-  `BodyProportions`, not by an authored dimension. `STYLE_SPECS` can only turn
-  them on or off. One consequence is visible: the galerus' top edge sits a
-  little above the head joint, so from a rear-quarter view it can silhouette
-  over the bare crown of the very type whose *absence* of a helmet is the
-  point. That is a rig limit to fix, not a claim that the piece was that tall.
-- **Everything held in a hand inherits that hand's rotation.** `shieldCenter`
-  and `offHand` carry no orientation of their own, so in the guard pose a
-  shield's authored height axis runs along the forearm. The murmillo's scutum
-  is authored as an upright 0.72 x 1.10 slab and is therefore drawn lying
-  closer to horizontal; the net is authored near-cubic so that it reads as a
-  held mass whichever way the arm points, rather than as a flat board (which
-  would say "shield", the one thing this type must not say) or as a long spar
-  (which would say "second polearm").
+  `BodyProportions`, not by an authored dimension; `STYLE_SPECS` can only turn
+  them on or off. The galerus is drawn **broader than it is tall and set well
+  outboard**, stopping short of the head, which is shorter and flatter than the
+  ~30 cm Pompeii piece. That is a legibility constraint, not a claim about the
+  object: the arena camera looks *down*, so the far shoulder projects upward on
+  screen, and a galerus that merely cleared the crown in three dimensions
+  silhouetted over it on half the facings — reading as a squared-off hat on the
+  one type defined by wearing none.
+- **The murmillo's crest is drawn low.** It is a semicircular comb bedded into
+  the dome rather than a tall fin. Attested crests are taller; drawn tall here,
+  it became the most rectangle-shaped object on the fighter and competed with
+  the scutum for the cue the scutum has to carry. The crest is a claim; its
+  height is a drawing decision.
+- **The shield and the net do not inherit the hand's rotation.** Everything
+  else held in a hand does, and the combat poses swing the shield forearm
+  through roughly 75°, which drew the murmillo's upright slab lying along the
+  forearm — a plank jutting forward at shoulder height, covering none of the
+  body. `shieldCenter` and the net's hanging point are therefore *body-oriented*
+  attachments (`createBodyOrientedAttachment`): they travel with the fist but
+  take their orientation from the fighter's own facing. A shield authored
+  upright is drawn upright and bows around the body; the net falls under the
+  fist instead of swinging up into the position a shield occupies.
+- **The net is cords, not a solid.** Two solid-box versions (flat, then
+  near-cubic) both read as a shield on screen — on the one type whose diagnostic
+  is that he carries none. Only a broken outline, with gaps between the cords
+  and an uneven hem, reads as a net at 50–90 px. The real *rete* was a single
+  weighted mesh; the cords are a rendering of "gathered net", not a claim about
+  its construction.
 - **The type palette** (`clothColor`) is chosen to stay clear of the red/blue
   that already carries the home/away distinction in the HUD
   (`.fighter-card--home` `#b34d3a`, `.fighter-card--away` `#4383a0`), and to put

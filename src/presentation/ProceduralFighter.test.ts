@@ -177,7 +177,6 @@ describe('createProceduralFighter', () => {
       const shieldCenter = fighter.anchors.get('shieldCenter')!
       const hitCenter = fighter.anchors.get('hitCenter')!
       const head = fighter.joints.get('head')!
-      const chest = fighter.joints.get('chest')!
       const allAnchors = [...fighter.anchors.values()]
 
       const meshesBySlot = new Map<string, THREE.Mesh[]>()
@@ -245,21 +244,19 @@ describe('createProceduralFighter', () => {
       // hoplomachus fought bare-chested, and the retiarius' whole identity is
       // that he is the least-armoured man in the arena -- his attested kit is
       // a loincloth, a belt, an arm sleeve and a shoulder guard, nothing on
-      // the chest (see `docs/reference/gladiator-equipment.md` §3). So the
-      // expectation is that *no* kit builds one, which is a stronger statement
-      // than the per-archetype check it replaces: that one pinned `fast`'s
-      // pre-authoring placeholder rather than any claim about the type. The
-      // parentage rule below stays, so it still holds the day a kit that
-      // really did wear a cuirass is added.
-      const armorMeshes = meshesBySlot.get('armor') ?? []
-      expect(armorMeshes.length, `${archetype} wore no torso armour`).toBe(0)
-      for (const mesh of armorMeshes) {
-        expect(isDescendantOf(mesh, chest), `${archetype} armor should be under the chest joint`).toBe(true)
-        expect(
-          allAnchors.some((anchor) => isDescendantOf(mesh, anchor)),
-          `${archetype} armor must not be reachable from any equipment anchor`,
-        ).toBe(false)
-      }
+      // the chest (see `docs/reference/gladiator-equipment.md` §3).
+      //
+      // Be clear about what this costs: `fast` used to be the one kit with
+      // `hasLightArmor: true`, so turning it off leaves `buildEquipment`'s
+      // light-armour branch with **no coverage at all** -- this assertion only
+      // proves the branch is never taken, and the parentage/anchor rules the
+      // old expectation carried for that mesh are gone with it. That is the
+      // accepted price of not asserting equipment no source gives these three
+      // types; the branch remains as capability, like `greaves` and
+      // `shoulderGuard` were before Task 4 used them. A kit that really did
+      // wear a cuirass has to change this line, and should restore those rules
+      // when it does.
+      expect((meshesBySlot.get('armor') ?? []).length, `${archetype} wore no torso armour`).toBe(0)
 
       fighter.dispose()
     }
@@ -660,6 +657,109 @@ describe('type kits', () => {
       expect(Math.min(size.x, size.z), `${archetype}'s shaft is too thin to read`).toBeGreaterThan(MIN_SHAFT_CROSS_SECTION)
       fighter.dispose()
     }
+  })
+
+  /**
+   * The combat poses swing the shield forearm through roughly 75 degrees, so
+   * the rest pose says nothing about how a held prop is actually drawn. These
+   * three tests pose the arm first, which is the only way to see the Task 4
+   * review's two blocking findings.
+   */
+  const poseShieldArm = (fighter: ProceduralFighter, facingYaw: number): void => {
+    // The `guard` pose's own shield-arm rotations, transcribed from a live
+    // `getArenaDebugSnapshot()` rather than imported, so this test would still
+    // notice if the rig started ignoring them.
+    fighter.joints.get('upperArm.L')!.rotation.set(-0.9, 0.4, 0.3)
+    fighter.joints.get('forearm.L')!.rotation.set(-0.4, 0, 0)
+    fighter.root.rotation.y = facingYaw
+    fighter.root.updateMatrixWorld(true)
+  }
+
+  it('keeps the scutum upright and body-facing however the shield arm is posed', () => {
+    for (const facingYaw of [0, 0.8, -2.4]) {
+      const fighter = createProceduralFighter({ archetype: 'heavy' })
+      poseShieldArm(fighter, facingYaw)
+
+      const shield = findBySlot(fighter, 'shield') as THREE.Mesh
+      const worldRotation = shield.getWorldQuaternion(new THREE.Quaternion())
+
+      // Upright: the slab's own height axis is still world up. Inheriting the
+      // hand's rotation instead laid it along the forearm, which is what made
+      // it read as a diving board rather than a shield.
+      const shieldUp = new THREE.Vector3(0, 1, 0).applyQuaternion(worldRotation)
+      expect(shieldUp.y, `the scutum should stand upright at yaw ${facingYaw}`).toBeGreaterThan(0.999)
+
+      // Body-facing: its bow points where the fighter points, not where the
+      // wrist points.
+      const shieldForward = new THREE.Vector3(0, 0, 1).applyQuaternion(worldRotation)
+      const bodyForward = new THREE.Vector3(0, 0, 1).applyQuaternion(fighter.root.getWorldQuaternion(new THREE.Quaternion()))
+      expect(shieldForward.dot(bodyForward), `the scutum should face forward at yaw ${facingYaw}`).toBeGreaterThan(0.999)
+
+      // And it is still taller than wide *as posed* -- the aspect test in
+      // `equipment kinds` measures the rest pose and cannot see this.
+      const box = new THREE.Box3().setFromObject(shield)
+      const height = box.max.y - box.min.y
+      const across = Math.max(box.max.x - box.min.x, box.max.z - box.min.z)
+      expect(height / across, `the posed scutum should read as a tall slab at yaw ${facingYaw}`).toBeGreaterThan(1.3)
+
+      fighter.dispose()
+    }
+  })
+
+  it('hangs the net below the fist as a ragged fall, never as a board in the shield position', () => {
+    const fighter = createProceduralFighter({ archetype: 'fast' })
+    poseShieldArm(fighter, 0.8)
+
+    const parts = meshesWithSlot(fighter, 'net')
+    // A solid box read as a shield at every set of dimensions tried (flat, then
+    // near-cubic). Only a broken outline reads as a net, so the mesh count is
+    // load-bearing, not incidental.
+    expect(parts.length, 'the net is a gathered head plus a fall of cords, not one mass').toBeGreaterThan(3)
+
+    const offHand = new THREE.Vector3()
+    fighter.anchors.get('offHand')!.getWorldPosition(offHand)
+    const boxes = parts.map((part) => new THREE.Box3().setFromObject(part))
+
+    // It hangs. With the arm raised into guard, anything that inherited the
+    // hand's frame would swing up and forward across the chest -- exactly the
+    // position and height a shield occupies.
+    for (const box of boxes) {
+      expect(box.max.y, 'every part of the net stays at or below the fist').toBeLessThan(offHand.y + 1e-6)
+    }
+
+    // Ragged: the cords end at visibly different heights, which is the cue.
+    const hems = boxes.map((box) => box.min.y)
+    expect(Math.max(...hems) - Math.min(...hems), 'the hem is uneven, not a straight bottom edge').toBeGreaterThan(0.15)
+
+    fighter.dispose()
+  })
+
+  it('keeps the galerus a pauldron on the shoulder, well clear of the bare crown', () => {
+    const fighter = createProceduralFighter({ archetype: 'fast' })
+    fighter.root.updateMatrixWorld(true)
+
+    const guard = meshesWithSlot(fighter, 'shoulderGuard')[0]
+    const box = new THREE.Box3().setFromObject(guard)
+    const crown = new THREE.Vector3()
+    fighter.joints.get('headTop')!.getWorldPosition(crown)
+
+    // The arena camera looks down, so the *far* shoulder projects upward on
+    // screen: a guard that merely clears the crown in 3D still silhouettes
+    // over it on half the facings, and then reads as a hat on the one type
+    // defined by wearing none. 0.08 is the headroom that survives that
+    // projection at the shipped camera; it is a proxy for a screen-space
+    // property, and the screen itself is checked by eye in Step 4.
+    expect(box.max.y, 'the galerus must stay well below the crown').toBeLessThan(crown.y - 0.08)
+
+    // Reads as a plate over the shoulder rather than a tower beside the head.
+    const size = box.getSize(new THREE.Vector3())
+    expect(size.x / size.y, 'the galerus is wider across the shoulder than it is tall').toBeGreaterThan(1.5)
+    // And it sits outboard of the head, so it never overlaps the skull.
+    const head = new THREE.Vector3()
+    fighter.joints.get('head')!.getWorldPosition(head)
+    expect(box.min.x, 'the galerus sits clear of the head, out on the shoulder').toBeGreaterThan(head.x + 0.05)
+
+    fighter.dispose()
   })
 
   it('keeps the type palette clear of the red/blue that already means home/away', () => {
