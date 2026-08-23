@@ -165,12 +165,21 @@ about identity, not anatomy.
 - The junction is continuous — no visible step as the pair crosses the band
   edge.
 
+The band is defined in the units `extentToDistance` already consumes — group
+extent, not raw separation — and its edges are **measured from real bouts**
+rather than assumed: the separations above plus the largest equipment radius
+give a starting estimate, and the implementation confirms them against the
+per-tick extent samples the 2026-08-19 verification already showed how to
+collect.
+
 Because the flat distance no longer has to accommodate the arena's maximum
 separation, it is chosen **closer than the current minimum of 11**, which makes
-fighters larger exactly where the fight happens. The target is stated as a
-measurement, not a feeling: the minimum on-screen fighter height inside the
-tactical band, asserted by a test, and materially above the 50–90 px that was
-measured on 2026-08-19.
+fighters larger exactly where the fight happens. The rule fixes it without
+guesswork: **the flat distance is the smallest that still frames the whole
+tactical band with the existing 10% equipment margin.** The on-screen fighter
+height that falls out of that distance is then measured once and asserted as a
+floor, so the number in the test is derived rather than invented — and directly
+comparable with the 50–90 px measured on 2026-08-19.
 
 The look dead zone, the yaw dead zone, the 1.25 s distance damping and the 10%
 equipment margin are unchanged.
@@ -194,7 +203,8 @@ equipment margin are unchanged.
 - **Fighter scale:** an asserted minimum on-screen fighter height inside the
   tactical band, measured the way the 2026-08-19 verification measured it
   (instrumented capture at numerically identified ticks), so the two numbers
-  are comparable.
+  are comparable. The asserted floor is whatever the derived flat distance
+  yields, recorded from that measurement — not a target picked in advance.
 - **Naming:** an assertion that no player-facing surface renders the archetype
   ids.
 - **The invariant:** `npm test` passes with **no edit to any simulation test** —
