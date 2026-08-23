@@ -38,6 +38,14 @@ function fighterNameFor(roster: readonly RosterEntry[], id: string): string {
   return roster.find((entry) => entry.fighter.id === id)?.fighter.name ?? id
 }
 
+/** Same lookup shape as `fighterNameFor`, for the gladiator type -- the
+ * season-summary bout rows only ever have a roster + a fighter id in hand,
+ * same as `SeriesView`'s own `fighterType` for its series-summary rows. */
+function fighterTypeFor(roster: readonly RosterEntry[], id: string): string {
+  const archetype = roster.find((entry) => entry.fighter.id === id)?.fighter.archetype
+  return archetype ? TYPE_NAMES[archetype] : ''
+}
+
 export class SeasonView {
   private readonly host: HTMLElement
   /** The board/summary phase last given real keyboard focus, so every fresh
@@ -197,8 +205,14 @@ export class SeasonView {
     const rosterSummary = el('div', { class: 'season-summary__roster' })
     for (const entry of state.roster) {
       const row = el('p', { class: 'season-summary__roster-row' })
+      // `.season-roster-card__archetype`: a flat, unscoped selector
+      // (`style.css`), already used for exactly this "type next to a
+      // fighter's name" pairing on the board's own roster cards -- reused
+      // here rather than adding a `.season-summary__roster-archetype`
+      // class, since this slice's allowlist does not cover `src/style.css`.
       row.append(
         el('strong', {}, entry.fighter.name),
+        el('span', { class: 'season-roster-card__archetype', title: TYPE_DESCRIPTIONS[entry.fighter.archetype] }, TYPE_NAMES[entry.fighter.archetype]),
         el('span', {}, ` ${RC.middleDot} ${entry.boutsFought} bout${entry.boutsFought === 1 ? '' : 's'} fought ${RC.middleDot} finishes `),
         conditionBadge(entry.condition),
       )
@@ -214,16 +228,18 @@ export class SeasonView {
 
   private buildOutcomeRow(roster: readonly RosterEntry[], challenge: ChallengeDefinition, outcome: BoutOutcome): HTMLLIElement {
     const opponent = challenge.opponents[outcome.boutIndex]
+    const opponentType = TYPE_NAMES[opponent.archetype]
     if (outcome.kind === 'forfeit') {
-      return el('li', { class: 'season-summary__bout', 'data-testid': 'season-summary-bout' }, `Bout ${outcome.boutIndex + 1} ${RC.emDash} forfeited: no gladiator available to face ${opponent.name}.`)
+      return el('li', { class: 'season-summary__bout', 'data-testid': 'season-summary-bout' }, `Bout ${outcome.boutIndex + 1} ${RC.emDash} forfeited: no gladiator available to face ${opponent.name} (${opponentType}).`)
     }
     const homeName = fighterNameFor(roster, outcome.homeFighterId)
+    const homeType = fighterTypeFor(roster, outcome.homeFighterId)
     const winnerName = outcome.winnerSide === 'home' ? homeName : opponent.name
     const endedText = outcome.endedBy === 'defeat' ? 'by defeat' : 'on the time limit'
     return el(
       'li',
       { class: 'season-summary__bout', 'data-testid': 'season-summary-bout' },
-      `Bout ${outcome.boutIndex + 1} ${RC.emDash} ${homeName} vs ${opponent.name}: ${winnerName} won ${endedText}. Order: ${ORDER_LABELS[outcome.homeOrder]}.`,
+      `Bout ${outcome.boutIndex + 1} ${RC.emDash} ${homeName} (${homeType}) vs ${opponent.name} (${opponentType}): ${winnerName} won ${endedText}. Order: ${ORDER_LABELS[outcome.homeOrder]}.`,
     )
   }
 }
