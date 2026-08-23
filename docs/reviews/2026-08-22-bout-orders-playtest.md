@@ -1,6 +1,9 @@
 # Bout Orders & Temperaments — Playtest Script
 
-**Status: not yet run.** This script has not been handed to a reviewer.
+**Status: run 2026-08-23 — GATE FAILED, 1 of 3 criteria met.** Agency passed;
+visibility and attribution failed. See "Verdict" for the read and what it
+argues for next.
+
 Same format as `2026-08-22-school-season-playtest.md`: scripted runs, a
 question set grouped by the qualities the slice must deliver, a reviewer log,
 and verdict criteria. Fill in "Reviewer log" / "Reviewer answers" / "Verdict"
@@ -157,16 +160,66 @@ make the whole exercise useless.
 
 | Reviewer | Run (A/B) | Named bout + reason (Q1) | HUD-hidden result (Q4) | Attribution example (Q6) | Wanted another ordered season? | Notes |
 |---|---|---|---|---|---|---|
-| _(not yet run)_ | | | | | | |
+| Andrey (author) | A | Guarded on a gladiator who was already wounded | Not distinguishable | No — still reads as "just happened" | not asked | Session of 2026-08-23 |
 
 ## Reviewer answers
 
-_(not yet run — record verbatim once a session happens, as
-`2026-08-22-school-season-playtest.md` does.)_
+Recorded verbatim (Russian, as spoken), against the three gate criteria:
+
+1. **Agency** — «выбрал осторожный стиль когда гладиатор был уже ранен».
+2. **Visibility** — «стили не сильно различимы, возможно виновата очень
+   условная графика».
+3. **Attribution** — «Всё ещё как будто нет. Нет обратной связи о том что на
+   что влияет».
 
 ## Verdict
 
-_(not yet run.)_ The slice passes the human playtest gate when at least one
+**FAILED — 1 of 3 gate criteria met** (session of 2026-08-23, reviewer:
+author, Run A).
+
+- **Criterion 1, agency — PASSED.** The reviewer named a real decision with a
+  real reason: `guarded` on an already-wounded gladiator. Note *which* reason
+  won: condition, not temperament and not the matchup. That is consistent with
+  what the balance suite measured — temperament does not change which order is
+  best — and it means the order is currently read as a wear-management dial,
+  which is exactly the lever the season slice was missing.
+- **Criterion 2, visibility — FAILED.** «Стили не сильно различимы.» The
+  reviewer's own hypothesis is the rendering («очень условная графика»), not
+  the mechanic. Both are plausible from here and the distinction matters: the
+  weights *do* diverge — `dispositionBalance.test.ts` measures an 8.2-point win
+  swing and the traces differ from tick one — so the movement difference exists
+  in the simulation and is not reaching the eye. Either the magnitudes are too
+  small to read at this abstraction level, or the abstraction cannot carry them
+  at any magnitude. Nothing in this slice distinguishes those two.
+- **Criterion 3, attribution — FAILED.** «Нет обратной связи о том что на что
+  влияет.» This is the same gap `2026-08-22-school-season-playtest.md`'s Q5
+  recorded, unmoved. The slice's premise was that letting the player *choose*
+  the risk would make the wear feel caused; measured against a human, choosing
+  is not enough on its own. The game states the order before the bout and the
+  condition after it, and never connects the two — no post-bout line says which
+  order produced this wear, and no comparison is offered against what the other
+  order would likely have cost.
+
+**What this does and does not invalidate.** The mechanic is real, deterministic
+and balanced — the numbers in the appendix hold, and criterion 1 passing on the
+first session is not nothing. What failed is legibility, on both of its halves:
+the order is invisible *during* the bout and unattributed *after* it. That is a
+presentation-and-feedback problem, not a reason to unpick the disposition
+plumbing.
+
+**Read for the next slice.** The obvious candidates, in the order this session
+argues for them: (a) post-bout attribution — name the order in the condition
+line and state what it cost, so the causal link is stated rather than inferred;
+(b) in-bout legibility — whether that is larger magnitudes, an explicit stance
+tell in the pose/camera, or an admission that the current abstraction cannot
+show it; (c) only then, whether temperament deserves a mechanism that makes it
+answerable, per the amended criterion 3. Progression was the planned next
+slice; this session says legibility outranks it, because a progression system
+layered on an invisible lever inherits the same defect.
+
+---
+
+The slice would have passed the human playtest gate if at least one
 reviewer, per the spec's "Human playtest gate":
 
 1. names a bout where they chose a non-`standard` order *for a reason*
