@@ -205,7 +205,11 @@ const FEATURED: readonly (Archetype | null)[] = [null, 'technical', 'heavy']
  * added opponent aggression comes straight out of that. A pressing Drusus alone
  * costs the best lineup ~13 points; a pressing Magnus puts `sura/magnus` two
  * points under the survivability floor. So challenge 3's row cannot ADD
- * difficulty at all. It is chosen for variety at net-neutral difficulty.
+ * difficulty at all. It is chosen for variety, not escalation -- and it is not
+ * difficulty-neutral either: the shipped row measures 61.0% against the
+ * all-neutral 52.5%, i.e. a cautious Cassius makes challenge 3 easier than it
+ * was before orders existed. Buying difficulty back is a `SCALING` question,
+ * which this slice does not touch.
  *
  * The full 3x3 grid it was chosen from -- win rate of each gladiator against
  * that slot's challenge-3 opponent, by that opponent's temperament:
