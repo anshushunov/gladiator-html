@@ -1,3 +1,4 @@
+import type { DispositionId } from '../simulation/disposition'
 import type { ChallengeDefinition } from '../simulation/season'
 import type { Archetype, FighterDefinition } from '../simulation/fighters'
 import { homeRoster, opponents } from './mvpSeries'
@@ -175,6 +176,91 @@ const SCALING: readonly (readonly [number, number, number])[] = [
 
 const FEATURED: readonly (Archetype | null)[] = [null, 'technical', 'heavy']
 
+/**
+ * Per-challenge opponent temperaments, in `opponents` order (Drusus, Cassius,
+ * Magnus). Challenge 1 is all 'standard': it IS the frozen baseline series,
+ * and it teaches orders against neutral opponents (design.md, "Temperaments").
+ * Challenges 2–3 are content tuning, constrained by `seasonBalance.test.ts`'s
+ * criterion 3; the challenge-1 row is not tunable at all.
+ *
+ * ---------------------------------------------------------------------------
+ * CHALLENGE 3 IS BUDGET-BOUND, NOT FLAVOUR-BOUND. Its row was first authored
+ * `['press', 'guarded', 'press']` while `seasonBalance.test.ts` still measured
+ * challenge 3 with every opponent on 'standard' -- so nothing checked it. Once
+ * the suite was made to measure the season that actually ships, that row failed
+ * criterion 3 on two of its three clauses. Measured over the fixed 200-seed
+ * cohort from 20260815, `fresh` gladiators, challenge 3's scaled opponents:
+ *
+ *   best three-slot lineup, on real series seeds (criterion 3, ">50%")
+ *     all 'standard'                 52.5%   (vitus/nerva/brutus)
+ *     press/guarded/press  AUTHORED  39.0%   FAILS
+ *     standard/press/standard        61.0%   PASSES  (vitus/nerva/brutus)
+ *
+ *   worst pairing (criterion 3, "5..95%")
+ *     press/guarded/press  AUTHORED  sura/magnus 3.0%   FAILS
+ *
+ * The reason is arithmetic, not taste: the escalation is ALREADY fully spent by
+ * `SCALING` above. With neutral opponents the best lineup takes challenge 3 on
+ * 52.5% of seeds -- 2.5 points over the criterion's floor -- and every point of
+ * added opponent aggression comes straight out of that. A pressing Drusus alone
+ * costs the best lineup ~13 points; a pressing Magnus puts `sura/magnus` two
+ * points under the survivability floor. So challenge 3's row cannot ADD
+ * difficulty at all. It is chosen for variety, not escalation -- and it is not
+ * difficulty-neutral either: the shipped row measures 61.0% against the
+ * all-neutral 52.5%, i.e. a cautious Cassius makes challenge 3 easier than it
+ * was before orders existed. Buying difficulty back is a `SCALING` question,
+ * which this slice does not touch.
+ *
+ * The full 3x3 grid it was chosen from -- win rate of each gladiator against
+ * that slot's challenge-3 opponent, by that opponent's temperament:
+ *
+ *   Drusus  (x1.00)   brutus  aquila  nerva  vitus   sura
+ *     standard         65.0    15.0   50.0   67.0   19.5
+ *     press            46.5     7.0   30.0   40.5    8.0
+ *     guarded          92.0    27.5   60.5   89.0   33.0
+ *   Cassius (x1.10)
+ *     standard         37.0    17.5   39.5   35.0   10.5
+ *     press            34.5    20.0   50.5   43.0    9.5
+ *     guarded          38.5    24.0   36.5   35.0   18.5
+ *   Magnus  (x1.12)
+ *     standard         59.5     8.5   58.0   56.5    7.0
+ *     press            59.0    10.0   27.5   56.5    3.0   <- floor breach
+ *     guarded          68.0    13.5   81.5   61.0   11.0
+ *
+ * What that grid rules out, clause by clause:
+ *   - Magnus may not press: `sura/magnus` 3.0% is under the 5% floor. This is
+ *     the same pairing `SCALING` above already records as the binding one.
+ *   - Drusus may not press: it is the slot the best lineups' strongest
+ *     gladiator sits in, and pressing it drops the lineup metric under 50%
+ *     (measured 39.0% with Cassius guarded and Magnus pressing).
+ *   - Magnus may not be guarded ALONGSIDE a pressing Cassius: `nerva`'s
+ *     challenge-3 mean would be (50.0 + 50.5 + 81.5)/3 = 60.7%, above his
+ *     challenge-1 60.0%, which breaks the escalation clause.
+ *
+ * That leaves Cassius as the one slot with real room, and 'press' as the one
+ * choice on it that is not simply challenge 2 repeated: the technical opponent
+ * the player learned to fight defensively in challenge 2 comes forward in
+ * challenge 3. It is also the only remaining option that changes WHICH
+ * gladiator answers the slot -- pressing costs Brutus 2.5 points and buys Nerva
+ * 11.0, which is the "asymmetric, so the slot answer changes between
+ * challenges" property the design asks the vectors for, carried by temperament.
+ *
+ * Two alternatives were measured and rejected on content, not on balance:
+ * `standard/guarded/standard` (best lineup 56.0%) is challenge 2's Cassius
+ * again, so challenge 3 would add no new information; `guarded/press/standard`
+ * (72.0%) makes the final challenge markedly easier than the one before it.
+ *
+ * Re-run `seasonBalance.test.ts` after any change here -- and note that its
+ * golden season and `tests/season.spec.ts`'s frozen outcome rows are measured
+ * traces of THIS row, so they move with it.
+ * ---------------------------------------------------------------------------
+ */
+const TEMPERAMENTS: readonly (readonly DispositionId[])[] = [
+  ['standard', 'standard', 'standard'],
+  ['press', 'guarded', 'standard'],
+  ['standard', 'press', 'standard'],
+]
+
 function scaleOpponent(definition: FighterDefinition, factor: number): FighterDefinition {
   if (factor === 1) return definition
   return { ...definition, maxHp: Math.round(definition.maxHp * factor), power: definition.power * factor }
@@ -184,4 +270,5 @@ export const SEASON_CHALLENGES: readonly ChallengeDefinition[] = SCALING.map((fa
   index: index as 0 | 1 | 2,
   opponents: opponents.map((opponent, slot) => scaleOpponent(opponent, factors[slot])),
   featuredThreat: FEATURED[index],
+  temperaments: TEMPERAMENTS[index],
 }))

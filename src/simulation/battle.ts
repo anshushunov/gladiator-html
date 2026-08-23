@@ -33,6 +33,7 @@ import {
 } from './encounter'
 import type { CombatStyleCatalog } from './combatActions'
 import type { DecisionCollector } from './decisionDiagnostics'
+import type { DispositionId } from './disposition'
 import type { FighterDefinition, FighterSide } from './fighters'
 import type { CombatArenaDefinition, Vec2 } from './movement'
 import { derivedUnitValue, foldTraceHash } from './random'
@@ -57,6 +58,8 @@ export interface BattleConfig {
   combatStyles: CombatStyleCatalog
   /** Per-side HP the fighters enter with. Omitted sides start at their own `maxHp`. */
   startingHp?: Partial<Record<FighterSide, number>>
+  /** Per-side disposition (home order / away temperament). Omitted sides fight 'standard'. */
+  dispositions?: Partial<Record<FighterSide, DispositionId>>
 }
 
 export interface DuelDescriptor {
@@ -144,8 +147,8 @@ export function createBattle(config: BattleConfig): BattleState {
   const transition = createEncounter({
     seed: config.seed,
     combatants: [
-      { id: descriptor.homeId, factionId: 'home', fighter: config.home, startPosition: HOME_START_POSITION, startingHp: config.startingHp?.home },
-      { id: descriptor.awayId, factionId: 'away', fighter: config.away, startPosition: AWAY_START_POSITION, startingHp: config.startingHp?.away },
+      { id: descriptor.homeId, factionId: 'home', fighter: config.home, startPosition: HOME_START_POSITION, startingHp: config.startingHp?.home, disposition: config.dispositions?.home },
+      { id: descriptor.awayId, factionId: 'away', fighter: config.away, startPosition: AWAY_START_POSITION, startingHp: config.startingHp?.away, disposition: config.dispositions?.away },
     ],
     arena: duelArena(descriptor),
     hostility: { mode: 'different-factions' },

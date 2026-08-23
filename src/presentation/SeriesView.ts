@@ -4,7 +4,9 @@ import type { Archetype, FighterDefinition, FighterSide } from '../simulation/fi
 import { fighterBySide, type BattleState } from '../simulation/battle'
 import { isFightable, startingHpFor } from '../simulation/condition'
 import type { RosterEntry } from '../simulation/season'
+import { DISPOSITION_IDS, isDispositionId, type DispositionId } from '../simulation/disposition'
 import { CONDITION_LABELS, fightTelegraph, restTelegraph } from './conditionTelegraph'
+import { ORDER_LABELS, ORDER_TELEGRAPHS, TEMPERAMENT_DESCRIPTIONS, TEMPERAMENT_LABELS } from './dispositionLabels'
 import { formatPower } from './formatPower'
 
 export type SeriesIntent =
@@ -16,6 +18,7 @@ export type SeriesIntent =
   | { type: 'toggle-pause' }
   | { type: 'set-speed'; speed: 1 | 2 | 4 }
   | { type: 'toggle-sound' }
+  | { type: 'set-order'; boutIndex: BoutIndex; order: DispositionId }
 
 export interface RuntimeViewState { paused: boolean; speed: 1 | 2 | 4; soundEnabled: boolean }
 
@@ -231,6 +234,14 @@ export class SeriesView {
       case 'set-speed': {
         const speed = Number(target.dataset.speed)
         if (speed === 1 || speed === 2 || speed === 4) this.onIntent({ type: 'set-speed', speed })
+        return
+      }
+      case 'set-order': {
+        const boutIndex = this.parseSlot(target)
+        const order = target.dataset.order
+        if (boutIndex === null || !isDispositionId(order)) return
+        this.onIntent({ type: 'set-order', boutIndex, order })
+        this.shell.querySelector<HTMLElement>(`[data-testid="order-${boutIndex}-${order}"]`)?.focus()
         return
       }
     }
@@ -459,10 +470,17 @@ export class SeriesView {
       'aria-describedby': 'assignment-instruction',
     })
     const opponentBlock = el('span', { class: 'matchup-slot__fighter' })
+    // Archetype and temperament share one line rather than stacking: they are
+    // the same kind of fact about the same opponent ("what they are" / "how
+    // they fight it"), and a fourth stacked line here cost the planning
+    // screen ~20px per slot against a height budget it has to keep (see
+    // `.matchup-slot__controls` in `style.css`).
+    const styleLine = el('span', { class: 'matchup-slot__style' })
+    styleLine.append(el('em', {}, ARCHETYPE_LABELS[opponent.archetype]), this.buildTemperamentBadge(state, boutIndex))
     opponentBlock.append(
       el('strong', {}, opponent.name),
       el('small', {}, opponent.school),
-      el('em', {}, ARCHETYPE_LABELS[opponent.archetype]),
+      styleLine,
     )
     pick.append(
       el('span', { class: 'matchup-slot__numeral' }, BOUT_NUMERALS[boutIndex]),
@@ -475,6 +493,13 @@ export class SeriesView {
       el('span', { class: 'matchup-slot__stats' }, `HP ${opponent.maxHp} ${RC.middleDot} Power ${formatPower(opponent.power)} ${RC.middleDot} Defense ${Math.round(opponent.defenseChance * 100)}% ${RC.middleDot} Accuracy ${Math.round(opponent.accuracy * 100)}% ${RC.middleDot} Critical ${Math.round(opponent.criticalChance * 100)}%`),
     )
 
+    // `Remove` and the order selector share the slot's second grid column,
+    // stacked, instead of the selector claiming a full-width row of its own
+    // below the slot. Same DOM order as before (pick -> remove -> selector),
+    // so tab order is unchanged; the point is purely that the selector now
+    // costs the row no extra height, which is what keeps the planning screen
+    // inside its 800px budget (see `.matchup-slot__controls` in `style.css`).
+    const controls = el('div', { class: 'matchup-slot__controls' })
     if (assignedId !== null) {
       const homeName = fighterName(state.homeRoster, assignedId)
       const comparison = getAssignmentComparison(state, assignedId, boutIndex)
@@ -482,18 +507,59 @@ export class SeriesView {
         el('span', { class: 'matchup-slot__assigned' }, homeName),
         el('span', { class: 'comparison-badge', 'data-comparison': comparison }, comparison),
       )
-      const remove = el('button', {
+      controls.append(el('button', {
         class: 'matchup-slot__remove',
         type: 'button',
         'data-action': 'remove-assignment',
         'data-slot-index': String(boutIndex),
         'aria-label': `Remove ${homeName} from bout ${BOUT_NUMERALS[boutIndex]}`,
-      }, 'Remove')
-      item.append(pick, remove)
-    } else {
-      item.append(pick)
+      }, 'Remove'))
     }
+    controls.append(this.buildOrderSelector(state, boutIndex))
+    item.append(pick, controls)
     return item
+  }
+
+  /** Three-way order button group for one bout slot. `role="group"`, not
+   * `radiogroup`: the options below are plain `<button aria-pressed>`
+   * elements (the same shape `.speed-control`'s three speed buttons already
+   * use, `buildControls` above), not `role="radio"`/`aria-checked` --
+   * `radiogroup` requires radio-role children, and the project has no
+   * roving-tabindex/arrow-key navigation anywhere to back that pattern up.
+   * Not nested inside the slot's pick button (nested buttons are invalid
+   * HTML); appended to the slot item / interstitial as a sibling. */
+  private buildOrderSelector(state: SeriesState, boutIndex: BoutIndex): HTMLElement {
+    const wrap = el('div', { class: 'order-selector', role: 'group', 'aria-label': `Bout ${BOUT_NUMERALS[boutIndex]} order` })
+    for (const order of DISPOSITION_IDS) {
+      wrap.append(el('button', {
+        class: 'button order-selector__button',
+        type: 'button',
+        'data-action': 'set-order',
+        'data-slot-index': String(boutIndex),
+        'data-order': order,
+        'data-testid': `order-${boutIndex}-${order}`,
+        'aria-pressed': String(state.orders[boutIndex] === order),
+        // Each order's trade, reachable without selecting it first: the
+        // telegraph line below only ever describes the CURRENT order, so a
+        // player who never clicks `Press` would otherwise never learn what it
+        // costs (design.md, acceptance 1). `title` adds no layout and no
+        // accessible-name change, so the DOM contract and the screenshot
+        // baselines are untouched.
+        title: ORDER_TELEGRAPHS[order],
+      }, ORDER_LABELS[order]))
+    }
+    wrap.append(el('span', { class: 'order-selector__telegraph' }, ORDER_TELEGRAPHS[state.orders[boutIndex]]))
+    return wrap
+  }
+
+  private buildTemperamentBadge(state: SeriesState, boutIndex: BoutIndex): HTMLElement {
+    const temperament = state.opponentDispositions[boutIndex]
+    const badge = el('span', {
+      class: 'temperament-badge',
+      'data-testid': `temperament-${boutIndex}`,
+      'data-temperament': temperament,
+    }, `${TEMPERAMENT_LABELS[temperament]} ${RC.emDash} ${TEMPERAMENT_DESCRIPTIONS[temperament]}`)
+    return badge
   }
 
   private instructionText(state: SeriesState): string {
@@ -536,12 +602,14 @@ export class SeriesView {
     const nextBoutIndex = state.results.length as BoutIndex
     const nextOpponent = state.opponents[nextBoutIndex]
     const nextHomeId = slotFighterId(state.assignments[nextBoutIndex])
+    section.append(heading, resultLine, scoreLine, nextLine)
     if (nextOpponent && nextHomeId) {
       const comparison = getAssignmentComparison(state, nextHomeId, nextBoutIndex)
       nextLine.textContent = `Next: ${fighterName(state.homeRoster, nextHomeId)} vs ${nextOpponent.name} ${RC.emDash} ${comparison}.`
+      section.append(this.buildTemperamentBadge(state, nextBoutIndex), this.buildOrderSelector(state, nextBoutIndex))
     }
     const start = el('button', { class: 'button button--primary', type: 'button', 'data-action': 'start-next', 'data-testid': 'start-next-bout' }, 'Start next bout')
-    section.append(heading, resultLine, scoreLine, nextLine, start)
+    section.append(start)
     return section
   }
 
@@ -580,7 +648,7 @@ export class SeriesView {
     const awayPercent = Math.round(result.remainingHpRatio.away * 100)
     const endedText = result.endedBy === 'defeat' ? 'by defeat' : 'on the time limit'
     return el('li', { class: 'summary__bout', 'data-testid': 'bout-result' },
-      `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} ${homeName} vs ${awayName}: ${winnerName} won ${endedText}. Home ${result.advantage}. Remaining: ${homeName} ${homePercent}%, ${awayName} ${awayPercent}%.`)
+      `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} ${homeName} vs ${awayName}: ${winnerName} won ${endedText}. Home ${result.advantage}. Remaining: ${homeName} ${homePercent}%, ${awayName} ${awayPercent}%. Order: ${ORDER_LABELS[result.homeOrder]}.`)
   }
 
   private buildBattleUi(state: SeriesState): void {
@@ -636,7 +704,9 @@ export class SeriesView {
       status.textContent = ''
       return
     }
-    status.textContent = `Bout ${BOUT_NUMERALS[state.activeBoutIndex]} ${RC.middleDot} ${fighterBySide(battle, 'home').definition.name} vs ${fighterBySide(battle, 'away').definition.name}`
+    const order = state.orders[state.activeBoutIndex]
+    const temperament = state.opponentDispositions[state.activeBoutIndex]
+    status.textContent = `Bout ${BOUT_NUMERALS[state.activeBoutIndex]} ${RC.middleDot} ${fighterBySide(battle, 'home').definition.name} vs ${fighterBySide(battle, 'away').definition.name} ${RC.middleDot} Order: ${ORDER_LABELS[order]} ${RC.middleDot} Foe: ${TEMPERAMENT_LABELS[temperament]}`
   }
 
   private updateFeed(feed: HTMLElement, state: SeriesState): void {

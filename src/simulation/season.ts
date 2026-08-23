@@ -1,12 +1,14 @@
 import type { CombatStyleCatalog } from './combatActions'
 import { conditionAfterBout, conditionAfterRest, isFightable, startingHpFor, type FighterCondition } from './condition'
 import type { Archetype, FighterDefinition } from './fighters'
+import type { DispositionId } from './disposition'
 import { deriveSeriesSeed } from './random'
 import {
   assignFighter as assignSeriesFighter,
   confirmLineup as confirmSeriesLineup,
   createSeries,
   advanceSeriesTicks,
+  setBoutOrder as setSeriesBoutOrder,
   startNextBout as startNextSeriesBout,
   unassignSlot as unassignSeriesSlot,
   type BoutOutcome,
@@ -21,6 +23,7 @@ export interface ChallengeDefinition {
   index: 0 | 1 | 2
   opponents: readonly FighterDefinition[]
   featuredThreat: Archetype | null
+  temperaments: readonly DispositionId[]
 }
 
 export interface RosterEntry {
@@ -121,6 +124,7 @@ export function startNextSeries(state: SeasonState): SeasonCommandResult {
     seed: deriveSeriesSeed(state.seed, state.seriesIndex),
     combatStyles: state.combatStyles,
     homeStartingHpByFighterId: startingHpByFighterId(state),
+    opponentDispositions: challenge.temperaments,
   }
   const activeSeries = createSeries(seriesConfig)
   return { ok: true, state: { ...state, phase: 'series', activeSeries } }
@@ -155,6 +159,10 @@ export function assignFighter(state: SeasonState, fighterId: string, boutIndex: 
 
 export function unassignSlot(state: SeasonState, boutIndex: number): SeasonCommandResult {
   return delegateToSeries(state, (series) => unassignSeriesSlot(series, boutIndex))
+}
+
+export function setBoutOrder(state: SeasonState, boutIndex: number, order: DispositionId): SeasonCommandResult {
+  return delegateToSeries(state, (series) => setSeriesBoutOrder(series, boutIndex, order))
 }
 
 export function confirmLineup(state: SeasonState): SeasonCommandResult {

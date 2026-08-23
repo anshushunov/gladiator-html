@@ -219,16 +219,34 @@ h1 span { color: #c78b4f; font-style: italic; }
   font-weight: 700;
 }
 
-.matchup-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.matchup-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 
-.matchup-slot { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+/* Each slot is its own grid, so the control column is given an explicit width
+   rather than `auto`: `auto` sizes to each slot's own content and the three
+   selectors then start at three different x positions down the list. */
+.matchup-slot { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 8px 12px; align-items: center; }
+
+/* The slot's second column: `Remove` (when occupied) stacked above the order
+   selector. This column is the whole reason the planning screen still fits an
+   800px viewport. The order selector used to be a `grid-column: 1 / -1` row
+   of its own beneath the slot, which cost ~61px per slot on top of the
+   temperament badge's own ~20px stacked line -- ~240px across three slots,
+   against a screen `decision-panel.spec.ts` requires to fit 800px and that
+   `.roster-grid`/`.fighter-option` above already had padding shaved twice to
+   defend. Beside the pick instead, the selector is shorter than the row it
+   sits in, so it costs that row nothing.
+   Its track is a fixed 290px (see `.matchup-slot` above) rather than `auto`:
+   the three telegraphs are different lengths, so a content-sized track would
+   resize -- and reflow the pick beside it -- every time the player changed an
+   order. 290px fits the longest telegraph on one line at this size. */
+.matchup-slot__controls { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 
 .matchup-slot__pick {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
   align-items: center;
-  padding: 13px 15px;
+  padding: 10px 15px;
   border: 1px solid #302a2a;
   border-radius: 4px;
   color: #e8ddcc;
@@ -246,6 +264,8 @@ h1 span { color: #c78b4f; font-style: italic; }
 .matchup-slot__fighter strong { font-family: Georgia, serif; font-size: 16px; font-weight: 500; }
 .matchup-slot__fighter small { color: #927f6d; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
 .matchup-slot__fighter em { color: #c78b4f; font-size: 10px; font-style: normal; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+/* Archetype and temperament on one line -- see `buildMatchupSlot`'s own note. */
+.matchup-slot__style { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
 .matchup-slot__stats { margin-left: auto; color: #a99e90; font-variant-numeric: tabular-nums; }
 .matchup-slot__assigned { color: #dfcfba; font-weight: 700; }
 
@@ -265,10 +285,9 @@ h1 span { color: #c78b4f; font-style: italic; }
 .comparison-badge[data-comparison="disadvantage"] { color: #e08a7a; border-color: #8e3f33; background: rgba(142, 63, 51, 0.28); }
 
 .matchup-slot__remove {
-  align-self: center;
   border: 1px solid #3b342f;
   border-radius: 4px;
-  padding: 8px 10px;
+  padding: 5px 10px;
   color: #d9a08c;
   background: transparent;
   cursor: pointer;
@@ -278,7 +297,41 @@ h1 span { color: #c78b4f; font-style: italic; }
 
 .matchup-slot__remove:hover { border-color: #8e3f33; }
 
-.planning__confirm { margin-top: 20px; }
+/* Order selector -- a three-way radio group for one bout's home order,
+   styled after `.speed-control`/`.speed-control__button` (same "small flex
+   row of buttons, active one picked out by `aria-pressed`" shape). Always a
+   sibling of the slot's `.matchup-slot__pick`/`.matchup-slot__remove`
+   buttons, never nested inside either (nested buttons are invalid HTML). On
+   the planning screen it lives in `.matchup-slot__controls` (above), i.e.
+   beside the slot rather than on a row of its own; in the interstitial it is
+   an ordinary block in text flow. Left-aligned in both, so on the planning
+   screen the buttons sit against the slot they belong to rather than drifting
+   to the far edge of their column. */
+.order-selector { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.order-selector__button { padding: 5px 9px; font-size: 10px; }
+.order-selector__telegraph { flex-basis: 100%; margin: 0; color: #8f8577; font-size: 10px; line-height: 1.2; }
+
+/* Temperament badge -- the opponent's counterpart to `.condition-badge`,
+   same pill shape, colour-coded by `data-temperament` instead of
+   `data-condition`: steady reads neutral (no lean either way), press reads
+   warm (the opponent commits, same warm register `.comparison-badge`'s
+   `disadvantage` variant uses for "this favours them"), guarded reads cool. */
+.temperament-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.temperament-badge[data-temperament="standard"] { color: #c9b795; border-color: #6d645d; background: rgba(109, 100, 93, 0.25); }
+.temperament-badge[data-temperament="press"] { color: #e0a06a; border-color: #7a4f2f; background: rgba(122, 79, 47, 0.24); }
+.temperament-badge[data-temperament="guarded"] { color: #8fb3d0; border-color: #2f5a7a; background: rgba(47, 90, 122, 0.22); }
+
+.planning__confirm { margin-top: 14px; }
 
 .roster-disabled {
   margin-top: 18px;
@@ -414,6 +467,8 @@ h1 span { color: #c78b4f; font-style: italic; }
 .interstitial h2 { margin: 0 0 8px; font-family: Georgia, serif; font-size: 24px; font-weight: 500; }
 .interstitial__result { margin: 0 0 6px; font-size: 15px; font-weight: 700; }
 .interstitial__score, .interstitial__next { margin: 0 0 6px; color: #c9b795; font-size: 14px; }
+.interstitial .temperament-badge { margin-bottom: 8px; }
+.interstitial .order-selector { margin-bottom: 4px; }
 .interstitial .button { margin-top: 10px; }
 
 .summary {

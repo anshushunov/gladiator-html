@@ -68,6 +68,7 @@ import {
   type IncomingThreat,
 } from './combatDecision'
 import type { DecisionCollector, DecisionRecord } from './decisionDiagnostics'
+import { DISPOSITION_IDS, dispositionModifiers, isDispositionId, type DispositionId } from './disposition'
 import type { FighterDefinition } from './fighters'
 import { compareArchetypes, comparisonDamageMultiplier, validateFighterDefinition } from './fighters'
 import type { CombatArenaDefinition, LocomotionIntent, MovementRequest, TurnStep, Vec2 } from './movement'
@@ -181,6 +182,8 @@ function requireNoConflictingRelations(relations: readonly { first: FactionId; s
 export interface FighterCombatState {
   id: CombatantId
   factionId: FactionId
+  /** Present only when fighting under a non-'standard' disposition; see `EncounterCombatantDefinition.disposition`. */
+  disposition?: DispositionId
   definition: FighterDefinition
   targetId?: CombatantId
   position: Vec2
@@ -222,6 +225,14 @@ export interface EncounterCombatantDefinition {
    * which is why every frozen trace hash survives this field's addition.
    */
   startingHp?: number
+  /**
+   * Optional disposition (order/temperament) this combatant fights under.
+   * Omitted or 'standard' — the only values anything produced before this
+   * field existed — leaves combatant state without the key entirely, which is
+   * why every frozen trace hash survives this field's addition (same
+   * mechanism as `startingHp` above).
+   */
+  disposition?: DispositionId
 }
 
 export interface EncounterConfig {
@@ -552,6 +563,7 @@ function buildFighterCombatState(definition: EncounterCombatantDefinition, arena
   return {
     id: definition.id,
     factionId: definition.factionId,
+    ...(definition.disposition !== undefined && definition.disposition !== 'standard' ? { disposition: definition.disposition } : {}),
     definition: fighter,
     position,
     facing: computeStartFacing(definition.id, position, arena, positionsById),
@@ -586,6 +598,9 @@ export function createEncounter(config: EncounterConfig): EncounterTransition {
   for (const combatant of config.combatants) {
     requireValidId(combatant.id, 'combatants id')
     requireValidId(combatant.factionId, 'combatants factionId')
+    if (combatant.disposition !== undefined && !isDispositionId(combatant.disposition)) {
+      throw new Error(`EncounterConfig combatant '${combatant.id}' disposition must be one of ${DISPOSITION_IDS.join('|')}`)
+    }
   }
   if (config.hostility.mode === 'relation-table') {
     requireNoConflictingRelations(config.hostility.relations)
@@ -1132,14 +1147,15 @@ function makeCombatDecisions(
       combatStyles,
     })
     const style = combatStyles.styles[self.definition.archetype]
+    const modifiers = dispositionModifiers(self.disposition ?? 'standard')
 
     const combatantRandom = nextRandom[id]
     const [rolls, afterDecision] = drawPair(combatantRandom.decision)
     // `scoreCombatCandidates` is pure and duplicates work `chooseCombatDecision`
     // already does internally -- worth paying only when a collector actually
     // wants the breakdown, so it stays out of the hot (uncollected) path.
-    const scored = collector === undefined ? undefined : scoreCombatCandidates(context, style)
-    const decision = chooseCombatDecision(context, style, { selection: rolls.first, interval: rolls.second })
+    const scored = collector === undefined ? undefined : scoreCombatCandidates(context, style, modifiers)
+    const decision = chooseCombatDecision(context, style, { selection: rolls.first, interval: rolls.second }, modifiers)
     if (collector !== undefined && scored !== undefined) {
       // `{ ...decision }` copies rather than aliases: `decision` is read
       // again just below to drive this tick's actual locomotion/action

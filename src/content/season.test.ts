@@ -79,4 +79,14 @@ describe('season content', () => {
       }
     }
   })
+
+  it('challenge 1 temperaments are all standard — the frozen baseline series', () => {
+    expect(SEASON_CHALLENGES[0].temperaments).toEqual(['standard', 'standard', 'standard'])
+  })
+
+  it('every challenge has one temperament per opponent', () => {
+    for (const challenge of SEASON_CHALLENGES) {
+      expect(challenge.temperaments).toHaveLength(challenge.opponents.length)
+    }
+  })
 })

@@ -11,6 +11,7 @@ import type { ChallengeDefinition, ConditionDelta, RosterEntry, SeasonState } fr
 import { isFightable, startingHpFor, type FighterCondition } from '../simulation/condition'
 import type { Archetype } from '../simulation/fighters'
 import { CONDITION_LABELS, fightTelegraph, restTelegraph } from './conditionTelegraph'
+import { ORDER_LABELS, TEMPERAMENT_LABELS } from './dispositionLabels'
 import { formatPower } from './formatPower'
 
 const RC = { arrow: '→', middleDot: '·', enDash: '–', emDash: '—' }
@@ -122,14 +123,20 @@ export class SeasonView {
       card.append(el('p', { class: 'season-challenge-card__featured' }, `Featured threat: ${ARCHETYPE_LABELS[challenge.featuredThreat]}`))
     }
     const list = el('ul', { class: 'season-challenge-card__opponents' })
-    for (const opponent of challenge.opponents) {
+    for (const [index, opponent] of challenge.opponents.entries()) {
       const item = el('li', {})
+      const temperament = challenge.temperaments[index]
       item.append(
         el('strong', {}, opponent.name),
         // `formatPower`: see its own doc comment -- `scaleOpponent` leaves
         // `power` a raw float, formatted here for display only, shared with
         // `SeriesView.buildMatchupSlot` so the two screens never disagree.
         el('span', { class: 'season-challenge-card__stats' }, `${ARCHETYPE_LABELS[opponent.archetype]} ${RC.middleDot} HP ${opponent.maxHp} ${RC.middleDot} Power ${formatPower(opponent.power)}`),
+        el('span', {
+          class: 'temperament-badge',
+          'data-testid': 'challenge-temperament',
+          'data-temperament': temperament,
+        }, TEMPERAMENT_LABELS[temperament]),
       )
       list.append(item)
     }
@@ -217,7 +224,7 @@ export class SeasonView {
     return el(
       'li',
       { class: 'season-summary__bout', 'data-testid': 'season-summary-bout' },
-      `Bout ${outcome.boutIndex + 1} ${RC.emDash} ${homeName} vs ${opponent.name}: ${winnerName} won ${endedText}.`,
+      `Bout ${outcome.boutIndex + 1} ${RC.emDash} ${homeName} vs ${opponent.name}: ${winnerName} won ${endedText}. Order: ${ORDER_LABELS[outcome.homeOrder]}.`,
     )
   }
 }

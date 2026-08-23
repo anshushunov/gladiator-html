@@ -173,9 +173,47 @@ that reviewer's clips.)*
 - Reduced-motion mode (trail/flash removed, anticipation/contact/result preserved): _(not yet reviewed)_
 - Sound weight/appropriateness: _(not yet reviewed)_
 
+## 2026-08-23 informal single-reviewer pass — NOT PASSED
+
+**This is not a completed gate run.** One reviewer (Andrey, the project owner)
+watched the three HUD-hidden clips recorded by `npm run review:clips` at the
+2026-08-23 build. The formal gate needs two reviewers, at least one without
+prior rules knowledge, and a counted exchange-labelling accuracy; neither
+happened, so every cell above stays empty and the gate stays open.
+
+It is recorded because the outcome was negative, and a negative result from a
+reviewer who *knows the rules* is strong evidence: **«стало лучше, но не могу
+сказать, что весь бой читается»**. If the fight does not read for the person
+who designed its rules, it does not read.
+
+What the reviewer named, verbatim, in their own words:
+
+1. **Naming.** «Хочется, чтобы типы были историческими — мурмилло,
+   даймахерис и т.п.» The abstract `heavy` / `fast` / `technical` labels carry
+   no expectation to check the movement against.
+2. **Behaviour does not match the expectation the archetype sets.** «Тяжёлый
+   должен медленнее передвигаться, пытаться сблизиться и ударить с близкого
+   расстояния. С длинным оружием должен стараться держать дистанцию, быстрый —
+   подойти, быстро ударить и рвать дистанцию. Стало лучше, но по-прежнему
+   такого не вижу.» Note the axis this introduces, which the current three
+   styles do not have: **weapon reach as a driver of spacing behaviour**.
+3. **Silhouettes.** «Грешу ещё на слишком схематичных бойцов.» This is the
+   third independent time the abstraction has been named as a suspect — after
+   the 2026-08-19 developer verification (§3 below: fighters occupy 50–90 px,
+   only coarse silhouette lean registers) and the 2026-08-22 bout-orders
+   playtest («возможно, виновата очень условная графика»).
+
+**Read:** the failure is not only rendering. Points 1 and 2 say the archetypes
+do not *behave* the way their name promises, which no amount of visual polish
+fixes — and point 2 names a missing simulation dimension (reach) rather than a
+missing animation. See `docs/research/2026-08-23-order-legibility-references.md`
+for the industry material gathered alongside this pass.
+
 ## Overall gate result
 
-**Not yet run.** Per the pass calculation above, this gate passes only when
+**Not yet run** as a formal two-reviewer pass; one informal single-reviewer
+pass on 2026-08-23 returned a negative result (above). Per the pass calculation
+above, this gate passes only when
 every reviewer's exchange accuracy is `>= 75%`, all three styles were
 identified after one clip each, and a plausible winner explanation was given
 for all three representative clips. None of that has been evaluated yet --
