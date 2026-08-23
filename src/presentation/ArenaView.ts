@@ -24,7 +24,10 @@ import { normalizeVec2, TICKS_PER_SECOND, type Vec2 } from '../simulation/moveme
  * The runtime's per-render-frame payload (owned here, the consumer, per the
  * brief's interface note; `main.ts` only ever constructs one of these). See
  * that module's own comment for `previous`/`current`'s aliasing contract --
- * neither is ever cloned, and this module must never mutate either.
+ * neither is ever cloned, and this module must never mutate either. `sync()`
+ * enforces that: it `deepFreeze`s `previous`/`current`/`events` before this
+ * module ever reads them, so "must never mutate" is a thrown `TypeError`
+ * away from being caught, not just a convention.
  */
 export interface BattleRenderFrame {
   previous: BattleState
@@ -127,6 +130,39 @@ function lerp(a: number, b: number, t: number): number {
 
 function lerpVec2(a: Readonly<Vec2>, b: Readonly<Vec2>, t: number): Vec2 {
   return { x: lerp(a.x, b.x, t), z: lerp(a.z, b.z, t) }
+}
+
+/**
+ * Every object `deepFreeze` has already visited, module-level so it stays
+ * effective across the whole session rather than being rebuilt per call:
+ * `BattleState.descriptor` and (whenever a tick emits nothing)
+ * `BattleState.events` are the SAME object shared across every tick of one
+ * bout (`battle.ts`'s own doc comments), so a fresh `WeakSet` per `sync()`
+ * call would re-walk already-frozen shared structure every single frame for
+ * no reason. Guards against cycles the same way a fresh one would.
+ */
+const deepFreezeSeen = new WeakSet<object>()
+
+/**
+ * Recursively `Object.freeze`s `value` and every nested object/array
+ * reachable from it. Used by `sync()` (below) to freeze exactly
+ * `BattleRenderFrame`'s `previous`/`current`/`events` before this module
+ * ever reads them -- proving this renderer, which reads simulation state
+ * deeply every frame (pose sampling, contact targeting, camera framing),
+ * never accidentally writes back into it. Deliberately never applied to
+ * `this.rigs`, the scene or the camera -- those are legitimately mutated
+ * every frame, and freezing them would break the render loop.
+ */
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value
+  const target = value as object
+  if (deepFreezeSeen.has(target)) return value
+  deepFreezeSeen.add(target)
+  Object.freeze(target)
+  for (const key of Object.keys(target)) {
+    deepFreeze((target as Record<string, unknown>)[key])
+  }
+  return value
 }
 
 /** Applies a fully-built `HumanoidPose` (every semantic joint present, per `PoseController.apply`'s contract) onto a rig's live `Object3D` graph. `PoseController` itself never mutates the persistent rig -- it only borrows `fighter.root` as a scratch FK buffer for the IK sub-step and restores it -- so the caller (this module) owns actually applying the sampled pose every frame. */
@@ -492,6 +528,13 @@ export class ArenaView {
    * damps the camera normally every tick, exactly as before.
    */
   sync(frame: BattleRenderFrame, options?: { advanceCameraTime?: boolean }): void {
+    // Freeze before `applyFrame` -- including before its own `contextLost`
+    // early return -- so the invariant holds even on a session where no
+    // WebGL context exists to render into at all, not only on the normal
+    // path `stateHash.test.ts`'s freeze proof actually exercises.
+    deepFreeze(frame.previous)
+    deepFreeze(frame.current)
+    deepFreeze(frame.events)
     this.applyFrame(frame, { advanceCameraTime: options?.advanceCameraTime ?? true })
   }
 
