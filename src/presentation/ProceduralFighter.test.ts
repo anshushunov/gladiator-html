@@ -491,7 +491,13 @@ describe('equipment kinds', () => {
     f.root.traverse((o) => {
       if (!o.userData.slot) return
       const box = new THREE.Box3().setFromObject(o)
-      for (const [x, z] of [[box.min.x, box.min.z], [box.max.x, box.max.z]]) expected = Math.max(expected, Math.hypot(x, z))
+      // All four horizontal corners. The plan's text sampled only (min,min)
+      // and (max,max), which under-reports a box whose farthest corner is the
+      // mixed pair; amended by human ruling 2026-08-24 for this line alone,
+      // in step with `computeHorizontalEquipmentRadius`'s own sweep.
+      for (const x of [box.min.x, box.max.x]) {
+        for (const z of [box.min.z, box.max.z]) expected = Math.max(expected, Math.hypot(x, z))
+      }
     })
     expect(f.horizontalEquipmentRadius).toBeCloseTo(expected, 2)
     f.dispose()

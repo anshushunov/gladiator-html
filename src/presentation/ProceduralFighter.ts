@@ -859,8 +859,16 @@ function computeHorizontalEquipmentRadius(root: THREE.Group): number {
   root.traverse((object) => {
     if (!object.userData.slot) return
     box.setFromObject(object)
-    for (const [x, z] of [[box.min.x, box.min.z], [box.max.x, box.max.z]]) {
-      radius = Math.max(radius, Math.hypot(x, z))
+    // All four horizontal corners, not just (min,min) and (max,max): the
+    // farthest corner of an axis-aligned box is just as often the mixed pair.
+    // A box over x in [-1.0, -0.9], z in [0.9, 1.0] is 1.414 out at
+    // (min.x, max.z) but only 1.345 at either matched corner -- and this
+    // radius is what the camera frames a pair by, so under-reporting it
+    // frames closer than is safe. Do not "simplify" this back to two corners.
+    for (const x of [box.min.x, box.max.x]) {
+      for (const z of [box.min.z, box.max.z]) {
+        radius = Math.max(radius, Math.hypot(x, z))
+      }
     }
   })
   return radius
