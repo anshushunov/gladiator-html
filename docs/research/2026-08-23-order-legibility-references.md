@@ -57,6 +57,14 @@ indistinguishable from no lever. Domina's is invisible because it is hidden in
 a menu; ours is invisible because its effect is diffuse across 3600 ticks. Same
 result: the player is not sure anything is happening.
 
+> **Domina's fight feel is our target reference** (Andrey, 2026-08-23, from
+> having played it). Note the split, because this section is otherwise about
+> what Domina got wrong: the reference is how a **bout reads and feels to
+> watch** — pacing, the weight of a swing, hits landing as events — NOT its
+> control model, which is the failure recorded above. When we judge combat
+> presentation from here on, the comparison is against Domina rather than
+> against abstract "game feel" advice.
+
 ## 2. Stance toggles that ship, and how they read: Total War
 
 Guard mode (fight defensively, hold formation, do not pursue) and skirmish mode
