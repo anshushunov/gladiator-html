@@ -640,9 +640,11 @@ Run: `npm test` → ALL PASS. `seasonBalance.test.ts`'s golden season and cohort
 > authored `['press', 'guarded', 'press']` fails criterion 3 twice over (best
 > lineup 39.0% against a >50% floor; `sura/magnus` 3.0% against a 5% floor).
 > Challenge 3's escalation is already fully spent by the stat scaling, so its
-> temperament row cannot add difficulty; it is now
-> `['standard', 'press', 'standard']`. The grid it was chosen from is in
-> `src/content/season.ts`'s `TEMPERAMENTS` comment.
+> temperament row was not chosen to add further escalation; it is not
+> difficulty-neutral with the all-neutral reference either, though — the
+> shipped row's best lineup measures 61.0%, above the 52.5% all-neutral
+> figure. It is now `['standard', 'press', 'standard']`. The grid it was
+> chosen from is in `src/content/season.ts`'s `TEMPERAMENTS` comment.
 
 - [ ] **Step 5: Commit**
 

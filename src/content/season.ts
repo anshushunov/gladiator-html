@@ -194,7 +194,7 @@ const FEATURED: readonly (Archetype | null)[] = [null, 'technical', 'heavy']
  *   best three-slot lineup, on real series seeds (criterion 3, ">50%")
  *     all 'standard'                 52.5%   (vitus/nerva/brutus)
  *     press/guarded/press  AUTHORED  39.0%   FAILS
- *     standard/press/standard        (below) PASSES
+ *     standard/press/standard        61.0%   PASSES  (vitus/nerva/brutus)
  *
  *   worst pairing (criterion 3, "5..95%")
  *     press/guarded/press  AUTHORED  sura/magnus 3.0%   FAILS
