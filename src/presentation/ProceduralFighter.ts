@@ -143,10 +143,11 @@ export interface ProceduralFighter {
   joints: ReadonlyMap<JointName, THREE.Object3D>
   anchors: ReadonlyMap<EquipmentAnchorName, THREE.Object3D>
   /**
-   * Style-authored horizontal (ground-plane) reach of this fighter's actual
-   * built equipment, derived from the anchors' rest-pose world positions
-   * (brief resolution #7). Read later by `ArenaCamera` group framing
-   * (Task 17); presentation-only and never fed back into simulation.
+   * Horizontal (ground-plane) reach of this fighter's actual built geometry in
+   * the rest pose, measured off the real meshes (see
+   * `computeHorizontalEquipmentRadius`) rather than off an anchor plus a
+   * shield constant (brief resolution #7). Read by `ArenaCamera` group framing
+   * via `ArenaView`; presentation-only and never fed back into simulation.
    */
   horizontalEquipmentRadius: number
   dispose(): void
@@ -185,16 +186,51 @@ interface BodyProportions {
   headRadius: number
 }
 
+/**
+ * A kit's equipment: a *kind* per slot, picking which geometry the builders
+ * below assemble, plus the numbers that size it. Every per-archetype decision
+ * lives here in `STYLE_SPECS`; no builder branches on the archetype id itself,
+ * so a kit can be re-armed by editing values alone.
+ */
 interface EquipmentProportions {
-  shieldRadius: number
+  /** Which weapon to build. All three are modelled along the hand -> tip segment. */
+  weaponKind: 'gladius' | 'spear' | 'trident'
+  /** Hand-to-tip length: the weapon tip anchor sits exactly this far from the hand. */
+  weaponLength: number
+  /** The weapon's cross-section, read per kind: a blade's width, or a shaft's diameter. */
+  weaponWidth: number
+  /** The weapon's other cross-section: a blade's thickness, or the head/prongs' stoutness. */
+  weaponThickness: number
+  /**
+   * Direction only: the share of the hand -> tip *direction* pointing forward
+   * (+Z) rather than down (-Y); 0..1. Magnitude comes from `weaponLength`, so
+   * changing the bias swings the weapon without shortening it.
+   */
+  weaponForwardBias: number
+  /** Which shield to build, or `'none'` for a kit that carries none at all. */
+  shieldKind: 'scutum' | 'parma' | 'none'
+  /**
+   * The off hand's footprint: the shield's when `shieldKind` is not `'none'`,
+   * the `offhandProp`'s otherwise. A `'parma'` is an ellipse of these two
+   * diameters; a `'scutum'` is a slab of this chord width and this height.
+   */
+  shieldWidth: number
+  shieldHeight: number
+  /**
+   * How far a `'scutum'` wraps around its bearer: 0 is a flat slab, 1 the full
+   * `SCUTUM_MAX_SWEEP` arc. Ignored by the other shield kinds, which are flat.
+   */
+  shieldCurvature: number
   shieldThickness: number
   shieldForwardOffset: number
-  weaponLength: number
-  weaponWidth: number
-  weaponThickness: number
-  /** Fraction of `weaponLength` projected onto the forward (+Z) axis vs down (-Y); 0..1. */
-  weaponForwardBias: number
-  hasHelmet: boolean
+  /** A helmet with a brim, optionally topped by a crest, or none at all. */
+  helmetKind: 'brimmed-crested' | 'brimmed' | 'none'
+  /** `'one-low'` guards the lead (left) shin only; `'two-high'` guards both, up to the knee. */
+  greaves: 'none' | 'one-low' | 'two-high'
+  /** A galerus rising off the off-hand shoulder. */
+  shoulderGuard: boolean
+  /** A held off-hand prop that is not a shield. Absent leaves the off hand empty. */
+  offhandProp?: 'net'
   hasLightArmor: boolean
 }
 
@@ -229,14 +265,20 @@ const STYLE_SPECS: Readonly<Record<Archetype, StyleSpec>> = {
       headRadius: 0.16,
     },
     equipment: {
-      shieldRadius: 0.55,
-      shieldThickness: 0.08,
-      shieldForwardOffset: 0.10,
+      weaponKind: 'gladius',
       weaponLength: 0.55,
       weaponWidth: 0.06,
       weaponThickness: 0.05,
       weaponForwardBias: 0.5,
-      hasHelmet: true,
+      shieldKind: 'scutum',
+      shieldWidth: 0.70,
+      shieldHeight: 1.00,
+      shieldCurvature: 0.5,
+      shieldThickness: 0.08,
+      shieldForwardOffset: 0.10,
+      helmetKind: 'brimmed-crested',
+      greaves: 'none',
+      shoulderGuard: false,
       hasLightArmor: false,
     },
     clothColor: 0xb83b34,
@@ -265,14 +307,24 @@ const STYLE_SPECS: Readonly<Record<Archetype, StyleSpec>> = {
       headRadius: 0.13,
     },
     equipment: {
-      shieldRadius: 0.28,
-      shieldThickness: 0.06,
-      shieldForwardOffset: 0.08,
+      weaponKind: 'trident',
       weaponLength: 0.50,
       weaponWidth: 0.05,
       weaponThickness: 0.04,
       weaponForwardBias: 0.5,
-      hasHelmet: false,
+      shieldKind: 'none',
+      // No shield, so these size the net instead -- kept at the footprint the
+      // dropped 0.28-radius shield had, so the off-hand silhouette is not
+      // silently resized by this task. Task 4 authors the real net.
+      shieldWidth: 0.56,
+      shieldHeight: 0.56,
+      shieldCurvature: 0,
+      shieldThickness: 0.06,
+      shieldForwardOffset: 0.08,
+      helmetKind: 'none',
+      greaves: 'none',
+      shoulderGuard: false,
+      offhandProp: 'net',
       hasLightArmor: true,
     },
     clothColor: 0x2a6f8e,
@@ -301,14 +353,20 @@ const STYLE_SPECS: Readonly<Record<Archetype, StyleSpec>> = {
       headRadius: 0.14,
     },
     equipment: {
-      shieldRadius: 0.40,
-      shieldThickness: 0.07,
-      shieldForwardOffset: 0.10,
+      weaponKind: 'spear',
       weaponLength: 1.30,
       weaponWidth: 0.045,
       weaponThickness: 0.045,
       weaponForwardBias: 0.95,
-      hasHelmet: false,
+      shieldKind: 'parma',
+      shieldWidth: 0.80,
+      shieldHeight: 0.80,
+      shieldCurvature: 0,
+      shieldThickness: 0.07,
+      shieldForwardOffset: 0.10,
+      helmetKind: 'none',
+      greaves: 'none',
+      shoulderGuard: false,
       hasLightArmor: false,
     },
     clothColor: 0x4f6b3d,
@@ -480,9 +538,214 @@ function buildLeg(
   addBoxSegment(owned, foot, body.limbRadius * 1.7, body.limbRadius * 0.75, footDepth, material, 'limb', footDepth * 0.42)
 }
 
+// ---------------------------------------------------------------------------
+// Equipment geometry
+//
+// One builder per slot, each branching on its own `EquipmentProportions` kind
+// and never on the archetype id: re-arming a kit is authoring numbers in
+// `STYLE_SPECS`, and only a genuinely new *kind* is a new case down here.
+// ---------------------------------------------------------------------------
+
+/** The arc a `shieldCurvature` of 1 wraps a scutum through. */
+const SCUTUM_MAX_SWEEP = (2 * Math.PI) / 3
+
+/** A flat elliptical disc facing forward (+Z), of the two given diameters. */
+function createDiscGeometry(width: number, height: number, thickness: number): THREE.BufferGeometry {
+  // Modelled as a unit cylinder about +Y, then laid face-forward and scaled to
+  // the two diameters, so a round shield can also be authored as an oval.
+  const geometry = new THREE.CylinderGeometry(0.5, 0.5, 1, 20)
+  geometry.rotateX(Math.PI / 2)
+  geometry.scale(width, height, thickness)
+  return geometry
+}
+
+/**
+ * A slab of `width` chord and `height`, bowed forward (+Z) about a vertical
+ * axis -- the scutum's wrap around its bearer. A `curvature` of 0 degenerates
+ * to a plain flat box rather than to a division by `sin(0)`.
+ */
+function createCurvedSlabGeometry(width: number, height: number, thickness: number, curvature: number): THREE.BufferGeometry {
+  const sweep = Math.min(Math.max(curvature, 0), 1) * SCUTUM_MAX_SWEEP
+  if (sweep < 1e-3) return new THREE.BoxGeometry(width, height, thickness)
+
+  const half = sweep / 2
+  const outer = width / 2 / Math.sin(half)
+  const inner = Math.max(outer - thickness, outer * 0.5)
+  // An annular sector centred on the shape plane's -Y, extruded along that
+  // plane's normal, then tipped so the extrusion runs up the shield's height
+  // and the sector's mid-point lands on the anchor with its bulge forward.
+  const shape = new THREE.Shape()
+  shape.absarc(0, 0, outer, -Math.PI / 2 - half, -Math.PI / 2 + half, false)
+  shape.absarc(0, 0, inner, -Math.PI / 2 + half, -Math.PI / 2 - half, true)
+  const geometry = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false, curveSegments: 16 })
+  geometry.translate(0, outer, -height / 2)
+  geometry.rotateX(-Math.PI / 2)
+  return geometry
+}
+
+/**
+ * The weapon, under `weaponHand`. Every kind is modelled along its own local
+ * +Y and the whole assembly is then rotated onto the hand -> tip direction: a
+ * box merely *long enough* to contain the tip still runs along the wrong axis,
+ * and reads as a plank hanging off the fist rather than as a spear held out.
+ */
+function buildWeapon(
+  owned: Owned,
+  equipment: EquipmentProportions,
+  weaponHand: THREE.Object3D,
+  tipDirection: THREE.Vector3,
+  bronze: THREE.Material,
+  wood: THREE.Material,
+): void {
+  const shaft = new THREE.Group()
+  shaft.name = 'weaponShaft'
+  shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tipDirection)
+  weaponHand.add(shaft)
+
+  // `y` runs from 0 (the fist) to `weaponLength` (the tip). The full-length
+  // part goes in first, so it is the mesh anything looking up "the weapon"
+  // finds -- and that mesh's own local axis is the weapon's axis.
+  const addPart = (geometry: THREE.BufferGeometry, material: THREE.Material, y: number, x = 0): void => {
+    const mesh = new THREE.Mesh(trackedGeometry(owned, geometry), material)
+    mesh.position.set(x, y, 0)
+    mesh.userData.slot = 'weapon'
+    shaft.add(mesh)
+  }
+
+  const { weaponLength: length, weaponWidth: width, weaponThickness: thickness } = equipment
+  switch (equipment.weaponKind) {
+    case 'gladius':
+      addPart(new THREE.BoxGeometry(width, length * 0.82, thickness), bronze, length * 0.59)
+      addPart(new THREE.BoxGeometry(width * 3.2, thickness, thickness * 1.8), bronze, length * 0.15)
+      break
+    case 'spear':
+      addPart(new THREE.CylinderGeometry(width * 0.5, width * 0.5, length * 0.86, 8), wood, length * 0.43)
+      addPart(new THREE.ConeGeometry(thickness * 1.6, length * 0.16, 8), bronze, length * 0.92)
+      break
+    case 'trident': {
+      const prongLength = length * 0.22
+      addPart(new THREE.CylinderGeometry(width * 0.5, width * 0.5, length - prongLength, 8), wood, (length - prongLength) / 2)
+      for (const x of [-width * 1.8, 0, width * 1.8]) {
+        addPart(new THREE.ConeGeometry(thickness * 0.7, prongLength, 6), bronze, length - prongLength / 2, x)
+      }
+      break
+    }
+  }
+}
+
+/** The shield, under `shieldCenter`. `'none'` builds no shield mesh at all. */
+function buildShield(owned: Owned, equipment: EquipmentProportions, shieldCenter: THREE.Object3D, bronze: THREE.Material): void {
+  if (equipment.shieldKind === 'none') return
+  const geometry =
+    equipment.shieldKind === 'scutum'
+      ? createCurvedSlabGeometry(equipment.shieldWidth, equipment.shieldHeight, equipment.shieldThickness, equipment.shieldCurvature)
+      : createDiscGeometry(equipment.shieldWidth, equipment.shieldHeight, equipment.shieldThickness)
+  const mesh = new THREE.Mesh(trackedGeometry(owned, geometry), bronze)
+  mesh.userData.slot = 'shield'
+  shieldCenter.add(mesh)
+}
+
+/**
+ * A held off-hand prop that is not a shield -- the Retiarius' net, gathered
+ * into a flattened bundle hanging from the fist. Carried rather than worn, so
+ * it is anchor-addressable like the shield it stands in for.
+ */
+function buildOffhandProp(owned: Owned, equipment: EquipmentProportions, offHand: THREE.Object3D, wood: THREE.Material): void {
+  if (equipment.offhandProp !== 'net') return
+  const geometry = trackedGeometry(owned, new THREE.BoxGeometry(equipment.shieldWidth, equipment.shieldHeight, equipment.shieldThickness * 0.5))
+  const net = new THREE.Mesh(geometry, wood)
+  net.position.set(0, -equipment.shieldHeight / 2, 0)
+  net.userData.slot = 'net'
+  offHand.add(net)
+}
+
+/**
+ * The helmet: a dome and a brim, optionally topped by a crest. Worn, so it
+ * parents to the `head` joint and is deliberately not anchor-addressable (see
+ * `EquipmentAnchorName`).
+ */
+function buildHelmet(
+  owned: Owned,
+  equipment: EquipmentProportions,
+  body: BodyProportions,
+  head: THREE.Object3D,
+  bronze: THREE.Material,
+  wood: THREE.Material,
+): void {
+  if (equipment.helmetKind === 'none') return
+
+  const domeGeometry = trackedGeometry(owned, new THREE.SphereGeometry(body.headRadius * 1.15, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2))
+  const dome = new THREE.Mesh(domeGeometry, bronze)
+  dome.userData.slot = 'helmet'
+  head.add(dome)
+
+  const brimGeometry = trackedGeometry(owned, new THREE.CylinderGeometry(body.headRadius * 1.5, body.headRadius * 1.25, body.headRadius * 0.18, 16))
+  const brim = new THREE.Mesh(brimGeometry, bronze)
+  brim.position.y = -body.headRadius * 0.04
+  brim.userData.slot = 'helmet'
+  head.add(brim)
+
+  if (equipment.helmetKind !== 'brimmed-crested') return
+
+  const crestGeometry = trackedGeometry(owned, new THREE.BoxGeometry(0.08, 0.32, body.headRadius * 1.6))
+  const crest = new THREE.Mesh(crestGeometry, wood)
+  crest.position.set(0, body.headRadius * 1.4, 0)
+  crest.userData.slot = 'crest'
+  head.add(crest)
+}
+
+/**
+ * Shin armour, worn and parented to the leg it covers. Both kinds grow upward
+ * from the ankle, so a low greave guards the shin and a high one reaches the
+ * knee without either needing its own placement rule.
+ */
+function buildGreaves(
+  owned: Owned,
+  equipment: EquipmentProportions,
+  body: BodyProportions,
+  joints: ReadonlyMap<JointName, THREE.Object3D>,
+  bronze: THREE.Material,
+): void {
+  if (equipment.greaves === 'none') return
+
+  const high = equipment.greaves === 'two-high'
+  const sides: readonly ('L' | 'R')[] = high ? ['L', 'R'] : ['L']
+  const height = body.lowerLegLength * (high ? 0.85 : 0.55)
+
+  for (const side of sides) {
+    const lowerLeg = joints.get(`lowerLeg.${side}`)!
+    const geometry = trackedGeometry(owned, new THREE.BoxGeometry(body.limbRadius * 2, height, body.limbRadius * 1.4))
+    const greave = new THREE.Mesh(geometry, bronze)
+    greave.position.set(0, -body.lowerLegLength + height / 2, body.limbRadius * 0.3)
+    greave.userData.slot = 'greave'
+    lowerLeg.add(greave)
+  }
+}
+
+/**
+ * A galerus rising off the off-hand (left) shoulder -- the shoulder a kit
+ * without a shield turns toward its opponent. Worn, so it parents to the
+ * shoulder joint.
+ */
+function buildShoulderGuard(
+  owned: Owned,
+  equipment: EquipmentProportions,
+  body: BodyProportions,
+  joints: ReadonlyMap<JointName, THREE.Object3D>,
+  bronze: THREE.Material,
+): void {
+  if (!equipment.shoulderGuard) return
+
+  const shoulder = joints.get('shoulder.L')!
+  const geometry = trackedGeometry(owned, new THREE.BoxGeometry(body.limbRadius * 1.5, body.chestHeight * 0.62, body.limbRadius * 2.4))
+  const guard = new THREE.Mesh(geometry, bronze)
+  guard.position.set(body.limbRadius * 0.5, body.chestHeight * 0.18, 0)
+  guard.userData.slot = 'shoulderGuard'
+  shoulder.add(guard)
+}
+
 function buildEquipment(
   owned: Owned,
-  archetype: Archetype,
   spec: StyleSpec,
   joints: ReadonlyMap<JointName, THREE.Object3D>,
   anchors: Map<EquipmentAnchorName, THREE.Object3D>,
@@ -503,49 +766,37 @@ function buildEquipment(
   handR.add(weaponHand)
   anchors.set('weaponHand', weaponHand)
 
-  const forwardZ = equipment.weaponLength * equipment.weaponForwardBias
-  const downY = -equipment.weaponLength * (1 - equipment.weaponForwardBias)
-  const tipLocal: readonly [number, number, number] = [0, downY, forwardZ]
+  // The bias picks a *direction* only; `weaponLength` sets how far along it
+  // the tip sits, so a weapon stays exactly as long as it is authored to be
+  // however it is angled -- and the tip anchor is the weapon's real point.
+  const tipDirection = new THREE.Vector3(0, -(1 - equipment.weaponForwardBias), equipment.weaponForwardBias).normalize()
 
-  const weaponGeometry = trackedGeometry(owned, new THREE.BoxGeometry(equipment.weaponWidth, equipment.weaponLength, equipment.weaponThickness))
-  const weaponMesh = new THREE.Mesh(weaponGeometry, bronze)
-  weaponMesh.position.set(tipLocal[0] / 2, tipLocal[1] / 2, tipLocal[2] / 2)
-  weaponMesh.userData.slot = 'weapon'
-  weaponHand.add(weaponMesh)
+  buildWeapon(owned, equipment, weaponHand, tipDirection, bronze, wood)
 
   const weaponTip = new THREE.Group()
   weaponTip.name = 'weaponTip'
-  weaponTip.position.set(...tipLocal)
+  weaponTip.position.copy(tipDirection).multiplyScalar(equipment.weaponLength)
   weaponHand.add(weaponTip)
   anchors.set('weaponTip', weaponTip)
 
-  if (archetype === 'technical') {
-    const tipGeometry = trackedGeometry(owned, new THREE.ConeGeometry(equipment.weaponThickness * 1.6, 0.12, 8))
-    const tipMesh = new THREE.Mesh(tipGeometry, bronze)
-    tipMesh.userData.slot = 'weapon'
-    weaponTip.add(tipMesh)
-  }
-
-  // offHand / shieldCenter -- the off (left) hand carries the shield.
+  // offHand / shieldCenter -- the off (left) hand carries the shield, or
+  // whatever a shieldless kit carries instead of one.
   const offHand = new THREE.Group()
   offHand.name = 'offHand'
   handL.add(offHand)
   anchors.set('offHand', offHand)
 
+  // Both anchors exist for every kit, shield or no shield: the five anchor
+  // names are a closed contract (see `EquipmentAnchorName`), and a kit that
+  // carries nothing in that hand still has an off hand to address.
   const shieldCenter = new THREE.Group()
   shieldCenter.name = 'shieldCenter'
   shieldCenter.position.set(0, 0, equipment.shieldForwardOffset)
   offHand.add(shieldCenter)
   anchors.set('shieldCenter', shieldCenter)
 
-  const shieldGeometry = trackedGeometry(
-    owned,
-    new THREE.CylinderGeometry(equipment.shieldRadius, equipment.shieldRadius, equipment.shieldThickness, 20),
-  )
-  const shieldMesh = new THREE.Mesh(shieldGeometry, bronze)
-  shieldMesh.rotation.x = Math.PI / 2
-  shieldMesh.userData.slot = 'shield'
-  shieldCenter.add(shieldMesh)
+  buildShield(owned, equipment, shieldCenter, bronze)
+  buildOffhandProp(owned, equipment, offHand, wood)
 
   // hitCenter -- contact marker only, no equipment mesh of its own.
   const hitCenter = new THREE.Group()
@@ -575,17 +826,9 @@ function buildEquipment(
   backplate.userData.slot = 'backplate'
   chest.add(backplate)
 
-  if (equipment.hasHelmet) {
-    const domeGeometry = trackedGeometry(owned, new THREE.SphereGeometry(spec.body.headRadius * 1.15, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2))
-    const dome = new THREE.Mesh(domeGeometry, bronze)
-    dome.userData.slot = 'helmet'
-    head.add(dome)
-    const crestGeometry = trackedGeometry(owned, new THREE.BoxGeometry(0.08, 0.32, spec.body.headRadius * 1.6))
-    const crest = new THREE.Mesh(crestGeometry, wood)
-    crest.position.set(0, spec.body.headRadius * 1.4, 0)
-    crest.userData.slot = 'crest'
-    head.add(crest)
-  }
+  buildHelmet(owned, equipment, spec.body, head, bronze, wood)
+  buildGreaves(owned, equipment, spec.body, joints, bronze)
+  buildShoulderGuard(owned, equipment, spec.body, joints, bronze)
 
   if (equipment.hasLightArmor) {
     const strapGeometry = trackedGeometry(owned, new THREE.BoxGeometry(spec.body.torsoWidth * 0.7, spec.body.chestHeight * 0.35, spec.body.torsoDepth * 0.5))
@@ -596,19 +839,31 @@ function buildEquipment(
   }
 }
 
-function computeHorizontalEquipmentRadius(root: THREE.Group, anchors: ReadonlyMap<EquipmentAnchorName, THREE.Object3D>, equipment: EquipmentProportions): number {
+/**
+ * The rig's real ground-plane reach in the rest pose: the farthest any built
+ * mesh's own world-space `Box3` corner gets from the rig's vertical axis.
+ *
+ * Measured off the actual geometry rather than off an anchor plus a shield
+ * constant, because a kit can have no such constant -- the Retiarius carries
+ * no shield at all -- and because the camera that frames a pair (`ArenaView`
+ * -> `ArenaCamera`) has to see the reach that is genuinely on screen. Every
+ * slotted mesh counts, body as well as equipment: a shieldless fighter's own
+ * shoulders and feet can out-reach what little he carries, and the framing
+ * still has to contain them.
+ */
+function computeHorizontalEquipmentRadius(root: THREE.Group): number {
   root.updateMatrixWorld(true)
 
-  const weaponTipWorld = new THREE.Vector3()
-  anchors.get('weaponTip')!.getWorldPosition(weaponTipWorld)
-  const weaponReach = Math.sqrt(weaponTipWorld.x * weaponTipWorld.x + weaponTipWorld.z * weaponTipWorld.z)
-
-  const shieldWorld = new THREE.Vector3()
-  anchors.get('shieldCenter')!.getWorldPosition(shieldWorld)
-  const shieldHandReach = Math.sqrt(shieldWorld.x * shieldWorld.x + shieldWorld.z * shieldWorld.z)
-  const shieldReach = shieldHandReach + equipment.shieldRadius
-
-  return Math.max(weaponReach, shieldReach)
+  const box = new THREE.Box3()
+  let radius = 0
+  root.traverse((object) => {
+    if (!object.userData.slot) return
+    box.setFromObject(object)
+    for (const [x, z] of [[box.min.x, box.min.z], [box.max.x, box.max.z]]) {
+      radius = Math.max(radius, Math.hypot(x, z))
+    }
+  })
+  return radius
 }
 
 export function createProceduralFighter(options: ProceduralFighterOptions): ProceduralFighter {
@@ -669,9 +924,9 @@ export function createProceduralFighter(options: ProceduralFighterOptions): Proc
   buildLeg(owned, joints, 'R', pelvis, -body.hipWidth, body, cloth)
 
   const anchors = new Map<EquipmentAnchorName, THREE.Object3D>()
-  buildEquipment(owned, options.archetype, spec, joints, anchors)
+  buildEquipment(owned, spec, joints, anchors)
 
-  const horizontalEquipmentRadius = computeHorizontalEquipmentRadius(root, anchors, spec.equipment)
+  const horizontalEquipmentRadius = computeHorizontalEquipmentRadius(root)
 
   let disposed = false
 

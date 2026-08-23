@@ -7,9 +7,17 @@ import {
   measureSilhouetteExtent,
   SEMANTIC_JOINT_NAMES,
   type JointName,
+  type ProceduralFighter,
 } from './ProceduralFighter'
 
 const ARCHETYPES: readonly Archetype[] = ['heavy', 'fast', 'technical']
+
+/**
+ * The kits whose historical type carries no shield at all -- `fast` is the
+ * Retiarius, who fights with a net in the off hand instead (see
+ * `./gladiatorTypes.ts` for the archetype -> type-name mapping).
+ */
+const SHIELDLESS_ARCHETYPES: ReadonlySet<Archetype> = new Set<Archetype>(['fast'])
 
 // Independently transcribed from design.md's "Procedural humanoid rig" tree
 // (and the brief's exact hierarchy resolution) rather than imported from the
@@ -165,6 +173,7 @@ describe('createProceduralFighter', () => {
       const fighter = createProceduralFighter({ archetype })
 
       const weaponHand = fighter.anchors.get('weaponHand')!
+      const offHand = fighter.anchors.get('offHand')!
       const shieldCenter = fighter.anchors.get('shieldCenter')!
       const hitCenter = fighter.anchors.get('hitCenter')!
       const head = fighter.joints.get('head')!
@@ -187,10 +196,30 @@ describe('createProceduralFighter', () => {
         expect(isDescendantOf(mesh, weaponHand), `${archetype} weapon mesh should be under weaponHand`).toBe(true)
       }
 
+      // Per kind, not per fighter: the two shield-bearing kits must each build
+      // a shield, and the shieldless one (Retiarius) must build none anywhere
+      // in the rig -- "no shield mesh under the anchor" would still pass if a
+      // stray shield were parented somewhere else, so this counts meshes over
+      // the whole rig and only then checks the parent of the ones that exist.
       const shieldMeshes = meshesBySlot.get('shield') ?? []
-      expect(shieldMeshes.length, `${archetype} should have a shield mesh`).toBeGreaterThan(0)
+      if (SHIELDLESS_ARCHETYPES.has(archetype)) {
+        expect(shieldMeshes.length, `${archetype} fights with no shield at all`).toBe(0)
+      } else {
+        expect(shieldMeshes.length, `${archetype} should have a shield mesh`).toBeGreaterThan(0)
+      }
       for (const mesh of shieldMeshes) {
         expect(isDescendantOf(mesh, shieldCenter), `${archetype} shield mesh should be under shieldCenter`).toBe(true)
+      }
+
+      // An off-hand prop that is not a shield (the Retiarius' net) is still
+      // held equipment, so it is anchor-addressable like the weapon and the
+      // shield -- it hangs off `offHand`, never off a bare body joint.
+      const offhandPropMeshes = meshesBySlot.get('net') ?? []
+      if (SHIELDLESS_ARCHETYPES.has(archetype)) {
+        expect(offhandPropMeshes.length, `${archetype} should still fill its off hand`).toBeGreaterThan(0)
+      }
+      for (const mesh of offhandPropMeshes) {
+        expect(isDescendantOf(mesh, offHand), `${archetype} off-hand prop should be under offHand`).toBe(true)
       }
 
       // hitCenter is a contact marker only -- it must never carry equipment
@@ -415,6 +444,57 @@ describe('createProceduralFighter', () => {
     expect(backplateHsl.l).toBeLessThan(houseHsl.l)
 
     fighter.dispose()
+  })
+})
+
+const propSlots = (f: ProceduralFighter): string[] => {
+  const slots: string[] = []
+  f.root.traverse((o) => { if (o.userData.slot) slots.push(String(o.userData.slot)) })
+  return slots
+}
+const findBySlot = (f: ProceduralFighter, slot: string): THREE.Object3D | undefined => {
+  let found: THREE.Object3D | undefined
+  f.root.traverse((o) => { if (!found && o.userData.slot === slot) found = o })
+  return found
+}
+
+describe('equipment kinds', () => {
+  it('builds no shield mesh for a shieldless kit', () => {
+    const f = createProceduralFighter({ archetype: 'fast' })
+    expect(propSlots(f)).not.toContain('shield')
+    f.dispose()
+  })
+
+  it('builds a scutum taller than it is wide', () => {
+    const f = createProceduralFighter({ archetype: 'heavy' })
+    const size = new THREE.Box3().setFromObject(findBySlot(f, 'shield')!).getSize(new THREE.Vector3())
+    expect(size.y / size.x).toBeGreaterThan(1.3)
+    f.dispose()
+  })
+
+  it('points the weapon mesh along the hand-to-tip segment', () => {
+    // Direction, not containment: a large axis-aligned Box3 contains the tip
+    // even when the mesh runs along the wrong axis.
+    const f = createProceduralFighter({ archetype: 'technical' })
+    const hand = new THREE.Vector3(); f.anchors.get('weaponHand')!.getWorldPosition(hand)
+    const tip = new THREE.Vector3(); f.anchors.get('weaponTip')!.getWorldPosition(tip)
+    const mesh = findBySlot(f, 'weapon') as THREE.Mesh
+    const meshAxis = new THREE.Vector3(0, 1, 0).applyQuaternion(mesh.getWorldQuaternion(new THREE.Quaternion()))
+    expect(meshAxis.dot(tip.clone().sub(hand).normalize())).toBeGreaterThan(0.95)
+    f.dispose()
+  })
+
+  it('derives the equipment radius from real prop bounds, not a shield constant', () => {
+    const f = createProceduralFighter({ archetype: 'fast' })
+    let expected = 0
+    f.root.updateMatrixWorld(true)
+    f.root.traverse((o) => {
+      if (!o.userData.slot) return
+      const box = new THREE.Box3().setFromObject(o)
+      for (const [x, z] of [[box.min.x, box.min.z], [box.max.x, box.max.z]]) expected = Math.max(expected, Math.hypot(x, z))
+    })
+    expect(f.horizontalEquipmentRadius).toBeCloseTo(expected, 2)
+    f.dispose()
   })
 })
 
