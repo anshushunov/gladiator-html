@@ -928,17 +928,28 @@ function buildShoulderGuard(
 ): void {
   if (!equipment.shoulderGuard) return
 
-  // Broader than it is tall, and set well outboard. The first version was a
-  // tall box rising `chestHeight * 0.18` above the shoulder: since the arena
-  // camera looks *down*, the far shoulder projects upward on screen, so on
-  // roughly half the facings it silhouetted over the crown and read as a
-  // squared-off hat -- on the one type whose diagnostic is that he wears no
-  // helmet (Task 4 review). A plate that stops short of the head and sits
-  // clearly to the side of it reads as a pauldron from both facings.
+  // Sized against the *camera*, not against the body, because this piece has
+  // no other constraint that binds. `lookAt(x, 0, z)` at
+  // `CAMERA_ELEVATION_RATIO` is a fixed ~34 degree depression, so a point's
+  // height on screen is `y·cos(d) + depth·sin(d)`: on the facing where the
+  // guarded shoulder is the far one, **every centimetre outboard buys screen
+  // height at 0.56 per unit**. Two versions missed this. The first was tall
+  // (top 0.127 above the shoulder) and projected 0.138 over the bare crown;
+  // the second dropped the top to 0.042 but widened the plate outboard from
+  // 0.334 to 0.469, and projected 0.142 over -- slightly worse. Both read as a
+  // squared-off hat on the one type whose diagnostic is that he wears none.
+  //
+  // So: narrow across the shoulders and tucked inboard of the shoulder joint,
+  // where a galerus belongs anyway -- it rises toward the neck to shield the
+  // head. Depth is the free axis: front-to-back extent turns into screen
+  // *width* on the facing that matters, so the plate is nearly twice as long
+  // fore-and-aft as it is across, which is also the right shape for it.
+  // `ProceduralFighter.test.ts` does this projection over a full yaw sweep and
+  // fails if the guard ever tops the head's own silhouette.
   const shoulder = joints.get('shoulder.L')!
-  const geometry = trackedGeometry(owned, new THREE.BoxGeometry(body.limbRadius * 3.4, body.chestHeight * 0.40, body.limbRadius * 2.6))
+  const geometry = trackedGeometry(owned, new THREE.BoxGeometry(body.limbRadius * 1.45, body.chestHeight * 0.38, body.limbRadius * 2.4))
   const guard = new THREE.Mesh(geometry, bronze)
-  guard.position.set(body.limbRadius * 1.35, -body.chestHeight * 0.04, 0)
+  guard.position.set(-body.limbRadius * 0.95, -body.chestHeight * 0.22, 0)
   guard.userData.slot = 'shoulderGuard'
   shoulder.add(guard)
 }

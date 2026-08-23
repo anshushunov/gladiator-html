@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { describe, expect, it, vi } from 'vitest'
 import type { Archetype } from '../simulation/fighters'
+import { CAMERA_ELEVATION_RATIO } from './ArenaView'
 import {
   createProceduralFighter,
   EQUIPMENT_ANCHOR_NAMES,
@@ -598,11 +599,12 @@ describe('type kits', () => {
 
         fighter.root.updateMatrixWorld(true)
         const box = new THREE.Box3().setFromObject(guards[0])
-        const shoulder = new THREE.Vector3()
-        guards[0].parent!.getWorldPosition(shoulder)
-        // Rises above the shoulder it guards (that is what it is for) and sits
-        // outboard of the body's centre line rather than inside the neck.
-        expect(box.max.y, 'the galerus rises above the shoulder').toBeGreaterThan(shoulder.y)
+        // On the off-hand side of the centre line, not buried in the neck.
+        // Deliberately no "rises above the shoulder" assertion here: that is
+        // the property that made this piece project over the bare crown on the
+        // far-shoulder facing, twice. Where it may sit is decided by the two
+        // dedicated tests below, one of which does the camera's own
+        // projection.
         expect(box.min.x, 'the galerus sits outboard on the left side').toBeGreaterThan(0)
       } else {
         expect(guards, `${archetype} wears no galerus`).toHaveLength(0)
@@ -689,11 +691,35 @@ describe('type kits', () => {
       const shieldUp = new THREE.Vector3(0, 1, 0).applyQuaternion(worldRotation)
       expect(shieldUp.y, `the scutum should stand upright at yaw ${facingYaw}`).toBeGreaterThan(0.999)
 
-      // Body-facing: its bow points where the fighter points, not where the
-      // wrist points.
-      const shieldForward = new THREE.Vector3(0, 0, 1).applyQuaternion(worldRotation)
-      const bodyForward = new THREE.Vector3(0, 0, 1).applyQuaternion(fighter.root.getWorldQuaternion(new THREE.Quaternion()))
-      expect(shieldForward.dot(bodyForward), `the scutum should face forward at yaw ${facingYaw}`).toBeGreaterThan(0.999)
+      // Body-facing, measured on the geometry rather than on the frame. A
+      // `shieldForward · bodyForward` check would read exactly 1.0 by
+      // construction -- `shieldCenter` *is* given root's orientation -- so it
+      // would test the helper, not the shield. This asks the real question:
+      // does the slab bow around the bearer, apex forward? It walks the
+      // vertices into the fighter's own frame and compares the depth of the
+      // centre column against the outer columns.
+      const toBodyFrame = new THREE.Matrix4().copy(fighter.root.matrixWorld).invert()
+      const position = shield.geometry.getAttribute('position')
+      const inBodyFrame: THREE.Vector3[] = []
+      for (let i = 0; i < position.count; i += 1) {
+        inBodyFrame.push(new THREE.Vector3().fromBufferAttribute(position, i).applyMatrix4(shield.matrixWorld).applyMatrix4(toBodyFrame))
+      }
+      // Columns are taken about the shield's *own* centre, not the fighter's:
+      // it hangs off the left arm, so `|x|` about the body axis would compare
+      // its inboard sliver against its outboard sliver and report the arc
+      // upside down.
+      const xs = inBodyFrame.map((vertex) => vertex.x)
+      const shieldCentreX = (Math.min(...xs) + Math.max(...xs)) / 2
+      const shieldHalfWidth = (Math.max(...xs) - Math.min(...xs)) / 2
+      // Apex against the two vertical edges. Taken as "the deepest point
+      // anywhere" versus "the deepest point at the extreme columns", which is
+      // 0 for a flat slab whatever its vertex count, rather than sampling a
+      // centre column that a low-poly box may simply not have.
+      const apex = Math.max(...inBodyFrame.map((vertex) => vertex.z))
+      const edges = Math.max(
+        ...inBodyFrame.filter((vertex) => Math.abs(vertex.x - shieldCentreX) > shieldHalfWidth * 0.95).map((vertex) => vertex.z),
+      )
+      expect(apex - edges, `the scutum should bow forward around its bearer at yaw ${facingYaw}`).toBeGreaterThan(0.05)
 
       // And it is still taller than wide *as posed* -- the aspect test in
       // `equipment kinds` measures the rest pose and cannot see this.
@@ -728,36 +754,104 @@ describe('type kits', () => {
     }
 
     // Ragged: the cords end at visibly different heights, which is the cue.
-    const hems = boxes.map((box) => box.min.y)
-    expect(Math.max(...hems) - Math.min(...hems), 'the hem is uneven, not a straight bottom edge').toBeGreaterThan(0.15)
+    // Counted as *distinct* hem levels rather than as the spread between the
+    // highest and the lowest, because that spread is dominated by the gathered
+    // head sitting up in the fist -- four identical cords would still have
+    // cleared it, and four identical cords are a board with slots in it.
+    const hems = boxes.map((box) => box.min.y).sort((a, b) => a - b)
+    const distinctHems = hems.filter((hem, index) => index === 0 || hem - hems[index - 1] > 0.02)
+    expect(distinctHems.length, `the cords end at their own heights, not level: ${hems.map((h) => h.toFixed(2))}`)
+      .toBeGreaterThanOrEqual(parts.length - 1)
 
     fighter.dispose()
   })
 
-  it('keeps the galerus a pauldron on the shoulder, well clear of the bare crown', () => {
+  /**
+   * The arena camera is `lookAt(x, 0, z)` from a height of
+   * `CAMERA_ELEVATION_RATIO x distance` (`ArenaView.applyCameraTransform`), so
+   * its depression is fixed however far it zooms. Height *on screen* is
+   * therefore `y·cos(depression) + depth·sin(depression)`, and depth is what
+   * makes this defect facing-dependent: whatever is mounted out to a
+   * fighter's side gains screen height on the facing where that side is the
+   * far one. Derived from the shipped constant, not a second copy of it, so
+   * re-pitching the camera re-checks the rig.
+   */
+  const CAMERA_DEPRESSION = Math.atan(CAMERA_ELEVATION_RATIO)
+  /** Screen height of a world point, for a camera on +Z looking down -Z (`ArenaCamera` yaw 0, the authored home shot). */
+  const screenHeight = (y: number, z: number): number =>
+    y * Math.cos(CAMERA_DEPRESSION) - z * Math.sin(CAMERA_DEPRESSION)
+
+  it('never lets the galerus top the bare head on screen, at any facing', () => {
+    // Round 1 fixed this by lowering the plate and *widening it outboard*,
+    // which the previous 3D-only assertion could not see: outboard extent is
+    // exactly what the depression converts into screen height, so the guard
+    // ended up projecting 0.142 above the crown -- marginally worse than the
+    // 0.138 it started at. This assertion does the projection, and it sweeps
+    // the facings, because at yaw 0 the guard is 0.066 *below* the crown and
+    // only the side-on facing exhibits the defect at all.
+    const fighter = createProceduralFighter({ archetype: 'fast' })
+    const guard = meshesWithSlot(fighter, 'shoulderGuard')[0]
+    const headSphere = meshesWithSlot(fighter, 'skin').find((mesh) => mesh.parent === fighter.joints.get('head'))!
+
+    let worstYaw = 0
+    let worstClearance = Infinity
+    for (let step = 0; step < 48; step += 1) {
+      const yaw = (step / 48) * Math.PI * 2
+      fighter.root.rotation.y = yaw
+      fighter.root.updateMatrixWorld(true)
+
+      const guardBox = new THREE.Box3().setFromObject(guard)
+      let guardTop = -Infinity
+      for (const y of [guardBox.min.y, guardBox.max.y]) {
+        for (const z of [guardBox.min.z, guardBox.max.z]) guardTop = Math.max(guardTop, screenHeight(y, z))
+      }
+
+      // The head is a sphere, so its own highest point on screen is its centre
+      // projected plus its radius, whichever way it is turned -- not the top
+      // of its axis-aligned box.
+      const headBox = new THREE.Box3().setFromObject(headSphere)
+      const headCentre = headBox.getCenter(new THREE.Vector3())
+      const headTop = screenHeight(headCentre.y, headCentre.z) + (headBox.max.y - headBox.min.y) / 2
+
+      const clearance = headTop - guardTop
+      if (clearance < worstClearance) {
+        worstClearance = clearance
+        worstYaw = yaw
+      }
+    }
+
+    expect(worstClearance, `the galerus tops the head on screen at yaw ${worstYaw.toFixed(2)}`).toBeGreaterThan(0)
+
+    fighter.dispose()
+  })
+
+  it('mounts the galerus on the shoulder rather than floating it beside the head', () => {
+    // Replaces a `size.x / size.y > 1.5` shape ratio, which demanded the plate
+    // be wide across the shoulder -- i.e. demanded the very outboard extent
+    // that causes the projection defect above. What is actually wanted is that
+    // the piece is *on the shoulder*, so that is what this measures.
     const fighter = createProceduralFighter({ archetype: 'fast' })
     fighter.root.updateMatrixWorld(true)
 
     const guard = meshesWithSlot(fighter, 'shoulderGuard')[0]
-    const box = new THREE.Box3().setFromObject(guard)
-    const crown = new THREE.Vector3()
-    fighter.joints.get('headTop')!.getWorldPosition(crown)
+    const guardBox = new THREE.Box3().setFromObject(guard)
 
-    // The arena camera looks down, so the *far* shoulder projects upward on
-    // screen: a guard that merely clears the crown in 3D still silhouettes
-    // over it on half the facings, and then reads as a hat on the one type
-    // defined by wearing none. 0.08 is the headroom that survives that
-    // projection at the shipped camera; it is a proxy for a screen-space
-    // property, and the screen itself is checked by eye in Step 4.
-    expect(box.max.y, 'the galerus must stay well below the crown').toBeLessThan(crown.y - 0.08)
+    // It overlaps the shoulder's own flesh: the upper-arm capsule it armours.
+    const upperArm = fighter.joints.get('upperArm.L')!
+    const armBox = new THREE.Box3().setFromObject(upperArm)
+    expect(guardBox.intersectsBox(armBox), 'the galerus should sit on the shoulder it guards').toBe(true)
 
-    // Reads as a plate over the shoulder rather than a tower beside the head.
-    const size = box.getSize(new THREE.Vector3())
-    expect(size.x / size.y, 'the galerus is wider across the shoulder than it is tall').toBeGreaterThan(1.5)
-    // And it sits outboard of the head, so it never overlaps the skull.
+    // And near the joint, not part-way down the arm.
+    const shoulder = new THREE.Vector3()
+    fighter.joints.get('shoulder.L')!.getWorldPosition(shoulder)
+    const guardCentre = guardBox.getCenter(new THREE.Vector3())
+    expect(guardCentre.distanceTo(shoulder), 'the galerus should hug the shoulder joint').toBeLessThan(0.15)
+
+    // Still on the off-hand side, clear of the head, so it never reads as
+    // something worn on it.
     const head = new THREE.Vector3()
     fighter.joints.get('head')!.getWorldPosition(head)
-    expect(box.min.x, 'the galerus sits clear of the head, out on the shoulder').toBeGreaterThan(head.x + 0.05)
+    expect(guardBox.min.x, 'the galerus stays out on the shoulder, clear of the skull').toBeGreaterThan(head.x + 0.05)
 
     fighter.dispose()
   })

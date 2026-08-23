@@ -87,7 +87,18 @@ const CAMERA_MAX_DISTANCE = 18
  * "no vertical zoom response" (design.md) actually asks for -- height is
  * never an independent free variable.
  */
-const CAMERA_ELEVATION_RATIO = 8.8 / 13
+/**
+ * Exported because it is the whole of the arena camera's pitch, and rig
+ * geometry has to be checked against it: `lookAt(x, 0, z)` with this height
+ * ratio is a fixed `atan(8.8/13)` depression, so a point's height *on screen*
+ * is `y·cos(depression) + depth·sin(depression)`. Anything mounted out to the
+ * side of a fighter therefore gains screen height on the facing where that
+ * side is the far one -- which is how the retiarius' shoulder guard came to
+ * silhouette above his bare head twice over (Task 4 review rounds 1 and 2).
+ * `ProceduralFighter.test.ts` derives the angle from this constant rather than
+ * keeping a second copy of it, so moving the camera's pitch re-checks the rig.
+ */
+export const CAMERA_ELEVATION_RATIO = 8.8 / 13
 const CAMERA_FOV_DEGREES = 38
 const CAMERA_NEAR = 0.1
 const CAMERA_FAR = 100

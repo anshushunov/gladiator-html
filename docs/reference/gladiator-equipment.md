@@ -100,7 +100,7 @@ here.
 | **Trident** (*fuscina*) | Long shaft with three bronze prongs on a spread head | `weaponKind: 'trident'`, `weaponLength`, `weaponWidth`, `weaponThickness`, `weaponForwardBias` | **attested** | `Juvenal-8`, `Zliten`, `Borghese`, `Junkelmann-2000` |
 | **No shield** | Nothing under `shieldCenter` | `shieldKind: 'none'` | **attested** — the absence is the attestation, not an inference | `Juvenal-8`, `Suetonius-Cal-30`, `Junkelmann-2000` |
 | **No helmet** | Bare head; only the shared visor slot of §6 | `helmetKind: 'none'` | **attested** — the one type that fought bare-faced | `Juvenal-8`, `Suetonius-Cal-30`, `Zliten` |
-| **Galerus** on the off (left) shoulder | Broad bronze plate over the left shoulder, set outboard and stopping short of the head (see §6) | `shoulderGuard: true` | **attested** — a galerus is in the Pompeii corpus and is this type's diagnostic piece | `Pompeii-arms`, `Junkelmann-2000`, `Zliten` |
+| **Galerus** on the off (left) shoulder | Bronze plate over the left shoulder, narrow across the shoulders and long fore-and-aft, tucked inboard of the shoulder joint and stopping below the head (see §6) | `shoulderGuard: true` | **attested** — a galerus is in the Pompeii corpus and is this type's diagnostic piece | `Pompeii-arms`, `Junkelmann-2000`, `Zliten` |
 | No greaves | — (nothing drawn) | `greaves: 'none'` | **attested** — the least-armoured type; the legs are unprotected | `Junkelmann-2000`, `Zliten` |
 | Bare torso | No armour mesh | `hasLightArmor: false` | **attested** — the retiarius' defining characteristic is minimal armour: loincloth, belt, arm and shoulder only | `Juvenal-8`, `Junkelmann-2000` |
 | Type colour | Pale bone / undyed linen on the loincloth and legs | `clothColor` | **not a historical claim** — see §6 | — |
@@ -167,13 +167,19 @@ Listed here so they are not mistaken for historical claims:
   weapon's real overall length.
 - **The galerus and the greaves are sized and placed by the builder**, from
   `BodyProportions`, not by an authored dimension; `STYLE_SPECS` can only turn
-  them on or off. The galerus is drawn **broader than it is tall and set well
-  outboard**, stopping short of the head, which is shorter and flatter than the
-  ~30 cm Pompeii piece. That is a legibility constraint, not a claim about the
-  object: the arena camera looks *down*, so the far shoulder projects upward on
-  screen, and a galerus that merely cleared the crown in three dimensions
-  silhouetted over it on half the facings — reading as a squared-off hat on the
-  one type defined by wearing none.
+  them on or off.
+- **The galerus is sized against the camera, not against the body.** The arena
+  camera is a fixed ~34° depression (`CAMERA_ELEVATION_RATIO`), so a point's
+  height *on screen* is `y·cos(d) + depth·sin(d)`: on the facing where the
+  guarded shoulder is the far one, **every centimetre outboard buys screen
+  height**. On the retiarius' own bout that is *every* frame, because he is the
+  home fighter and always turned the same way. Two versions of this piece
+  silhouetted above his bare crown — a tall one by 0.138, then a lower but
+  wider one by 0.142 — and read as a squared-off hat on the one type defined by
+  wearing no helmet. It is therefore drawn narrow across the shoulders and
+  tucked inboard of the shoulder joint, long fore-and-aft (the axis that costs
+  nothing on that facing), and lower and flatter than the ~30 cm Pompeii piece.
+  A drawing constraint, not a claim about the object.
 - **The murmillo's crest is drawn low.** It is a semicircular comb bedded into
   the dome rather than a tall fin. Attested crests are taller; drawn tall here,
   it became the most rectangle-shaped object on the fighter and competed with
