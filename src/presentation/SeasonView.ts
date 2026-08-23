@@ -9,13 +9,12 @@
 import type { BoutOutcome } from '../simulation/series'
 import type { ChallengeDefinition, ConditionDelta, RosterEntry, SeasonState } from '../simulation/season'
 import { isFightable, startingHpFor, type FighterCondition } from '../simulation/condition'
-import type { Archetype } from '../simulation/fighters'
 import { CONDITION_LABELS, fightTelegraph, restTelegraph } from './conditionTelegraph'
 import { ORDER_LABELS, TEMPERAMENT_LABELS } from './dispositionLabels'
 import { formatPower } from './formatPower'
+import { TYPE_DESCRIPTIONS, TYPE_NAMES } from './gladiatorTypes'
 
 const RC = { arrow: '→', middleDot: '·', enDash: '–', emDash: '—' }
-const ARCHETYPE_LABELS: Record<Archetype, string> = { heavy: 'Heavy', fast: 'Fast', technical: 'Technical' }
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -120,7 +119,7 @@ export class SeasonView {
     })
     card.append(el('h3', { class: 'season-challenge-card__heading' }, `Challenge ${challenge.index + 1}`))
     if (challenge.featuredThreat) {
-      card.append(el('p', { class: 'season-challenge-card__featured' }, `Featured threat: ${ARCHETYPE_LABELS[challenge.featuredThreat]}`))
+      card.append(el('p', { class: 'season-challenge-card__featured', title: TYPE_DESCRIPTIONS[challenge.featuredThreat] }, `Featured threat: ${TYPE_NAMES[challenge.featuredThreat]}`))
     }
     const list = el('ul', { class: 'season-challenge-card__opponents' })
     for (const [index, opponent] of challenge.opponents.entries()) {
@@ -131,7 +130,7 @@ export class SeasonView {
         // `formatPower`: see its own doc comment -- `scaleOpponent` leaves
         // `power` a raw float, formatted here for display only, shared with
         // `SeriesView.buildMatchupSlot` so the two screens never disagree.
-        el('span', { class: 'season-challenge-card__stats' }, `${ARCHETYPE_LABELS[opponent.archetype]} ${RC.middleDot} HP ${opponent.maxHp} ${RC.middleDot} Power ${formatPower(opponent.power)}`),
+        el('span', { class: 'season-challenge-card__stats', title: TYPE_DESCRIPTIONS[opponent.archetype] }, `${TYPE_NAMES[opponent.archetype]} ${RC.middleDot} HP ${opponent.maxHp} ${RC.middleDot} Power ${formatPower(opponent.power)}`),
         el('span', {
           class: 'temperament-badge',
           'data-testid': 'challenge-temperament',
@@ -147,7 +146,7 @@ export class SeasonView {
   private buildRosterCard(entry: RosterEntry, deltas: readonly ConditionDelta[]): HTMLElement {
     const card = el('article', { class: 'season-roster-card', 'data-testid': 'season-roster-card' })
     const title = el('div', { class: 'season-roster-card__title' })
-    title.append(el('strong', {}, entry.fighter.name), el('span', { class: 'season-roster-card__archetype' }, ARCHETYPE_LABELS[entry.fighter.archetype]))
+    title.append(el('strong', {}, entry.fighter.name), el('span', { class: 'season-roster-card__archetype', title: TYPE_DESCRIPTIONS[entry.fighter.archetype] }, TYPE_NAMES[entry.fighter.archetype]))
     card.append(title)
     card.append(el('span', { class: 'season-roster-card__school' }, entry.fighter.school))
     card.append(conditionBadge(entry.condition))

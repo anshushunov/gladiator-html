@@ -1,6 +1,6 @@
 import { formatBattleFeed } from './battleFeed'
 import { getAssignmentComparison, requiredAssignmentCount, type BoutIndex, type BoutOutcome, type PlanningSlot, type SeriesPhase, type SeriesState } from '../simulation/series'
-import type { Archetype, FighterDefinition, FighterSide } from '../simulation/fighters'
+import type { FighterDefinition, FighterSide } from '../simulation/fighters'
 import { fighterBySide, type BattleState } from '../simulation/battle'
 import { isFightable, startingHpFor } from '../simulation/condition'
 import type { RosterEntry } from '../simulation/season'
@@ -8,6 +8,7 @@ import { DISPOSITION_IDS, isDispositionId, type DispositionId } from '../simulat
 import { CONDITION_LABELS, fightTelegraph, restTelegraph } from './conditionTelegraph'
 import { ORDER_LABELS, ORDER_TELEGRAPHS, TEMPERAMENT_DESCRIPTIONS, TEMPERAMENT_LABELS } from './dispositionLabels'
 import { formatPower } from './formatPower'
+import { COUNTER_RULE_TEXT, TYPE_DESCRIPTIONS, TYPE_NAMES } from './gladiatorTypes'
 
 export type SeriesIntent =
   | { type: 'assign'; fighterId: string; boutIndex: BoutIndex }
@@ -24,7 +25,6 @@ export interface RuntimeViewState { paused: boolean; speed: 1 | 2 | 4; soundEnab
 
 const BOUT_NUMERALS = ['I', 'II', 'III'] as const
 const RC = { enDash: '\u2013', middleDot: '\u00b7', times: '\u00d7', arrow: '\u2192', emDash: '\u2014' }
-const ARCHETYPE_LABELS: Record<Archetype, string> = { heavy: 'Heavy', fast: 'Fast', technical: 'Technical' }
 
 type PendingFocus = { mode: 'after-assign' } | { mode: 'after-unassign'; fighterId: string }
 
@@ -57,6 +57,15 @@ function slotFighterId(slot: PlanningSlot): string | null {
 
 function fighterName(roster: readonly FighterDefinition[], id: string): string {
   return roster.find(({ id: fighterId }) => fighterId === id)?.name ?? id
+}
+
+/** Same lookup shape as `fighterName`, for the gladiator type -- used
+ * anywhere a fighter is named without a `FighterDefinition` already in hand
+ * (the active battle card and the series summary rows), so those surfaces
+ * name fighters by type the same way the planning/matchup cards already do. */
+function fighterType(roster: readonly FighterDefinition[], id: string): string {
+  const archetype = roster.find(({ id: fighterId }) => fighterId === id)?.archetype
+  return archetype ? TYPE_NAMES[archetype] : ''
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -329,7 +338,13 @@ export class SeriesView {
     const section = el('section', { class: 'planning', 'aria-labelledby': 'planning-heading' })
     const heading = el('h2', { id: 'planning-heading', tabindex: '-1' }, 'Plan the series')
     const instruction = el('p', { id: 'assignment-instruction', class: 'planning__instruction' }, this.instructionText(state))
-    const counterRule = el('p', { class: 'planning__counter-rule' }, `Heavy ${RC.arrow} Fast ${RC.arrow} Technical ${RC.arrow} Heavy`)
+    const counterRule = el('p', { class: 'planning__counter-rule' }, COUNTER_RULE_TEXT)
+    // The triangle is the House of Mars's own training scheme, not a claim
+    // about the historical gladiator types it borrows names from. Reuses
+    // `.fighter-option__telegraph` (a muted secondary-note style already
+    // defined for the roster cards below) rather than adding a CSS class:
+    // this slice's allowlist does not cover `src/style.css`.
+    const counterNote = el('p', { class: 'fighter-option__telegraph' }, "The school's own scheme, not history.")
     // Every gladiator in the season roster gets a card, in roster order:
     // fightable ones as buttons, broken ones as disabled cards carrying the
     // rest forecast. The design doc's UI section calls for exactly that
@@ -349,7 +364,7 @@ export class SeriesView {
     }
     const confirm = el('button', { class: 'button button--primary planning__confirm', type: 'button', 'data-action': 'confirm', 'data-testid': 'confirm-lineup' }, 'Confirm lineup')
     confirm.disabled = !isLineupReady(state)
-    section.append(heading, instruction, counterRule, roster, matchups, confirm)
+    section.append(heading, instruction, counterRule, counterNote, roster, matchups, confirm)
     // The season only ever hands the planning screen its fightable
     // gladiators (`SeriesState.homeRoster`) -- a broken one is simply absent
     // from the cards above, with no on-screen trace of them at all. This row
@@ -379,7 +394,7 @@ export class SeriesView {
     const title = el('span', { class: 'fighter-option__title' })
     title.append(
       el('span', { class: 'fighter-option__name' }, entry.fighter.name),
-      el('span', { class: 'fighter-option__archetype' }, ARCHETYPE_LABELS[entry.fighter.archetype]),
+      el('span', { class: 'fighter-option__archetype', title: TYPE_DESCRIPTIONS[entry.fighter.archetype] }, TYPE_NAMES[entry.fighter.archetype]),
     )
     const conditionRow = el('span', { class: 'fighter-option__condition' })
     conditionRow.append(
@@ -428,7 +443,7 @@ export class SeriesView {
     const title = el('span', { class: 'fighter-option__title' })
     title.append(
       el('span', { class: 'fighter-option__name' }, fighter.name),
-      el('span', { class: 'fighter-option__archetype' }, ARCHETYPE_LABELS[fighter.archetype]),
+      el('span', { class: 'fighter-option__archetype', title: TYPE_DESCRIPTIONS[fighter.archetype] }, TYPE_NAMES[fighter.archetype]),
     )
     button.append(
       title,
@@ -476,7 +491,7 @@ export class SeriesView {
     // screen ~20px per slot against a height budget it has to keep (see
     // `.matchup-slot__controls` in `style.css`).
     const styleLine = el('span', { class: 'matchup-slot__style' })
-    styleLine.append(el('em', {}, ARCHETYPE_LABELS[opponent.archetype]), this.buildTemperamentBadge(state, boutIndex))
+    styleLine.append(el('em', { title: TYPE_DESCRIPTIONS[opponent.archetype] }, TYPE_NAMES[opponent.archetype]), this.buildTemperamentBadge(state, boutIndex))
     opponentBlock.append(
       el('strong', {}, opponent.name),
       el('small', {}, opponent.school),
@@ -638,17 +653,20 @@ export class SeriesView {
     // `BoutOutcome` union at the season layer).
     if (result.kind === 'forfeit') {
       const awayName = fighterName(state.opponents, result.opponentId)
+      const awayType = fighterType(state.opponents, result.opponentId)
       return el('li', { class: 'summary__bout', 'data-testid': 'bout-result' },
-        `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} forfeited: no gladiator available to face ${awayName}.`)
+        `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} forfeited: no gladiator available to face ${awayName} (${awayType}).`)
     }
     const homeName = fighterName(state.homeRoster, result.homeFighterId)
     const awayName = fighterName(state.opponents, result.opponentId)
+    const homeType = fighterType(state.homeRoster, result.homeFighterId)
+    const awayType = fighterType(state.opponents, result.opponentId)
     const winnerName = result.winnerSide === 'home' ? homeName : awayName
     const homePercent = Math.round(result.remainingHpRatio.home * 100)
     const awayPercent = Math.round(result.remainingHpRatio.away * 100)
     const endedText = result.endedBy === 'defeat' ? 'by defeat' : 'on the time limit'
     return el('li', { class: 'summary__bout', 'data-testid': 'bout-result' },
-      `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} ${homeName} vs ${awayName}: ${winnerName} won ${endedText}. Home ${result.advantage}. Remaining: ${homeName} ${homePercent}%, ${awayName} ${awayPercent}%. Order: ${ORDER_LABELS[result.homeOrder]}.`)
+      `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} ${homeName} (${homeType}) vs ${awayName} (${awayType}): ${winnerName} won ${endedText}. Home ${result.advantage}. Remaining: ${homeName} ${homePercent}%, ${awayName} ${awayPercent}%. Order: ${ORDER_LABELS[result.homeOrder]}.`)
   }
 
   private buildBattleUi(state: SeriesState): void {
@@ -680,7 +698,15 @@ export class SeriesView {
     const definition = fighter.definition
     const title = el('div', { class: 'fighter-card__title' })
     const label = el('div', {})
-    label.append(el('small', {}, definition.school), el('h2', {}, definition.name))
+    // `fighter-option__archetype`, not a new `.fighter-card__archetype`
+    // class: it is a flat, unscoped selector (`style.css`), so it renders
+    // identically here, and this slice's allowlist does not cover
+    // `src/style.css`.
+    label.append(
+      el('small', {}, definition.school),
+      el('h2', {}, definition.name),
+      el('span', { class: 'fighter-option__archetype', title: TYPE_DESCRIPTIONS[definition.archetype] }, TYPE_NAMES[definition.archetype]),
+    )
     title.append(el('span', { class: 'sigil' }, side === 'home' ? 'I' : 'II'), label, el('strong', { 'data-hp': side }, String(fighter.hp)))
     const health = el('div', { class: 'health' })
     const bar = el('i', { 'data-health': side })
