@@ -609,7 +609,14 @@ export class SeriesView {
           const awayName = fighterName(state.opponents, result.opponentId)
           const winnerName = result.winnerSide === 'home' ? homeName : awayName
           const endedText = result.endedBy === 'defeat' ? 'by defeat' : 'on the time limit'
-          return `Bout ${BOUT_NUMERALS[result.boutIndex]}: ${winnerName} wins ${endedText}.`
+          // Both fighters named by type, exactly as `buildSummaryBout` names
+          // them one screen later -- the bout that just happened is the other
+          // half of this screen's type vocabulary, and it named neither man's
+          // type while the series summary named both. Present tense ("wins")
+          // is kept from the original wording, unlike the summary's "won".
+          const homeType = fighterType(state.homeRoster, result.homeFighterId)
+          const awayType = fighterType(state.opponents, result.opponentId)
+          return `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} ${homeName} (${homeType}) vs ${awayName} (${awayType}): ${winnerName} wins ${endedText}.`
         })()
     const resultLine = el('p', { class: 'interstitial__result', 'aria-live': 'polite', 'data-testid': 'bout-result-summary' }, resultText)
     const scoreLine = el('p', { class: 'interstitial__score' }, `Series ${state.score.home}${RC.enDash}${state.score.away}`)
