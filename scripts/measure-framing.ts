@@ -140,6 +140,7 @@ interface DebugSnapshot {
   rootPositions: Record<string, { x: number; z: number }>
   bodyHeightPx: Record<string, number>
   fullBoundsPx: Record<string, BoundsPx>
+  boundsPxWithoutWeapon: Record<string, BoundsPx>
   centerPx: Record<string, { x: number; y: number }>
   canvasPx: { width: number; height: number }
 }
@@ -171,6 +172,7 @@ interface RawSample {
   ids: [string, string]
   bodyHeightPx: [number, number]
   fullBoundsPx: [BoundsPx, BoundsPx]
+  boundsPxWithoutWeapon: [BoundsPx, BoundsPx]
   centerPx: [{ x: number; y: number }, { x: number; y: number }]
   worldSeparation: number
   screenSeparationPx: number
@@ -285,6 +287,7 @@ async function traceBout(page: Page, dtSeconds: number, maxTicks: number): Promi
           ids,
           bodyHeightPx: [snapshot.bodyHeightPx[home], snapshot.bodyHeightPx[away]],
           fullBoundsPx: [snapshot.fullBoundsPx[home], snapshot.fullBoundsPx[away]],
+          boundsPxWithoutWeapon: [snapshot.boundsPxWithoutWeapon[home], snapshot.boundsPxWithoutWeapon[away]],
           centerPx: [snapshot.centerPx[home], snapshot.centerPx[away]],
           worldSeparation: Math.hypot(dxWorld, dzWorld),
           screenSeparationPx: Math.hypot(dxScreen, dyScreen),
@@ -297,8 +300,16 @@ async function traceBout(page: Page, dtSeconds: number, maxTicks: number): Promi
   return { canvas, ...trace }
 }
 
-/** Each archetype's real `horizontalEquipmentRadius`, read off freshly built rigs rather than copied into this file as a literal. */
-async function readEquipmentRadii(browser: Browser): Promise<Record<Archetype, number>> {
+interface RigConstants {
+  radii: Record<Archetype, number>
+  /** `ArenaView.CAMERA_ELEVATION_RATIO`, from which the camera's depression is `atan(ratio)`. */
+  cameraElevationRatio: number
+  /** `ArenaView.CAMERA_FOV_DEGREES` -- vertical, so it scales with canvas *height* on both axes. */
+  cameraFovDegrees: number
+}
+
+/** The rig/camera constants the analyses depend on, read off freshly built rigs and the live module rather than copied into this file as literals. */
+async function readRigConstants(browser: Browser): Promise<RigConstants> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 820 } })
   const page = await context.newPage()
   try {
@@ -308,16 +319,17 @@ async function readEquipmentRadii(browser: Browser): Promise<Record<Archetype, n
     // into its own SSR helper -- which does not exist in the page. A string is
     // handed to the browser untransformed.
     const measured = await page.evaluate(`(async () => {
-      const module = await import('/src/presentation/ProceduralFighter.ts')
+      const rig = await import('/src/presentation/ProceduralFighter.ts')
+      const view = await import('/src/presentation/ArenaView.ts')
       const radii = {}
       for (const archetype of ['heavy', 'fast', 'technical']) {
-        const fighter = module.createProceduralFighter({ archetype })
+        const fighter = rig.createProceduralFighter({ archetype })
         radii[archetype] = fighter.horizontalEquipmentRadius
         fighter.dispose()
       }
-      return radii
+      return { radii, cameraElevationRatio: view.CAMERA_ELEVATION_RATIO, cameraFovDegrees: view.CAMERA_FOV_DEGREES }
     })()`)
-    return measured as Record<Archetype, number>
+    return measured as RigConstants
   } finally {
     await context.close()
   }
@@ -363,11 +375,25 @@ function fixed(value: number, digits = 2): string {
  *
  * The camera always looks straight at the group's midpoint, so that midpoint
  * projects to the canvas centre exactly, and pulling the camera in along its
- * own view ray magnifies screen offsets from that centre by (to first order)
- * the ratio of the two distances. `< 1` means this frame is already outside
+ * own view ray magnifies screen offsets from that centre by the ratio of the
+ * two distances -- exactly, not merely to first order, because the camera sits
+ * at `height = distance x CAMERA_ELEVATION_RATIO` and looks at `y = 0`, so
+ * scaling the distance scales the whole camera-to-look-point offset vector and
+ * leaves the depression angle alone. `< 1` means this frame is already outside
  * the safe area.
+ *
+ * `horizontal`/`vertical` are the same quantity restricted to one axis. They
+ * are reported separately because the two axes respond differently to canvas
+ * size: growing the canvas height scales the projected image AND the 5%
+ * vertical inset together (the perspective camera's FOV is vertical, so pixels
+ * per world unit is `(height/2)/tan(fov/2)/range` on both axes), so the
+ * vertical bound on distance is invariant to canvas height, while the
+ * horizontal bound scales with it. Analysis 2 turns on that difference.
  */
-function safeAreaHeadroom(bounds: readonly BoundsPx[], canvas: { width: number; height: number }): { headroom: number; edge: string; fighter: number } {
+function safeAreaHeadroom(
+  bounds: readonly BoundsPx[],
+  canvas: { width: number; height: number },
+): { headroom: number; horizontal: number; vertical: number; edge: string; fighter: number } {
   const centreX = canvas.width / 2
   const centreY = canvas.height / 2
   const left = SAFE_AREA_INSET * canvas.width
@@ -376,10 +402,14 @@ function safeAreaHeadroom(bounds: readonly BoundsPx[], canvas: { width: number; 
   const bottom = (1 - SAFE_AREA_INSET) * canvas.height
 
   let headroom = Infinity
+  let horizontal = Infinity
+  let vertical = Infinity
   let edge = 'none'
   let fighter = -1
   let index = 0
-  const consider = (candidate: number, name: string): void => {
+  const consider = (candidate: number, name: string, axis: 'h' | 'v'): void => {
+    if (axis === 'h') horizontal = Math.min(horizontal, candidate)
+    else vertical = Math.min(vertical, candidate)
     if (candidate < headroom) {
       headroom = candidate
       edge = name
@@ -387,13 +417,13 @@ function safeAreaHeadroom(bounds: readonly BoundsPx[], canvas: { width: number; 
     }
   }
   for (const box of bounds) {
-    if (box.minX < centreX) consider((left - centreX) / (box.minX - centreX), 'left')
-    if (box.maxX > centreX) consider((right - centreX) / (box.maxX - centreX), 'right')
-    if (box.minY < centreY) consider((top - centreY) / (box.minY - centreY), 'top')
-    if (box.maxY > centreY) consider((bottom - centreY) / (box.maxY - centreY), 'bottom')
+    if (box.minX < centreX) consider((left - centreX) / (box.minX - centreX), 'left', 'h')
+    if (box.maxX > centreX) consider((right - centreX) / (box.maxX - centreX), 'right', 'h')
+    if (box.minY < centreY) consider((top - centreY) / (box.minY - centreY), 'top', 'v')
+    if (box.maxY > centreY) consider((bottom - centreY) / (box.maxY - centreY), 'bottom', 'v')
     index += 1
   }
-  return { headroom, edge, fighter }
+  return { headroom, horizontal, vertical, edge, fighter }
 }
 
 /** How far the nearest part of either fighter sits inside the safe-area inset, in px. Negative is a violation. */
@@ -428,6 +458,17 @@ interface PairingReport {
   pxPerWorldUnit: Spread
   /** Tick-to-tick |screen change| / |world change|: how much of a real approach/retreat survives the camera's own zoom. */
   attenuation: Spread
+  /**
+   * Measured pixels per world unit divided by the value predicted from the
+   * camera's own two constants and this tick's own framing distance --
+   * `(canvasHeight/2)/tan(fov/2) / (distance * sqrt(1 + ratio^2))`. There is
+   * no free parameter in that prediction, so a median away from `1.000` means
+   * the projection in `ArenaView` and the geometry assumed here disagree, and
+   * every absolute pixel figure in this report would be suspect. It is the
+   * only *absolute* calibration of the projection available without a second
+   * renderer.
+   */
+  projectionCalibration: Spread
   /** Full on-screen bounds (props included), per tick, both fighters. */
   fullWidthPx: Spread
   fullHeightPx: Spread
@@ -443,16 +484,37 @@ interface PairingReport {
    * a head-to-foot *vertical* span is measuring lean as much as scale.
    */
   floorDistanceCeilingMedian: number
+  /** Every in-band tick's own `bodyHeight x distance / floor`, so the shortfall can be read as a distribution rather than as one worst case. */
+  floorCeilingSpread: Spread
+  floorCeilingValues: readonly number[]
+  /** The 5th and 25th percentile of that distribution (analysis 3). */
+  floorCeilingP05: number
+  floorCeilingP25: number
   /** The smallest framing distance that would still keep every prop inside the safe area on every tick, first-order. */
   safeDistanceFloor: number
-  /** The same, restricted to in-band ticks -- the ones a flat framing distance would actually govern. */
-  safeDistanceFloorInBand: number
+  /**
+   * The same over the ticks a **flat region** actually governs: `extent <=
+   * band.high`, which includes every tick BELOW the band's low edge as well.
+   * Those are the closest-range frames, with the largest on-screen
+   * silhouettes and so the tightest safe area, and they exist in the traces
+   * (pairing 01's extent minimum is 2.66 against a band low of 2.94). The
+   * earlier `inBand`-only version of this number was a lower bound on the
+   * real constraint -- correct as a direction, wrong as a constant to hand
+   * Task 6.
+   */
+  safeDistanceFloorFlatRegion: number
+  /** The same, split by axis (analysis 2) and with the `'weapon'` slot dropped (analysis 1). */
+  safeDistanceFloorFlatRegionHorizontal: number
+  safeDistanceFloorFlatRegionVertical: number
+  safeDistanceFloorFlatRegionWithoutWeapon: number
+  flatRegionTicks: number
   minBodyHeightInBand: number
   /** The single in-band tick that sets `floorDistanceCeiling`, so the finding can be re-derived by hand. */
   bindingFloorTick?: { tick: number; extent: number; distance: number; bodyHeightPx: number }
   /**
-   * The single in-band tick that sets `safeDistanceFloorInBand`, including
-   * whose silhouette binds and by how much its props overhang his own body:
+   * The single flat-region tick that sets `safeDistanceFloorFlatRegion`,
+   * including whose silhouette binds and by how much its props overhang his
+   * own body:
    * `fullHeightPx` far above `bodyHeightPx` means the frame is capped by
    * something the fighter is *carrying*, not by the fighter.
    */
@@ -473,8 +535,14 @@ function analyse(
   label: string,
   viewport: { width: number; height: number },
   trace: BoutTrace,
-  radii: Record<Archetype, number>,
+  rig: RigConstants,
 ): PairingReport {
+  const radii = rig.radii
+  // Focal length in pixels: the perspective camera's FOV is vertical, so this
+  // is set by canvas *height* alone and governs both axes.
+  const focalPx = trace.canvas.height / 2 / Math.tan((rig.cameraFovDegrees * Math.PI) / 360)
+  const rangeFactor = Math.sqrt(1 + rig.cameraElevationRatio * rig.cameraElevationRatio)
+  const calibration: number[] = []
   const margin = EQUIPMENT_MARGIN * (radii[trace.archetypes[0]] + radii[trace.archetypes[1]])
   const band = { low: BAND_SEPARATION_LOW + margin, high: BAND_SEPARATION_HIGH + margin }
 
@@ -487,10 +555,14 @@ function analyse(
   const attenuation: number[] = []
   let minInsetMargin = Infinity
   let inBandTicks = 0
+  let flatRegionTicks = 0
   let safeViolationTicks = 0
   let floorDistanceCeiling = Infinity
   let safeDistanceFloor = 0
-  let safeDistanceFloorInBand = 0
+  let safeDistanceFloorFlatRegion = 0
+  let safeDistanceFloorFlatRegionHorizontal = 0
+  let safeDistanceFloorFlatRegionVertical = 0
+  let safeDistanceFloorFlatRegionWithoutWeapon = 0
   let minBodyHeightInBand = Infinity
   const floorCeilings: number[] = []
   let bindingFloorTick: PairingReport['bindingFloorTick']
@@ -498,6 +570,11 @@ function analyse(
 
   trace.samples.forEach((sample, index) => {
     const inBand = sample.groupExtent >= band.low && sample.groupExtent <= band.high
+    // A flat region across the band applies its distance to everything at or
+    // below the band's upper edge, closer-than-band ticks included -- see
+    // `safeDistanceFloorFlatRegion`.
+    const inFlatRegion = sample.groupExtent <= band.high
+    if (inFlatRegion) flatRegionTicks += 1
     extents.push(sample.groupExtent)
     bodyHeights.push(...sample.bodyHeightPx)
     if (inBand) {
@@ -523,11 +600,19 @@ function analyse(
     const margin = insetMarginPx(sample.fullBoundsPx, trace.canvas)
     minInsetMargin = Math.min(minInsetMargin, margin)
     if (margin < 0) safeViolationTicks += 1
-    const { headroom, edge, fighter } = safeAreaHeadroom(sample.fullBoundsPx, trace.canvas)
+    const { headroom, horizontal, vertical, edge, fighter } = safeAreaHeadroom(sample.fullBoundsPx, trace.canvas)
     const required = sample.distance / headroom
     safeDistanceFloor = Math.max(safeDistanceFloor, required)
-    if (inBand && required > safeDistanceFloorInBand) {
-      safeDistanceFloorInBand = required
+    if (inFlatRegion) {
+      safeDistanceFloorFlatRegionHorizontal = Math.max(safeDistanceFloorFlatRegionHorizontal, sample.distance / horizontal)
+      safeDistanceFloorFlatRegionVertical = Math.max(safeDistanceFloorFlatRegionVertical, sample.distance / vertical)
+      safeDistanceFloorFlatRegionWithoutWeapon = Math.max(
+        safeDistanceFloorFlatRegionWithoutWeapon,
+        sample.distance / safeAreaHeadroom(sample.boundsPxWithoutWeapon, trace.canvas).headroom,
+      )
+    }
+    if (inFlatRegion && required > safeDistanceFloorFlatRegion) {
+      safeDistanceFloorFlatRegion = required
       const box = sample.fullBoundsPx[fighter]
       bindingSafeTick = {
         tick: sample.tick,
@@ -542,7 +627,11 @@ function analyse(
       }
     }
 
-    if (sample.worldSeparation > 1e-6) pxPerUnit.push(sample.screenSeparationPx / sample.worldSeparation)
+    if (sample.worldSeparation > 1e-6) {
+      const measuredPxPerUnit = sample.screenSeparationPx / sample.worldSeparation
+      pxPerUnit.push(measuredPxPerUnit)
+      calibration.push(measuredPxPerUnit / (focalPx / (sample.distance * rangeFactor)))
+    }
     if (index > 0) {
       const previous = trace.samples[index - 1]
       const worldStep = Math.abs(sample.worldSeparation - previous.worldSeparation)
@@ -566,10 +655,19 @@ function analyse(
     minInsetMarginPx: minInsetMargin,
     pxPerWorldUnit: spread(pxPerUnit),
     attenuation: spread(attenuation),
+    projectionCalibration: spread(calibration),
     floorDistanceCeiling,
     floorDistanceCeilingMedian: spread(floorCeilings).median,
+    floorCeilingSpread: spread(floorCeilings),
+    floorCeilingValues: floorCeilings,
+    floorCeilingP05: quantile([...floorCeilings].sort((a, b) => a - b), 0.05),
+    floorCeilingP25: quantile([...floorCeilings].sort((a, b) => a - b), 0.25),
     safeDistanceFloor,
-    safeDistanceFloorInBand,
+    safeDistanceFloorFlatRegion,
+    safeDistanceFloorFlatRegionHorizontal,
+    safeDistanceFloorFlatRegionVertical,
+    safeDistanceFloorFlatRegionWithoutWeapon,
+    flatRegionTicks,
     minBodyHeightInBand,
     bindingFloorTick,
     bindingSafeTick,
@@ -619,11 +717,17 @@ function printOverall(reports: readonly PairingReport[], viewport: { width: numb
   const violations = reports.reduce((sum, report) => sum + report.safeViolationTicks, 0)
   const ticks = reports.reduce((sum, report) => sum + report.ticks, 0)
   const inBand = reports.reduce((sum, report) => sum + report.inBandTicks, 0)
+  const flatRegion = reports.reduce((sum, report) => sum + report.flatRegionTicks, 0)
   const pxPerUnit = spread(reports.map((report) => report.pxPerWorldUnit.median))
   const attenuation = spread(reports.map((report) => report.attenuation.median))
+  const calibration = spread(reports.map((report) => report.projectionCalibration.median))
 
   console.log(
-    `\n  overall @ ${viewport.width}x${viewport.height}: ${ticks} ticks (${inBand} in band), ` +
+    `  projection calibration (measured px/unit / predicted from fov+elevation+distance, 1.000 = exact): ` +
+      `median ${fixed(calibration.median, 4)}, worst pairing ${fixed(calibration.min, 4)}..${fixed(calibration.max, 4)}`,
+  )
+  console.log(
+    `\n  overall @ ${viewport.width}x${viewport.height}: ${ticks} ticks (${inBand} in band, ${flatRegion} in the flat region), ` +
       `extent ${fixed(allExtent.min)}..${fixed(allExtent.max)}, ` +
       `body ${fixed(bodyMin, 1)}..${fixed(bodyMax, 1)} px (in-band min ${fixed(inBandBodyMin, 1)}), ` +
       `safe-area violations ${violations}, ` +
@@ -643,7 +747,7 @@ function printOverall(reports: readonly PairingReport[], viewport: { width: numb
  * modest change of distance at a fixed elevation ratio; Task 6's sweep is
  * what confirms a specific candidate by replay.
  */
-function printFeasibility(byViewport: ReadonlyMap<string, readonly PairingReport[]>): void {
+function printFeasibility(byViewport: ReadonlyMap<string, readonly PairingReport[]>, rig: RigConstants): void {
   const wide = byViewport.get('1280x820')
   if (!wide) {
     console.log('\n(no 1280x820 run -- the body floor is only stated there, so no feasibility verdict)')
@@ -666,10 +770,10 @@ function printFeasibility(byViewport: ReadonlyMap<string, readonly PairingReport
     }
     return { value, label }
   }
-  const safeInBand = bindingOver((report) => report.safeDistanceFloorInBand)
+  const safeFlat = bindingOver((report) => report.safeDistanceFloorFlatRegion)
   const safeEverywhere = bindingOver((report) => report.safeDistanceFloor)
 
-  console.log('\n=== Is the 130 px body floor reachable? (first-order projection) ===')
+  console.log('\n=== Is the 130 px body floor reachable? ===')
   console.log(`  largest flat distance that still clears ${BODY_HEIGHT_FLOOR_PX} px in band @1280x820: ${fixed(floorCeiling, 3)}  (binding: ${floorPairing?.label ?? '--'})`)
   if (floorPairing?.bindingFloorTick) {
     const at = floorPairing.bindingFloorTick
@@ -677,14 +781,17 @@ function printFeasibility(byViewport: ReadonlyMap<string, readonly PairingReport
   }
   const medianCeiling = Math.min(...wide.map((report) => report.floorDistanceCeilingMedian))
   console.log(`  ... the same read on each pairing's MEDIAN in-band tick instead of its worst: ${fixed(medianCeiling, 3)}`)
-  console.log(`  smallest distance keeping every prop inside the 5% inset, IN-BAND ticks only: ${fixed(safeInBand.value, 3)}  (binding: ${safeInBand.label})`)
+  console.log(
+    `  smallest distance keeping every prop inside the 5% inset over the FLAT REGION (extent <= band high,` +
+      ` which includes closer-than-band ticks): ${fixed(safeFlat.value, 3)}  (binding: ${safeFlat.label})`,
+  )
   for (const [key, reports] of byViewport) {
     for (const report of reports) {
-      if (`${key} ${report.label}` !== safeInBand.label || !report.bindingSafeTick) continue
+      if (`${key} ${report.label}` !== safeFlat.label || !report.bindingSafeTick) continue
       const at = report.bindingSafeTick
       console.log(
         `     at tick ${at.tick}: extent ${fixed(at.extent)}, distance ${fixed(at.distance)}, ${at.edge} edge, ` +
-          `headroom x${fixed(at.headroom, 3)} (${fixed(at.marginPx, 0)} px of inset margin left) -> ${fixed(at.distance)} / ${fixed(at.headroom, 3)} = ${fixed(safeInBand.value, 3)}`,
+          `headroom x${fixed(at.headroom, 3)} (${fixed(at.marginPx, 0)} px of inset margin left) -> ${fixed(at.distance)} / ${fixed(at.headroom, 3)} = ${fixed(safeFlat.value, 3)}`,
       )
       console.log(
         `     bound by ${at.fighter}: full silhouette ${fixed(at.fullHeightPx, 0)} px tall against a ${fixed(at.bodyHeightPx, 0)} px body ` +
@@ -693,13 +800,124 @@ function printFeasibility(byViewport: ReadonlyMap<string, readonly PairingReport
     }
   }
   console.log(`  ... and over ALL ticks, i.e. if the flat distance were used out to the widest frame: ${fixed(safeEverywhere.value, 3)}  (binding: ${safeEverywhere.label})`)
-  console.log('  (in-band is the number that constrains FLAT_DISTANCE; beyond the band Task 6 eases out toward the far clamp.)')
-  if (safeInBand.value <= floorCeiling) {
-    console.log(`  => a flat distance exists. Search space for Task 6: [${fixed(safeInBand.value, 3)}, ${fixed(floorCeiling, 3)}]`)
+  console.log('  (the FLAT REGION figure is the one Task 6 must read as its constraint on FLAT_DISTANCE;')
+  console.log('   beyond the band the eased region rises toward the far clamp and is not governed by it.)')
+  if (safeFlat.value <= floorCeiling) {
+    console.log(`  => a flat distance exists. Search space for Task 6: [${fixed(safeFlat.value, 3)}, ${fixed(floorCeiling, 3)}]`)
   } else {
-    console.log(`  => NO flat distance satisfies both. The safe area binds at ${fixed(safeInBand.value, 3)}, the floor needs <= ${fixed(floorCeiling, 3)}.`)
+    console.log(`  => NO flat distance satisfies both. The safe area binds at ${fixed(safeFlat.value, 3)}, the floor needs <= ${fixed(floorCeiling, 3)}.`)
     console.log('     Report it as a design finding with these numbers. Do not lower the floor.')
   }
+
+  printOptionAnalyses(byViewport, wide, floorCeiling, safeFlat, rig)
+}
+
+/**
+ * Prices four ways out of the finding above, without implementing any of
+ * them and without changing a single camera constant. Every figure is a
+ * consequence of the recorded traces plus the projection identity in
+ * `safeAreaHeadroom`'s comment; none is a recommendation.
+ */
+function printOptionAnalyses(
+  byViewport: ReadonlyMap<string, readonly PairingReport[]>,
+  wide: readonly PairingReport[],
+  floorCeiling: number,
+  safeFlat: { value: number; label: string },
+  rig: RigConstants,
+): void {
+  const bindingOver = (pick: (report: PairingReport) => number): { value: number; label: string } => {
+    let value = 0
+    let label = ''
+    for (const [key, reports] of byViewport) {
+      for (const report of reports) {
+        if (pick(report) > value) {
+          value = pick(report)
+          label = `${key} ${report.label}`
+        }
+      }
+    }
+    return { value, label }
+  }
+
+  console.log('\n=== Options priced (numbers only -- no recommendation, nothing implemented) ===')
+
+  // 1. Safe area on body and shield only.
+  const safeNoWeapon = bindingOver((report) => report.safeDistanceFloorFlatRegionWithoutWeapon)
+  console.log('\n  [1] Safe area on everything EXCEPT the long handheld weapon (spear/trident/gladius shaft):')
+  console.log(`      constraint moves ${fixed(safeFlat.value, 3)} -> ${fixed(safeNoWeapon.value, 3)}  (binding: ${safeNoWeapon.label})`)
+  if (safeNoWeapon.value <= floorCeiling) {
+    console.log(`      => 130 px becomes REACHABLE. Room: [${fixed(safeNoWeapon.value, 3)}, ${fixed(floorCeiling, 3)}], i.e. ${fixed((floorCeiling / safeNoWeapon.value - 1) * 100, 1)}% of slack.`)
+  } else {
+    console.log(`      => still short: needs <= ${fixed(floorCeiling, 3)}, safe area allows only >= ${fixed(safeNoWeapon.value, 3)} (${fixed((safeNoWeapon.value / floorCeiling - 1) * 100, 1)}% too far).`)
+    console.log(`         Achievable worst in-band body height at ${fixed(safeNoWeapon.value, 3)}: ${fixed((BODY_HEIGHT_FLOOR_PX * floorCeiling) / safeNoWeapon.value, 1)} px.`)
+  }
+
+  // 2. A larger canvas.
+  const safeVertical = bindingOver((report) => report.safeDistanceFloorFlatRegionVertical)
+  const safeHorizontal = bindingOver((report) => report.safeDistanceFloorFlatRegionHorizontal)
+  const canvasHeight = wide[0].canvas.height
+  console.log('\n  [2] A larger canvas:')
+  console.log(`      the flat-region safe constraint splits into vertical ${fixed(safeVertical.value, 3)} (${safeVertical.label})`)
+  console.log(`      and horizontal ${fixed(safeHorizontal.value, 3)} (${safeHorizontal.label}).`)
+  console.log('      Pixels per world unit is (canvasHeight/2)/tan(fov/2)/range on BOTH axes (the FOV is vertical), so')
+  console.log('      growing canvas height scales the projected image and the 5% vertical inset together: the vertical')
+  console.log('      bound is invariant to canvas height. The horizontal bound and the floor both scale linearly with it.')
+  const neededHeight = (canvasHeight * safeVertical.value) / floorCeiling
+  console.log(`      height needed for ${BODY_HEIGHT_FLOOR_PX} px at the vertical bound: ${canvasHeight} x ${fixed(safeVertical.value, 3)} / ${fixed(floorCeiling, 3)} = ${fixed(neededHeight, 0)} px`)
+  console.log(`      = ${fixed((neededHeight / 820) * 100, 1)}% of the 820 px page (canvas is ${canvasHeight} px today, ${fixed((canvasHeight / 820) * 100, 1)}%).`)
+  if (safeHorizontal.value > floorCeiling) {
+    console.log(`      BUT the horizontal bound (${fixed(safeHorizontal.value, 3)}) also scales with height, exactly as the floor does,`)
+    console.log(`      so it never relaxes: height alone cannot fix it while ${fixed(safeHorizontal.value, 3)} > ${fixed(floorCeiling, 3)}.`)
+  } else {
+    console.log(`      The horizontal bound (${fixed(safeHorizontal.value, 3)}) is inside the floor's ceiling, so height alone would do it.`)
+  }
+
+  // 3. A percentile floor.
+  console.log('\n  [3] A percentile floor instead of a per-tick minimum (per pairing, @1280x820):')
+  console.log(`      ${'pairing'.padEnd(30)} ${'p00(min)'.padStart(9)} ${'p05'.padStart(7)} ${'p25'.padStart(7)} ${'p50'.padStart(7)} ${'ticks'.padStart(6)}`)
+  for (const report of wide) {
+    console.log(
+      `      ${report.label.padEnd(30)} ${fixed(report.floorCeilingSpread.min, 3).padStart(9)} ${fixed(report.floorCeilingP05, 3).padStart(7)} ` +
+        `${fixed(report.floorCeilingP25, 3).padStart(7)} ${fixed(report.floorDistanceCeilingMedian, 3).padStart(7)} ${String(report.inBandTicks).padStart(6)}`,
+    )
+  }
+  const p05 = Math.min(...wide.map((report) => report.floorCeilingP05))
+  const p25 = Math.min(...wide.map((report) => report.floorCeilingP25))
+  const p50 = Math.min(...wide.map((report) => report.floorDistanceCeilingMedian))
+  console.log(`      worst pairing's p05 ${fixed(p05, 3)}, p25 ${fixed(p25, 3)}, p50 ${fixed(p50, 3)} -- versus a safe-area limit of ${fixed(safeFlat.value, 3)}`)
+  console.log(`      at the safe-area limit ${fixed(safeFlat.value, 3)}, the share of in-band ticks clearing ${BODY_HEIGHT_FLOOR_PX} px per pairing:`)
+  for (const report of wide) {
+    const clearing = report.floorCeilingSpread.count === 0 ? 0 : shareAtLeast(report, safeFlat.value)
+    console.log(`      ${report.label.padEnd(30)} ${fixed(clearing * 100, 1).padStart(6)}%`)
+  }
+
+  // 4. Camera depression.
+  const depression = Math.atan(rig.cameraElevationRatio)
+  const cosine = Math.cos(depression)
+  console.log('\n  [4] Camera depression:')
+  console.log(
+    `      CAMERA_ELEVATION_RATIO ${rig.cameraElevationRatio.toFixed(6)} -> depression atan(ratio) = ${fixed((depression * 180) / Math.PI, 2)} deg, ` +
+      `cos = ${fixed(cosine, 4)}`,
+  )
+  console.log('      A world-vertical unit projects at cos(depression) of a ground-plane unit, so the whole body-height')
+  console.log(`      measurement is already scaled by ${fixed(cosine, 4)}. Shallower pitches, as a multiplier on body height:`)
+  for (const degrees of [30, 25, 20, 15, 10, 0]) {
+    const factor = Math.cos((degrees * Math.PI) / 180) / cosine
+    console.log(
+      `        ${String(degrees).padStart(2)} deg (ratio ${fixed(Math.tan((degrees * Math.PI) / 180), 4)}): x${fixed(factor, 4)} ` +
+        `-> floor ceiling ${fixed(floorCeiling * factor, 3)} vs safe area ${fixed(safeFlat.value, 3)}${floorCeiling * factor >= safeFlat.value ? '  <= clears' : ''}`,
+    )
+  }
+  console.log('      Interaction: CAMERA_ELEVATION_RATIO is exported and ProceduralFighter.test.ts derives the depression')
+  console.log('      as atan(ratio) to check that no worn piece silhouettes above the head. Changing the pitch re-runs that')
+  console.log('      gate against every rig, and the identity only holds while elevation stays proportional to distance.')
+}
+
+/** The share of a pairing's in-band ticks whose own floor ceiling is at least `distance`, i.e. that clear the floor when framed there. */
+function shareAtLeast(report: PairingReport, distance: number): number {
+  const values = report.floorCeilingValues
+  if (values.length === 0) return 0
+  return values.filter((value) => value >= distance).length / values.length
 }
 
 // ---------------------------------------------------------------------------
@@ -736,7 +954,8 @@ async function main(): Promise<void> {
   const startedAt = Date.now()
 
   try {
-    const radii = await readEquipmentRadii(browser)
+    const rig = await readRigConstants(browser)
+    const radii = rig.radii
     console.log(`seed ${args.seed}, camera delta ${CAMERA_DELTA_SECONDS.toFixed(5)} s/tick, safe-area inset ${SAFE_AREA_INSET * 100}% of canvas`)
     console.log(
       `horizontalEquipmentRadius: ${(['heavy', 'fast', 'technical'] as const).map((archetype) => `${TYPE_NAME[archetype]} ${radii[archetype].toFixed(4)}`).join(', ')}`,
@@ -757,7 +976,7 @@ async function main(): Promise<void> {
           await skipToSlot(page, pairing.slot)
           const trace = await traceBout(page, CAMERA_DELTA_SECONDS, args.maxTicks)
           const label = `${String(pairing.index).padStart(2, '0')} ${TYPE_NAME[trace.archetypes[0]]} vs ${TYPE_NAME[trace.archetypes[1]]}`
-          reports.push(analyse(label, viewport, trace, radii))
+          reports.push(analyse(label, viewport, trace, rig))
         } finally {
           await context.close()
         }
@@ -770,7 +989,7 @@ async function main(): Promise<void> {
       byViewport.set(key, reports)
     }
 
-    printFeasibility(byViewport)
+    printFeasibility(byViewport, rig)
     console.log(`\ndone in ${((Date.now() - startedAt) / 1000).toFixed(1)} s`)
   } finally {
     await browser.close()

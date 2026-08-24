@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { describe, expect, it, vi } from 'vitest'
 import type { Archetype } from '../simulation/fighters'
-import { CAMERA_ELEVATION_RATIO } from './ArenaView'
+import { BODY_SILHOUETTE_SLOTS, CAMERA_ELEVATION_RATIO, HELD_EQUIPMENT_SLOTS } from './ArenaView'
 import {
   createProceduralFighter,
   EQUIPMENT_ANCHOR_NAMES,
@@ -933,5 +933,86 @@ describe('dispose', () => {
     fighter.dispose()
     expect(() => fighter.dispose()).not.toThrow()
     expect(fighter.isDisposed()).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Slot partition (2026-08-23 framing-measurement slice)
+//
+// `ArenaView` splits the rig's meshes into what a fighter *wears*
+// (`BODY_SILHOUETTE_SLOTS`, which is what the debug snapshot's `bodyHeightPx`
+// projects and what the scale floor is asserted against) and what he *holds*
+// (`HELD_EQUIPMENT_SLOTS`, which only `fullBoundsPx` sees). Both are
+// hand-maintained literals over `userData.slot` strings this file's own rig
+// emits, and nothing else connects the two. This walks the real rigs and
+// pins the partition in both directions -- see each assertion for the failure
+// it exists to catch.
+// ---------------------------------------------------------------------------
+
+describe("ArenaView's body/held slot partition", () => {
+  /** Every distinct `userData.slot` all three real rigs actually build. */
+  function emittedSlots(): Set<string> {
+    const slots = new Set<string>()
+    for (const archetype of ARCHETYPES) {
+      const fighter = createProceduralFighter({ archetype })
+      fighter.root.traverse((object) => {
+        if (object instanceof THREE.Mesh && typeof object.userData.slot === 'string') slots.add(object.userData.slot)
+      })
+      fighter.dispose()
+    }
+    return slots
+  }
+
+  it('covers every slot the rigs emit, so a new worn piece cannot silently shrink the measured body', () => {
+    const uncovered = [...emittedSlots()].filter((slot) => !BODY_SILHOUETTE_SLOTS.has(slot) && !HELD_EQUIPMENT_SLOTS.has(slot))
+    // A slot in neither set falls through to "prop only", which means a newly
+    // *worn* piece would be excluded from `bodyHeightPx` -- under-reporting the
+    // one number the pre-committed 130 px scale floor is measured on. Decide
+    // deliberately which set it belongs to; do not let it default.
+    expect(uncovered, `slots in neither BODY_SILHOUETTE_SLOTS nor HELD_EQUIPMENT_SLOTS: ${uncovered.join(', ')}`).toEqual([])
+  })
+
+  /**
+   * Slots the builders can still emit but that no kit currently enables, so
+   * they are legitimately absent from a walk of the three real rigs.
+   *
+   * `'armor'` is the only one: `buildEquipment`'s `hasLightArmor` branch is
+   * intact, and all three `STYLE_SPECS` entries happen to set the flag
+   * `false` today (the retiarius' bronze chest band was dropped in the
+   * silhouette task because it blurred the "bare" read that separates him
+   * from the hoplomachus). Keeping it in `BODY_SILHOUETTE_SLOTS` is
+   * deliberate pre-registration: a kit re-enabling light armour gets it
+   * counted as body, which is what it is, rather than silently falling
+   * through to prop-only.
+   */
+  const CONDITIONAL_SLOTS_NO_KIT_ENABLES_TODAY: ReadonlySet<string> = new Set(['armor'])
+
+  it('carries no entry the rigs no longer build', () => {
+    const emitted = emittedSlots()
+    const stale = [...BODY_SILHOUETTE_SLOTS, ...HELD_EQUIPMENT_SLOTS].filter(
+      (slot) => !emitted.has(slot) && !CONDITIONAL_SLOTS_NO_KIT_ENABLES_TODAY.has(slot),
+    )
+    // A stale entry is harmless to the numbers but means the sets have stopped
+    // describing the rig, and the coverage assertion above then proves less
+    // than it appears to.
+    expect(stale, `slots listed but never built: ${stale.join(', ')}`).toEqual([])
+  })
+
+  it('keeps the two sets disjoint', () => {
+    const overlap = [...HELD_EQUIPMENT_SLOTS].filter((slot) => BODY_SILHOUETTE_SLOTS.has(slot))
+    // A held slot leaking into the body set is exactly the failure the split
+    // exists to prevent: a 1.30-unit spear satisfying a *body* height floor.
+    expect(overlap, `held slots counted as body: ${overlap.join(', ')}`).toEqual([])
+  })
+
+  it('assigns every held slot to a kit that really carries one', () => {
+    // Guards the other direction of the same mistake: `HELD_EQUIPMENT_SLOTS`
+    // naming something no kit holds would quietly shrink `fullBoundsPx`'s
+    // prop coverage, and the safe-area rule is stated over exactly that box.
+    const emitted = emittedSlots()
+    for (const slot of HELD_EQUIPMENT_SLOTS) {
+      if (CONDITIONAL_SLOTS_NO_KIT_ENABLES_TODAY.has(slot)) continue
+      expect(emitted.has(slot), `no rig builds a '${slot}' mesh`).toBe(true)
+    }
   })
 })

@@ -248,6 +248,92 @@ test("keeps each rig's rendered root yaw locked to its simulation facing, never 
 // a real deterministic run.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Framing measurement surface (2026-08-23 slice, Task 5).
+//
+// `bodyHeightPx` and `fullBoundsPx` are deliberately different numbers: the
+// first projects only what a fighter *wears*, the second everything he
+// carries too. The whole reason the split exists is that the slice's
+// pre-committed scale floor is a floor on how big the *man* reads, and a
+// hoplomachus holding a 1.30-unit spear or a murmillo behind a 1.10-unit
+// scutum would satisfy a floor measured over everything on screen without
+// being any easier to see. `ProceduralFighter.test.ts` pins the slot
+// partition those two numbers are built from; this pins that the partition
+// actually reaches the rendered pixels, against a real bout, through the real
+// projection, at the viewport the floor is stated at.
+//
+// Functional and numeric only -- no screenshot, no baseline. `stepBattleAndCamera`
+// is used exactly as `scripts/measure-framing.ts` uses it, so this also pins
+// the atomic step's contract (one tick per call) that every measured number in
+// that harness depends on.
+// ---------------------------------------------------------------------------
+
+test('separates body height from full prop bounds in the arena debug snapshot', async ({ page }) => {
+  await page.setViewportSize(VIEWPORT)
+  // home.nerva is the hoplomachus, whose spear is the longest handheld prop in
+  // the roster and the one most likely to be wrongly counted as body.
+  await startBoutZeroWith(page, 'nerva')
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(240))
+
+  const before = await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState().currentTick)
+
+  // One atomic call, then one snapshot, in a single synchronous callback --
+  // the same race the alpha-interpolation test above documents (a background
+  // `requestAnimationFrame` keeps re-rendering at the runtime's own
+  // paused-pegged alpha, so a two-round-trip version can observe a different
+  // frame than the one it stepped).
+  const { snapshot, after } = await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.stepBattleAndCamera!(30, 1 / 60)
+    return {
+      snapshot: window.__GLADIATOR_TEST__.getArenaDebugSnapshot!()!,
+      after: window.__GLADIATOR_TEST__.getRenderDebugState().currentTick,
+    }
+  })
+
+  // One simulation tick per requested tick, no more and no fewer.
+  expect(after).toBe(before! + 30)
+
+  expect(snapshot.canvasPx.width).toBeGreaterThan(0)
+  expect(snapshot.canvasPx.height).toBeGreaterThan(0)
+  expect(snapshot.groupExtent).toBeGreaterThan(0)
+
+  const ids = Object.keys(snapshot.bodyHeightPx)
+  expect(ids).toHaveLength(2)
+
+  for (const id of ids) {
+    const body = snapshot.bodyHeightPx[id]
+    const full = snapshot.fullBoundsPx[id]
+    const fullHeight = full.maxY - full.minY
+
+    expect(Number.isFinite(body), `${id} body height should be finite`).toBe(true)
+    expect(body, `${id} should have a positive body height`).toBeGreaterThan(0)
+    // The body silhouette is a strict subset of the full one, so its projected
+    // height can never exceed it. A body height that reached the full height
+    // would mean a held prop had leaked into the body set.
+    expect(fullHeight, `${id} full bounds should contain the body silhouette`).toBeGreaterThanOrEqual(body)
+
+    // Everything measured is on the canvas and in front of the camera: a point
+    // behind it would come back mirrored through the perspective divide, which
+    // is how a projection bug would present.
+    expect(Number.isFinite(full.minX) && Number.isFinite(full.maxX)).toBe(true)
+    expect(full.maxX).toBeGreaterThan(full.minX)
+    expect(full.maxY).toBeGreaterThan(full.minY)
+
+    // `boundsPxWithoutWeapon` sits between the two by construction.
+    const withoutWeapon = snapshot.boundsPxWithoutWeapon[id]
+    expect(withoutWeapon.maxY - withoutWeapon.minY).toBeLessThanOrEqual(fullHeight + 1e-6)
+    expect(withoutWeapon.maxY - withoutWeapon.minY).toBeGreaterThanOrEqual(body - 1e-6)
+  }
+
+  // The spear carrier specifically: his props must add real, measurable height
+  // beyond his own body, or the two numbers would be measuring the same thing
+  // and the floor could be satisfied by the polearm.
+  const spearCarrier = 'home.nerva'
+  const spearFull = snapshot.fullBoundsPx[spearCarrier]
+  const overhang = spearFull.maxY - spearFull.minY - snapshot.bodyHeightPx[spearCarrier]
+  expect(overhang, 'the hoplomachus should carry visible prop beyond his own silhouette').toBeGreaterThan(5)
+})
+
 test('freezes heavy guard/cleave, fast burst/disengage, a mutual hit/stagger, a shield block, defense-declined recognition, and defeat', async ({ page }) => {
   await startBoutZeroWith(page, 'brutus')
   const cursor = { current: 0 }

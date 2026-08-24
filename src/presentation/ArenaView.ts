@@ -108,6 +108,20 @@ export interface ArenaDebugSnapshot {
    */
   fullBoundsPx: Readonly<Record<CombatantId, ScreenBoundsPx>>
   /**
+   * `fullBoundsPx` minus the `'weapon'` slot -- the same bounds a safe-area
+   * rule would check if long handheld polearms (the hoplomachus' spear shaft,
+   * the retiarius' trident) were permitted to leave frame while everything
+   * else stayed inside.
+   *
+   * Measurement only: **nothing under `src/` consumes this**, no rule is
+   * stated over it, and adding it changed no behaviour. It exists because the
+   * shipped framing's binding safe-area constraint turned out to be a spear
+   * tip rather than a fighter, and the human deciding how to answer that needs
+   * the priced alternative rather than a description of it (Task 5 review,
+   * fix round 1, analysis 1).
+   */
+  boundsPxWithoutWeapon: Readonly<Record<CombatantId, ScreenBoundsPx>>
+  /**
    * Each rig's root (ground) point projected to canvas pixels -- the same
    * point `rootPositions` reports in world space, deliberately, so that
    * "screen separation / world separation" pairs two measurements of the
@@ -148,12 +162,18 @@ export interface ScreenPointPx {
  * outlines, so excluding it would under-report the silhouette that is
  * actually on screen.
  *
- * The three *held* slots -- `'weapon'`, `'shield'`, `'net'` -- are absent on
+ * The three *held* slots (`HELD_EQUIPMENT_SLOTS` below) are absent on
  * purpose, and so is anything a later kit adds: an unrecognised slot counts
  * toward `fullBoundsPx` only. The safe direction for an unknown prop is that
- * it cannot inflate a body-size floor.
+ * it cannot inflate a body-size floor -- but silently *under*-reporting a
+ * newly worn slot would understate the very number the scale floor is
+ * asserted on, so `ProceduralFighter.test.ts` asserts that these two sets
+ * together cover every slot all three real rigs actually emit, and that
+ * neither set carries an entry the rigs no longer build.
+ *
+ * Exported for that test only; nothing else outside this module reads it.
  */
-const BODY_SILHOUETTE_SLOTS: ReadonlySet<string> = new Set([
+export const BODY_SILHOUETTE_SLOTS: ReadonlySet<string> = new Set([
   'cloth',
   'skin',
   'limb',
@@ -167,6 +187,17 @@ const BODY_SILHOUETTE_SLOTS: ReadonlySet<string> = new Set([
   'greave',
   'shoulderGuard',
 ])
+
+/**
+ * The complement of `BODY_SILHOUETTE_SLOTS` over the slots the rig really
+ * emits: what a fighter *holds* rather than wears. These are what
+ * `fullBoundsPx` adds on top of the body silhouette, and the reason
+ * `bodyHeightPx` exists as a separate number at all.
+ */
+export const HELD_EQUIPMENT_SLOTS: ReadonlySet<string> = new Set(['weapon', 'shield', 'net'])
+
+/** The held slot `boundsPxWithoutWeapon` drops: the gladius, spear and trident are all built under it. */
+const LONG_HANDHELD_WEAPON_SLOT = 'weapon'
 
 const CAMERA_MIN_DISTANCE = 11
 const CAMERA_MAX_DISTANCE = 18
@@ -192,7 +223,17 @@ const CAMERA_MAX_DISTANCE = 18
  * keeping a second copy of it, so moving the camera's pitch re-checks the rig.
  */
 export const CAMERA_ELEVATION_RATIO = 8.8 / 13
-const CAMERA_FOV_DEGREES = 38
+/**
+ * Exported for the same reason as `CAMERA_ELEVATION_RATIO` above: together the
+ * two of them are the entire mapping from world size to on-screen pixels, and
+ * a measurement harness that reports absolute pixel figures has to be able to
+ * check its own output against them rather than against a second copy of the
+ * numbers. Pixels per world unit at the look point is
+ * `(canvasHeight/2)/tan(fov/2) / (distance * sqrt(1 + ratio^2))`, which
+ * `scripts/measure-framing.ts` predicts per tick and compares against the
+ * separation it actually measured.
+ */
+export const CAMERA_FOV_DEGREES = 38
 const CAMERA_NEAR = 0.1
 const CAMERA_FAR = 100
 
@@ -1133,6 +1174,7 @@ function buildArenaDebugSnapshot(
   const trailPointCounts: Record<CombatantId, number> = {}
   const bodyHeightPx: Record<CombatantId, number> = {}
   const fullBoundsPx: Record<CombatantId, ScreenBoundsPx> = {}
+  const boundsPxWithoutWeapon: Record<CombatantId, ScreenBoundsPx> = {}
   const centerPx: Record<CombatantId, ScreenPointPx> = {}
   const framingTargets: HorizontalFramingTarget[] = []
   let jointTransformsFinite = true
@@ -1199,6 +1241,10 @@ function buildArenaDebugSnapshot(
     accumulateProjectedBounds(rig.fighter.root, projection, () => true, full)
     fullBoundsPx[id] = { minX: full.minX, maxX: full.maxX, minY: full.minY, maxY: full.maxY }
 
+    const withoutWeapon = emptyBounds()
+    accumulateProjectedBounds(rig.fighter.root, projection, (slot) => slot !== LONG_HANDHELD_WEAPON_SLOT, withoutWeapon)
+    boundsPxWithoutWeapon[id] = { minX: withoutWeapon.minX, maxX: withoutWeapon.maxX, minY: withoutWeapon.minY, maxY: withoutWeapon.maxY }
+
     MEASURED_CORNER.setFromMatrixPosition(rig.fighter.root.matrixWorld)
     centerPx[id] = projectToCanvasPx(MEASURED_CORNER, projection)
 
@@ -1226,6 +1272,7 @@ function buildArenaDebugSnapshot(
     groupExtent: measuredExtent(framingTargets, cameraState.yaw),
     bodyHeightPx,
     fullBoundsPx,
+    boundsPxWithoutWeapon,
     centerPx,
     canvasPx: { width: projection.widthPx, height: projection.heightPx },
   }
