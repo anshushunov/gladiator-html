@@ -375,12 +375,24 @@ function fixed(value: number, digits = 2): string {
  *
  * The camera always looks straight at the group's midpoint, so that midpoint
  * projects to the canvas centre exactly, and pulling the camera in along its
- * own view ray magnifies screen offsets from that centre by the ratio of the
- * two distances -- exactly, not merely to first order, because the camera sits
- * at `height = distance x CAMERA_ELEVATION_RATIO` and looks at `y = 0`, so
- * scaling the distance scales the whole camera-to-look-point offset vector and
- * leaves the depression angle alone. `< 1` means this frame is already outside
- * the safe area.
+ * own view ray magnifies screen offsets from that centre by roughly the ratio
+ * of the two distances. **First order, not exact.** The camera sitting at
+ * `height = distance x CAMERA_ELEVATION_RATIO` looking at `y = 0` does mean
+ * that scaling the distance scales the whole camera-to-look-point offset
+ * vector and leaves the depression angle alone -- but that governs the look
+ * point, not the points being measured. For a point offset from the look
+ * point by `v`, `px = f * v_t / (R - v.u)`, so magnifying by `m` gives
+ *
+ *     px' / px = m * (R - v.u) / (R - m * v.u)
+ *
+ * which equals `m` only where `v.u = 0`, i.e. at the look point's own depth.
+ * A prop tip one world unit off in depth departs by about 2% at the binding
+ * tick (`R = 13.67`, `m = 1.216`). The empirical size of the whole error is
+ * measured, not assumed: re-running with the camera actually placed at the
+ * predicted 9.313 re-derived 9.384 (0.76% high) and 6.278 against 6.317
+ * (0.6% low). Treat every distance printed from this as +/- ~1%.
+ *
+ * `< 1` means this frame is already outside the safe area.
  *
  * `horizontal`/`vertical` are the same quantity restricted to one axis. They
  * are reported separately because the two axes respond differently to canvas
@@ -503,10 +515,24 @@ interface PairingReport {
    * Task 6.
    */
   safeDistanceFloorFlatRegion: number
-  /** The same, split by axis (analysis 2) and with the `'weapon'` slot dropped (analysis 1). */
+  /** The same, split by axis (analysis 2) and with weapons dropped (analysis 1). */
   safeDistanceFloorFlatRegionHorizontal: number
   safeDistanceFloorFlatRegionVertical: number
+  /**
+   * With the `'weapon'` slot dropped for **both** fighters -- and `buildWeapon`
+   * tags every kind with that slot, so this deletes the murmillo's gladius as
+   * well as the two polearms. It is therefore the *most permissive* version of
+   * "let long props leave frame", and a bound rather than the option itself.
+   */
   safeDistanceFloorFlatRegionWithoutWeapon: number
+  /**
+   * The option as actually described: the weapon dropped only for the kits
+   * that carry a **polearm** (retiarius' trident, hoplomachus' spear), with the
+   * murmillo's gladius still required inside the inset. Assembled here rather
+   * than in the snapshot because the harness already knows each fighter's
+   * archetype, so no further dev-only surface was needed for it.
+   */
+  safeDistanceFloorFlatRegionWithoutPolearm: number
   flatRegionTicks: number
   minBodyHeightInBand: number
   /** The single in-band tick that sets `floorDistanceCeiling`, so the finding can be re-derived by hand. */
@@ -563,6 +589,9 @@ function analyse(
   let safeDistanceFloorFlatRegionHorizontal = 0
   let safeDistanceFloorFlatRegionVertical = 0
   let safeDistanceFloorFlatRegionWithoutWeapon = 0
+  let safeDistanceFloorFlatRegionWithoutPolearm = 0
+  /** The kits whose weapon is a polearm; the murmillo's gladius is not one. */
+  const POLEARM_ARCHETYPES: ReadonlySet<Archetype> = new Set<Archetype>(['fast', 'technical'])
   let minBodyHeightInBand = Infinity
   const floorCeilings: number[] = []
   let bindingFloorTick: PairingReport['bindingFloorTick']
@@ -609,6 +638,15 @@ function analyse(
       safeDistanceFloorFlatRegionWithoutWeapon = Math.max(
         safeDistanceFloorFlatRegionWithoutWeapon,
         sample.distance / safeAreaHeadroom(sample.boundsPxWithoutWeapon, trace.canvas).headroom,
+      )
+      // Polearm carriers lose their weapon from the check; the murmillo keeps
+      // his gladius inside the inset.
+      const polearmBoxes = sample.fullBoundsPx.map((box, index) =>
+        POLEARM_ARCHETYPES.has(trace.archetypes[index]) ? sample.boundsPxWithoutWeapon[index] : box,
+      )
+      safeDistanceFloorFlatRegionWithoutPolearm = Math.max(
+        safeDistanceFloorFlatRegionWithoutPolearm,
+        sample.distance / safeAreaHeadroom(polearmBoxes, trace.canvas).headroom,
       )
     }
     if (inFlatRegion && required > safeDistanceFloorFlatRegion) {
@@ -667,6 +705,7 @@ function analyse(
     safeDistanceFloorFlatRegionHorizontal,
     safeDistanceFloorFlatRegionVertical,
     safeDistanceFloorFlatRegionWithoutWeapon,
+    safeDistanceFloorFlatRegionWithoutPolearm,
     flatRegionTicks,
     minBodyHeightInBand,
     bindingFloorTick,
@@ -741,11 +780,13 @@ function printOverall(reports: readonly PairingReport[], viewport: { width: numb
  * clears the body floor at 1280x820 inside the band while keeping every prop
  * inside the safe area at all three viewports?
  *
- * First-order, and labelled as such: on-screen size scales as `1/distance`,
- * and pulling the camera in magnifies screen offsets about the frame centre
- * (which is exactly where the look target projects). Both hold well for a
- * modest change of distance at a fixed elevation ratio; Task 6's sweep is
- * what confirms a specific candidate by replay.
+ * First-order, and labelled as such in the printed output too, because that
+ * is the line a later task reads: on-screen size scales as `1/distance`, and
+ * pulling the camera in magnifies screen offsets about the frame centre
+ * (where the look target projects exactly). Neither is exact away from the
+ * look point's own depth -- see `safeAreaHeadroom` for the algebra and for
+ * the measured residual, ~0.6-1.2%. Task 6's sweep is what confirms a
+ * specific candidate by replay.
  */
 function printFeasibility(byViewport: ReadonlyMap<string, readonly PairingReport[]>, rig: RigConstants): void {
   const wide = byViewport.get('1280x820')
@@ -773,7 +814,7 @@ function printFeasibility(byViewport: ReadonlyMap<string, readonly PairingReport
   const safeFlat = bindingOver((report) => report.safeDistanceFloorFlatRegion)
   const safeEverywhere = bindingOver((report) => report.safeDistanceFloor)
 
-  console.log('\n=== Is the 130 px body floor reachable? ===')
+  console.log('\n=== Is the 130 px body floor reachable? (first-order projection, measured residual ~0.6-1.2%) ===')
   console.log(`  largest flat distance that still clears ${BODY_HEIGHT_FLOOR_PX} px in band @1280x820: ${fixed(floorCeiling, 3)}  (binding: ${floorPairing?.label ?? '--'})`)
   if (floorPairing?.bindingFloorTick) {
     const at = floorPairing.bindingFloorTick
@@ -808,6 +849,12 @@ function printFeasibility(byViewport: ReadonlyMap<string, readonly PairingReport
     console.log(`  => NO flat distance satisfies both. The safe area binds at ${fixed(safeFlat.value, 3)}, the floor needs <= ${fixed(floorCeiling, 3)}.`)
     console.log('     Report it as a design finding with these numbers. Do not lower the floor.')
   }
+  console.log(`\n  What ${fixed(safeFlat.value, 3)} is, and is not:`)
+  console.log(`   - it IS the first-order constraint that proves the floor unreachable, and it is CONSERVATIVE for that`)
+  console.log('     purpose: the residual understates the gap rather than inventing it.')
+  console.log(`   - it is NOT a usable flat distance. Placing the camera at exactly ${fixed(safeFlat.value, 3)} and re-measuring`)
+  console.log('     re-derived 9.384 and left ONE safe-area violation tick. A shipped constant needs the margin a sweep')
+  console.log('     against measured frames would give it, not this bound.')
 
   printOptionAnalyses(byViewport, wide, floorCeiling, safeFlat, rig)
 }
@@ -841,15 +888,28 @@ function printOptionAnalyses(
 
   console.log('\n=== Options priced (numbers only -- no recommendation, nothing implemented) ===')
 
-  // 1. Safe area on body and shield only.
+  // 1. Long props permitted to leave frame. Two variants, because the slot
+  //    the snapshot can drop is coarser than the option as described.
+  const safeNoPolearm = bindingOver((report) => report.safeDistanceFloorFlatRegionWithoutPolearm)
   const safeNoWeapon = bindingOver((report) => report.safeDistanceFloorFlatRegionWithoutWeapon)
-  console.log('\n  [1] Safe area on everything EXCEPT the long handheld weapon (spear/trident/gladius shaft):')
-  console.log(`      constraint moves ${fixed(safeFlat.value, 3)} -> ${fixed(safeNoWeapon.value, 3)}  (binding: ${safeNoWeapon.label})`)
-  if (safeNoWeapon.value <= floorCeiling) {
-    console.log(`      => 130 px becomes REACHABLE. Room: [${fixed(safeNoWeapon.value, 3)}, ${fixed(floorCeiling, 3)}], i.e. ${fixed((floorCeiling / safeNoWeapon.value - 1) * 100, 1)}% of slack.`)
-  } else {
-    console.log(`      => still short: needs <= ${fixed(floorCeiling, 3)}, safe area allows only >= ${fixed(safeNoWeapon.value, 3)} (${fixed((safeNoWeapon.value / floorCeiling - 1) * 100, 1)}% too far).`)
-    console.log(`         Achievable worst in-band body height at ${fixed(safeNoWeapon.value, 3)}: ${fixed((BODY_HEIGHT_FLOOR_PX * floorCeiling) / safeNoWeapon.value, 1)} px.`)
+  console.log('\n  [1] Long handheld props permitted to leave frame (everything else still inside the 5% inset):')
+  console.log(`      (a) POLEARMS only -- trident and spear dropped, the murmillo's gladius still inside:`)
+  console.log(`          constraint moves ${fixed(safeFlat.value, 3)} -> ${fixed(safeNoPolearm.value, 3)}  (binding: ${safeNoPolearm.label})`)
+  console.log(`      (b) EVERY weapon dropped, gladius included -- the most permissive version, a bound not the option:`)
+  console.log(`          constraint moves ${fixed(safeFlat.value, 3)} -> ${fixed(safeNoWeapon.value, 3)}  (binding: ${safeNoWeapon.label})`)
+  for (const [name, value] of [
+    ['polearms only', safeNoPolearm.value],
+    ['every weapon', safeNoWeapon.value],
+  ] as const) {
+    if (value <= floorCeiling) {
+      console.log(`      => ${name}: 130 px becomes REACHABLE. Room [${fixed(value, 3)}, ${fixed(floorCeiling, 3)}], ${fixed((floorCeiling / value - 1) * 100, 1)}% of slack.`)
+    } else {
+      console.log(
+        `      => ${name}: still short. Floor needs <= ${fixed(floorCeiling, 3)}; safe area allows only >= ${fixed(value, 3)}, ` +
+          `which is ${fixed((value / floorCeiling - 1) * 100, 1)}% further out than the floor's ceiling.`,
+      )
+      console.log(`         Best achievable WORST in-band body height there: ${fixed((BODY_HEIGHT_FLOOR_PX * floorCeiling) / value, 1)} px.`)
+    }
   }
 
   // 2. A larger canvas.
@@ -884,7 +944,31 @@ function printOptionAnalyses(
   const p05 = Math.min(...wide.map((report) => report.floorCeilingP05))
   const p25 = Math.min(...wide.map((report) => report.floorCeilingP25))
   const p50 = Math.min(...wide.map((report) => report.floorDistanceCeilingMedian))
+  const p00 = Math.min(...wide.map((report) => report.floorCeilingSpread.min))
   console.log(`      worst pairing's p05 ${fixed(p05, 3)}, p25 ${fixed(p25, 3)}, p50 ${fixed(p50, 3)} -- versus a safe-area limit of ${fixed(safeFlat.value, 3)}`)
+  console.log('      Each percentile against the SAME reference (the safe-area limit is X% further out than it requires):')
+  for (const [name, value] of [
+    ['p00', p00],
+    ['p05', p05],
+    ['p25', p25],
+    ['p50', p50],
+  ] as const) {
+    console.log(`        ${name} needs ${fixed(value, 3)} -- safe area is ${fixed((safeFlat.value / value - 1) * 100, 1)}% further out than that`)
+  }
+  console.log('      Removing pose variance up to a percentile closes this much of the total gap, and leaves the rest:')
+  for (const [name, value] of [
+    ['p05', p05],
+    ['p25', p25],
+    ['p50', p50],
+  ] as const) {
+    console.log(
+      `        up to ${name}: closes ${fixed(((value - p00) / (safeFlat.value - p00)) * 100, 1)}% of ${fixed(safeFlat.value - p00, 3)} units, ` +
+        `leaving ${fixed(safeFlat.value - value, 3)} units still unreachable`,
+    )
+  }
+  console.log('      The split moves with the percentile chosen -- it is not a property of the system. And the remainder')
+  console.log('      is a RESIDUAL, not a measured framing effect: it is what survives after pose variance is removed,')
+  console.log('      and the rest of this run says it is not recoverable by moving the camera.')
   console.log(`      at the safe-area limit ${fixed(safeFlat.value, 3)}, the share of in-band ticks clearing ${BODY_HEIGHT_FLOOR_PX} px per pairing:`)
   for (const report of wide) {
     const clearing = report.floorCeilingSpread.count === 0 ? 0 : shareAtLeast(report, safeFlat.value)
@@ -901,11 +985,15 @@ function printOptionAnalyses(
   )
   console.log('      A world-vertical unit projects at cos(depression) of a ground-plane unit, so the whole body-height')
   console.log(`      measurement is already scaled by ${fixed(cosine, 4)}. Shallower pitches, as a multiplier on body height:`)
+  console.log('      NB: this column is ONE-SIDED. Levelling the camera stretches every vertical on-screen extent, and the')
+  console.log(`      ${fixed(safeFlat.value, 3)} tick binds on the TOP edge (a spear tip), so the safe-area limit would rise by roughly the`)
+  console.log('      same factor. No individual row is a NET gain; only the conclusion is safe, and the bias is conservative.')
   for (const degrees of [30, 25, 20, 15, 10, 0]) {
     const factor = Math.cos((degrees * Math.PI) / 180) / cosine
     console.log(
       `        ${String(degrees).padStart(2)} deg (ratio ${fixed(Math.tan((degrees * Math.PI) / 180), 4)}): x${fixed(factor, 4)} ` +
-        `-> floor ceiling ${fixed(floorCeiling * factor, 3)} vs safe area ${fixed(safeFlat.value, 3)}${floorCeiling * factor >= safeFlat.value ? '  <= clears' : ''}`,
+        `-> floor ceiling ${fixed(floorCeiling * factor, 3)} vs an UNADJUSTED safe area ${fixed(safeFlat.value, 3)}` +
+        `${floorCeiling * factor >= safeFlat.value ? '  <= would clear only if the safe area did not also move' : ''}`,
     )
   }
   console.log('      Interaction: CAMERA_ELEVATION_RATIO is exported and ProceduralFighter.test.ts derives the depression')
