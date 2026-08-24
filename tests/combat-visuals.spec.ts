@@ -15,6 +15,14 @@ async function startBoutZeroWith(page: Page, homeFighterId: 'brutus' | 'aquila' 
   const order: readonly ('brutus' | 'aquila' | 'nerva')[] = ['brutus', 'aquila', 'nerva']
   const rest = order.filter((id) => id !== homeFighterId)
   await page.goto('/?seed=20260815&snapshot')
+  // `page.goto` resolves on `load`, which does not guarantee the app has
+  // installed `window.__GLADIATOR_TEST__`: `main.ts` assigns it inside an
+  // `import.meta.env.DEV` block at the end of its own module evaluation, and
+  // under a loaded machine the next line has been observed running first and
+  // failing with `TypeError: Cannot read properties of undefined (reading
+  // 'startNextSeries')`. A timeout cannot fix a `TypeError`; waiting for the
+  // surface can.
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   // `main.ts` now boots straight onto the season board (Task 8) -- there is
   // no bridge past it -- so `startNextSeries()` is what actually opens
   // series 0's planning screen before any `assign`/`confirm` call can

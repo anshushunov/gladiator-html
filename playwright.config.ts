@@ -68,6 +68,36 @@ export default defineConfig({
       maxDiffPixelRatio: 0.04,
     },
   },
+  // One worker, deliberately, and measured rather than assumed.
+  //
+  // `tests/legibility.spec.ts` (the slice's legibility acceptance harness)
+  // drives 45 full bouts, each stepping and rendering 1200-2700 ticks through
+  // Chromium's software rasterizer -- which is itself multi-threaded, so that
+  // one worker saturates every core for 11-13 minutes. Run concurrently, the
+  // other five spec files then blow Playwright's default 30 s per-test timeout
+  // while nothing has regressed, and `npm run check` (a bare `playwright test`)
+  // becomes a coin flip. Measured on a 16-core machine, same commit:
+  //
+  //   default workers  ->  3 deliberate failures + 7 spurious timeouts, 14.6 min
+  //   default workers  ->  3 deliberate failures + 2 spurious timeouts, 13.4 min
+  //   workers: 1       ->  3 deliberate failures, nothing else,         12.5 min
+  //
+  // So serialising is both cleaner AND faster on the gate path: the heavy file
+  // dominates the wall clock either way, and the five fast files cost ~1 min of
+  // it. The price is paid by single-file runs of the fast specs, which lose
+  // their own parallelism (~1 min -> ~3 min); `--workers=8` on the command line
+  // overrides this for that case, and cannot make the full run flaky because
+  // the full run is what this setting is for.
+  //
+  // A two-project split (`legibility` with `dependencies: ['chromium']`) was
+  // tried first and REJECTED on evidence: Playwright skips a dependent project
+  // when its dependency has any failure, and this suite deliberately carries
+  // three stale screenshot baselines until Task 10 regenerates them, so the
+  // whole 47-test acceptance set reported `1 did not run` instead of running.
+  // A harness that silently does not run is the exact defect it exists to
+  // catch. (Dependency projects also ignore `--grep`, so every `-g` run of one
+  // legibility test would first replay the entire fast suite.)
+  workers: 1,
   projects: [
     {
       name: 'chromium',

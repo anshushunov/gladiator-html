@@ -41,6 +41,14 @@ async function finishActiveBout(page: import('@playwright/test').Page) {
 
 async function startSeededFirstBout(page: import('@playwright/test').Page) {
   await page.goto('/?seed=20260815&snapshot')
+  // `page.goto` resolves on `load`, which does not guarantee the app has
+  // installed `window.__GLADIATOR_TEST__`: `main.ts` assigns it inside an
+  // `import.meta.env.DEV` block at the end of its own module evaluation, and
+  // under a loaded machine the next line has been observed running first and
+  // failing with `TypeError: Cannot read properties of undefined (reading
+  // 'startNextSeries')`. A timeout cannot fix a `TypeError`; waiting for the
+  // surface can.
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
