@@ -56,6 +56,27 @@ interface GladiatorTestApi {
   confirm(): TestCommandResult
   setBoutOrder(boutIndex: BoutIndex, order: DispositionId): TestCommandResult
   advanceTicks(ticks: number): void
+  /**
+   * The atomic per-tick step a framing measurement needs: for each of
+   * `ticks`, one simulation tick, then one camera update charged exactly
+   * `dtSeconds`, then one render.
+   *
+   * `advanceTicks` cannot answer the same question: it runs every tick and
+   * then renders once, while camera damping is wall-clock, so "the framing at
+   * tick N" is whatever the camera happened to reach in the real time that
+   * burst took. Here every tick gets exactly one frame and exactly
+   * `dtSeconds` of damping, which is what makes a per-tick trace correspond
+   * to frames a player at `x1` would actually have seen.
+   *
+   * Deliberately does NOT re-render the DOM afterwards (`advanceTicks` ends
+   * with `renderDom()`): that call would flush a *second* arena frame at the
+   * runtime's own alpha -- `0` while paused, i.e. the previous tick -- so a
+   * snapshot read after it would not describe the tick just stepped. HP
+   * cards and the battle feed are therefore stale until the next animation
+   * frame notices `season` changed; a measurement harness reads the canvas,
+   * not the DOM.
+   */
+  stepBattleAndCamera(ticks: number, dtSeconds: number): void
   startNextBout(): TestCommandResult
   getActiveBattleTraceHash(): string | null
   getActiveCombatantPositions(): Readonly<Record<CombatantId, Vec2>>
@@ -465,9 +486,14 @@ function handleArenaPhaseChange(): void {
  * empirically: two captures of the identical frozen tick, one immediate and
  * one after a real delay, previously produced different camera state.
  */
-function flushRenderBatch(alpha: number): void {
+function flushRenderBatch(alpha: number, cameraDeltaSeconds?: number): void {
   if (!renderFrame) return
-  arenaView.sync({ ...renderFrame, alpha }, { advanceCameraTime: !runtime.paused })
+  arenaView.sync(
+    { ...renderFrame, alpha },
+    cameraDeltaSeconds === undefined
+      ? { advanceCameraTime: !runtime.paused }
+      : { advanceCameraTime: true, cameraDeltaSeconds },
+  )
   combatAudio.consume({
     events: pendingEvents,
     footsteps: pendingFootsteps,
@@ -486,6 +512,29 @@ function flushRenderBatch(alpha: number): void {
 function syncArena(): void {
   const phase = season.activeSeries?.phase
   if (phase === 'fighting' || phase === 'between-bouts') flushRenderBatch(currentAlpha())
+}
+
+/**
+ * One camera update charged exactly `cameraDeltaSeconds`, and one render of
+ * the tick that has just been stepped -- the presentation half of
+ * `stepBattleAndCamera` (dev-only; see its own doc comment on
+ * `GladiatorTestApi`).
+ *
+ * `alpha: 1` rather than `currentAlpha()`: the caller has just completed a
+ * tick, and the frame a player sees at the end of a tick is that whole tick,
+ * not a blend toward it. (`currentAlpha()` reads the real-time accumulator,
+ * which is pegged at `0` while `?snapshot` holds the runtime paused -- it
+ * would render the *previous* tick, one tick behind every sample taken after
+ * it.)
+ *
+ * Gated on the same two phases `syncArena` gates on, so a bout that ends
+ * mid-run stops being rendered at exactly the point the ordinary render loop
+ * would stop rendering it.
+ */
+function updateCameraAndRender(cameraDeltaSeconds: number): void {
+  const phase = season.activeSeries?.phase
+  if (phase !== 'fighting' && phase !== 'between-bouts') return
+  flushRenderBatch(1, cameraDeltaSeconds)
 }
 
 function frame(now: number): void {
@@ -587,6 +636,14 @@ if (import.meta.env.DEV) {
       if (!Number.isInteger(ticks) || ticks < 0) throw new Error('Tick count must be a non-negative integer')
       for (let step = 0; step < ticks; step += 1) stepBattleTick()
       renderDom()
+    },
+    stepBattleAndCamera: (ticks, dtSeconds) => {
+      if (!Number.isInteger(ticks) || ticks < 0) throw new Error('Tick count must be a non-negative integer')
+      if (!Number.isFinite(dtSeconds) || dtSeconds < 0) throw new Error('Camera delta must be a finite, non-negative number of seconds')
+      for (let step = 0; step < ticks; step += 1) {
+        stepBattleTick()
+        updateCameraAndRender(dtSeconds)
+      }
     },
     startNextBout: () => applySeasonCommand(startNextBout(season)),
     getActiveBattleTraceHash: () => (renderFrame ? formatTraceHash(renderFrame.current.traceHash) : null),

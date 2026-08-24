@@ -1,0 +1,784 @@
+// Framing measurement harness (readable-gladiator-types, Task 5).
+//
+//   npx vite-node scripts/measure-framing.ts
+//   npx vite-node scripts/measure-framing.ts -- --only=3      # one pairing
+//   npx vite-node scripts/measure-framing.ts -- --width=1280  # one viewport
+//
+// This script measures; it changes nothing and asserts nothing. It exists
+// because the camera constants Task 6 has to choose cannot be written from a
+// desk, and because they have to be measured against the FINAL rig: each
+// fighter's `horizontalEquipmentRadius` is the camera's own input, so a
+// measurement taken before the silhouettes were re-drawn would describe a
+// camera that is not going to ship.
+//
+// What it drives, and why in this exact shape:
+//
+//   - All nine ordered style pairings of the seeded series (seed 20260815),
+//     three viewport sizes each, under `?snapshot` so the runtime is paused
+//     and nothing advances except what this script asks for.
+//   - `stepBattleAndCamera(1, 1/60)` per tick: one simulation tick, one
+//     camera update charged exactly one frame of damping, one render. The
+//     ordinary `advanceTicks` runs every tick and then renders once, while
+//     camera damping is wall-clock -- under it, "the framing at tick N" is
+//     whatever the camera reached in however long the burst took, which is
+//     not a quantity a player ever sees.
+//   - Exactly one `getArenaDebugSnapshot()` per step, in the same synchronous
+//     `page.evaluate` callback as the step itself. `main.ts`'s own
+//     `requestAnimationFrame` loop keeps re-rendering in the background even
+//     while paused (at its own alpha, pegged to 0), so a step and a read in
+//     two separate round-trips can observe two different frames. A single
+//     synchronous callback cannot be interleaved with an animation frame.
+//   - `groupExtent` comes from the snapshot, i.e. from `ArenaCamera`'s own
+//     exported `measuredExtent` at the camera's own yaw -- never recomputed
+//     here from positions and radii, which would drop the yaw projection and
+//     the 10% per-target equipment margin and so measure a quantity
+//     `extentToDistance` never sees.
+//
+// It drives a Vite *dev* server (like `tests/global-setup.ts` and
+// `scripts/record-review-clips.ts`) because the `window.__GLADIATOR_TEST__`
+// surface it uses is stripped from production builds by design.
+
+import { resolve } from 'node:path'
+import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test'
+import { createServer } from 'vite'
+
+const PORT = 4176 // not 4173 (`npm run test:e2e`) and not 4174 (`npm run review:clips`)
+
+/** The three viewports the slice's safe-area rule is stated at. */
+const VIEWPORTS = [
+  { width: 1280, height: 820 },
+  { width: 1024, height: 768 },
+  { width: 820, height: 640 },
+] as const
+
+/** One frame of `x1` playback -- what the camera is charged per simulation tick. */
+const CAMERA_DELTA_SECONDS = 1 / 60
+
+/** A bout runs 1200-2700 ticks; this is the ceiling before the harness gives up on one. */
+const MAX_BOUT_TICKS = 4000
+
+/**
+ * The slice's safe area: each fighter's full AABB, every prop included, stays
+ * inside a 5% inset of the CANVAS (never of the viewport -- the arena is one
+ * cell of a page that also carries HP cards and a battle feed, so the two are
+ * very different rectangles).
+ */
+const SAFE_AREA_INSET = 0.05
+
+/** The pre-committed on-screen body-height floor, asserted at 1280x820 only, on in-band ticks only. */
+const BODY_HEIGHT_FLOOR_PX = 130
+
+/**
+ * The tactical band, in *pair separation* (world units): from the closest
+ * legal contact to the longest authored attack reach (design spec,
+ * "Terminology"). Converted to group extent per pairing by adding both
+ * fighters' equipment radii with the camera's own 10% margin -- which is what
+ * `extentToDistance` actually consumes.
+ */
+const BAND_SEPARATION_LOW = 0.9
+const BAND_SEPARATION_HIGH = 3.1
+const EQUIPMENT_MARGIN = 1.1
+
+// ---------------------------------------------------------------------------
+// The nine pairings (identical construction to `scripts/record-review-clips.ts`)
+// ---------------------------------------------------------------------------
+
+const LINEUPS: readonly (readonly [string, string, string])[] = [
+  ['brutus', 'aquila', 'nerva'],
+  ['aquila', 'nerva', 'brutus'],
+  ['nerva', 'brutus', 'aquila'],
+]
+const OPPONENT_BY_SLOT = ['drusus', 'cassius', 'magnus'] as const
+
+type Archetype = 'heavy' | 'fast' | 'technical'
+
+/** Player-facing type names (Task 2), used in the printed tables so the numbers read in the vocabulary the slice ships. */
+const TYPE_NAME: Readonly<Record<Archetype, string>> = {
+  heavy: 'murmillo',
+  fast: 'retiarius',
+  technical: 'hoplomachus',
+}
+
+interface Pairing {
+  index: number
+  homeId: string
+  opponentId: string
+  slot: 0 | 1 | 2
+  lineup: readonly [string, string, string]
+}
+
+function buildPairings(): Pairing[] {
+  const pairings: Pairing[] = []
+  for (const homeId of ['brutus', 'aquila', 'nerva']) {
+    for (const slot of [0, 1, 2] as const) {
+      const lineup = LINEUPS.find((candidate) => candidate[slot] === homeId)
+      if (!lineup) throw new Error(`No lineup puts ${homeId} in slot ${slot}`)
+      pairings.push({ index: pairings.length + 1, homeId, opponentId: OPPONENT_BY_SLOT[slot], slot, lineup })
+    }
+  }
+  return pairings
+}
+
+// ---------------------------------------------------------------------------
+// The dev-only surface this script drives, narrowed to what it uses.
+//
+// Declared locally rather than merged into `main.ts`'s own `Window`
+// declaration: `scripts/` is outside the tsconfig program, and a second
+// global merge would clash with the real one anyway.
+// ---------------------------------------------------------------------------
+
+interface BoundsPx {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
+interface DebugSnapshot {
+  camera: { lookTargetX: number; lookTargetZ: number; distance: number; yaw: number }
+  groupExtent: number
+  rootPositions: Record<string, { x: number; z: number }>
+  bodyHeightPx: Record<string, number>
+  fullBoundsPx: Record<string, BoundsPx>
+  centerPx: Record<string, { x: number; y: number }>
+  canvasPx: { width: number; height: number }
+}
+
+interface TestApi {
+  getActiveSeriesState: () => {
+    phase: string
+    activeBattle?: { encounter: { tick: number; combatantIds: string[]; combatants: Record<string, { definition: { archetype: Archetype; name: string } }> } }
+  } | null
+  getRenderDebugState: () => { currentTick: number | null }
+  startNextSeries: () => unknown
+  assign: (fighterId: string, slot: number) => unknown
+  confirm: () => unknown
+  advanceTicks: (ticks: number) => void
+  stepBattleAndCamera: (ticks: number, dtSeconds: number) => void
+  startNextBout: () => unknown
+  getArenaDebugSnapshot: () => DebugSnapshot | null
+}
+
+// ---------------------------------------------------------------------------
+// Per-tick record
+// ---------------------------------------------------------------------------
+
+interface RawSample {
+  tick: number
+  groupExtent: number
+  distance: number
+  yaw: number
+  ids: [string, string]
+  bodyHeightPx: [number, number]
+  fullBoundsPx: [BoundsPx, BoundsPx]
+  centerPx: [{ x: number; y: number }, { x: number; y: number }]
+  worldSeparation: number
+  screenSeparationPx: number
+}
+
+interface BoutTrace {
+  canvas: { width: number; height: number }
+  archetypes: [Archetype, Archetype]
+  names: [string, string]
+  samples: RawSample[]
+}
+
+// ---------------------------------------------------------------------------
+// Browser driving
+// ---------------------------------------------------------------------------
+
+async function openSeries(context: BrowserContext, seed: number, lineup: readonly [string, string, string]): Promise<Page> {
+  const page = await context.newPage()
+  await page.goto(`http://127.0.0.1:${PORT}/?seed=${seed}&snapshot`)
+  await page.waitForFunction(() => Boolean((window as unknown as { __GLADIATOR_TEST__?: unknown }).__GLADIATOR_TEST__))
+  await page.evaluate((assignments) => {
+    const test = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
+    test.startNextSeries()
+    assignments.forEach((fighterId, slot) => test.assign(fighterId, slot))
+    test.confirm()
+  }, [...lineup])
+  return page
+}
+
+/** Runs the bouts before `slot` to completion instantly -- they are not the pairing being measured. */
+async function skipToSlot(page: Page, slot: number): Promise<void> {
+  for (let index = 0; index < slot; index += 1) {
+    await page.evaluate(() => {
+      const test = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
+      while (test.getActiveSeriesState()!.phase === 'fighting') test.advanceTicks(240)
+      test.startNextBout()
+    })
+  }
+}
+
+/**
+ * Waits for the arena canvas to have settled at its final CSS size.
+ *
+ * The canvas is sized by a `ResizeObserver` on its parent, and the renderer's
+ * aspect ratio follows from that, so every pixel figure measured before it
+ * settles belongs to a frame that was never shown. "Settled" is two identical
+ * readings an animation frame apart, not merely non-zero: a layout can pass
+ * through an intermediate width.
+ */
+async function waitForCanvasSize(page: Page): Promise<{ width: number; height: number }> {
+  return page.evaluate(async () => {
+    const test = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
+    const read = (): { width: number; height: number } => test.getArenaDebugSnapshot()!.canvasPx
+    const nextFrame = (): Promise<void> => new Promise((done) => requestAnimationFrame(() => done()))
+    let previous = read()
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      await nextFrame()
+      const current = read()
+      if (current.width > 0 && current.height > 0 && current.width === previous.width && current.height === previous.height) return current
+      previous = current
+    }
+    throw new Error('Canvas size never settled')
+  })
+}
+
+/**
+ * Steps the active bout tick by tick, reading exactly one snapshot after each
+ * step, and returns the whole trace.
+ *
+ * The entire bout runs inside one `page.evaluate` callback on purpose: a
+ * synchronous callback cannot be interleaved with `main.ts`'s own animation
+ * frame loop, which would otherwise re-render between a step and its read (at
+ * its own paused-pegged alpha, i.e. one tick behind) and, on the very next
+ * step, feed the camera's dead-zone references a frame the measurement never
+ * observed.
+ */
+async function traceBout(page: Page, dtSeconds: number, maxTicks: number): Promise<BoutTrace> {
+  const canvas = await waitForCanvasSize(page)
+  const trace = await page.evaluate(
+    ({ dt, cap }) => {
+      const test = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
+      const battle = test.getActiveSeriesState()!.activeBattle!
+      // Home first, always: `combatantIds` is the encounter's own order,
+      // which is not guaranteed to lead with the home fighter, and every
+      // printed pairing label reads "home vs opponent".
+      const ids = [...battle.encounter.combatantIds].sort((a, b) => (a.startsWith('home.') ? -1 : 0) - (b.startsWith('home.') ? -1 : 0)) as [string, string]
+      const archetypes = ids.map((id) => battle.encounter.combatants[id].definition.archetype)
+      const names = ids.map((id) => battle.encounter.combatants[id].definition.name)
+
+      const samples: RawSample[] = []
+      let previousTick = test.getRenderDebugState().currentTick
+      for (let step = 0; step < cap; step += 1) {
+        test.stepBattleAndCamera(1, dt)
+        const snapshot = test.getArenaDebugSnapshot()
+        const tick = test.getRenderDebugState().currentTick
+        // The bout is over the moment a step no longer advances the tick:
+        // `advanceSeriesTicks` returns its input untouched once the phase
+        // leaves `fighting`, so this is the same boundary the runtime sees.
+        if (!snapshot || tick === null || tick === previousTick) break
+        previousTick = tick
+
+        const [home, away] = ids
+        const dxWorld = snapshot.rootPositions[home].x - snapshot.rootPositions[away].x
+        const dzWorld = snapshot.rootPositions[home].z - snapshot.rootPositions[away].z
+        const dxScreen = snapshot.centerPx[home].x - snapshot.centerPx[away].x
+        const dyScreen = snapshot.centerPx[home].y - snapshot.centerPx[away].y
+        samples.push({
+          tick,
+          groupExtent: snapshot.groupExtent,
+          distance: snapshot.camera.distance,
+          yaw: snapshot.camera.yaw,
+          ids,
+          bodyHeightPx: [snapshot.bodyHeightPx[home], snapshot.bodyHeightPx[away]],
+          fullBoundsPx: [snapshot.fullBoundsPx[home], snapshot.fullBoundsPx[away]],
+          centerPx: [snapshot.centerPx[home], snapshot.centerPx[away]],
+          worldSeparation: Math.hypot(dxWorld, dzWorld),
+          screenSeparationPx: Math.hypot(dxScreen, dyScreen),
+        })
+      }
+      return { archetypes: archetypes as [Archetype, Archetype], names: names as [string, string], samples }
+    },
+    { dt: dtSeconds, cap: maxTicks },
+  )
+  return { canvas, ...trace }
+}
+
+/** Each archetype's real `horizontalEquipmentRadius`, read off freshly built rigs rather than copied into this file as a literal. */
+async function readEquipmentRadii(browser: Browser): Promise<Record<Archetype, number>> {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 820 } })
+  const page = await context.newPage()
+  try {
+    await page.goto(`http://127.0.0.1:${PORT}/?snapshot`)
+    // Passed as source text rather than as a function: this script itself runs
+    // through `vite-node`, which rewrites a real `import()` in a callback body
+    // into its own SSR helper -- which does not exist in the page. A string is
+    // handed to the browser untransformed.
+    const measured = await page.evaluate(`(async () => {
+      const module = await import('/src/presentation/ProceduralFighter.ts')
+      const radii = {}
+      for (const archetype of ['heavy', 'fast', 'technical']) {
+        const fighter = module.createProceduralFighter({ archetype })
+        radii[archetype] = fighter.horizontalEquipmentRadius
+        fighter.dispose()
+      }
+      return radii
+    })()`)
+    return measured as Record<Archetype, number>
+  } finally {
+    await context.close()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Statistics
+// ---------------------------------------------------------------------------
+
+/** Nearest-rank quantile (no interpolation), so every printed figure is a value that was actually measured on some tick. */
+function quantile(sorted: readonly number[], q: number): number {
+  if (sorted.length === 0) return Number.NaN
+  const rank = Math.max(1, Math.ceil(q * sorted.length))
+  return sorted[Math.min(rank, sorted.length) - 1]
+}
+
+interface Spread {
+  count: number
+  min: number
+  median: number
+  p95: number
+  max: number
+}
+
+function spread(values: readonly number[]): Spread {
+  const sorted = [...values].sort((a, b) => a - b)
+  return {
+    count: sorted.length,
+    min: sorted.length ? sorted[0] : Number.NaN,
+    median: quantile(sorted, 0.5),
+    p95: quantile(sorted, 0.95),
+    max: sorted.length ? sorted[sorted.length - 1] : Number.NaN,
+  }
+}
+
+function fixed(value: number, digits = 2): string {
+  return Number.isFinite(value) ? value.toFixed(digits) : '--'
+}
+
+/**
+ * How far this frame could be magnified about the canvas centre before some
+ * part of either fighter left the safe area.
+ *
+ * The camera always looks straight at the group's midpoint, so that midpoint
+ * projects to the canvas centre exactly, and pulling the camera in along its
+ * own view ray magnifies screen offsets from that centre by (to first order)
+ * the ratio of the two distances. `< 1` means this frame is already outside
+ * the safe area.
+ */
+function safeAreaHeadroom(bounds: readonly BoundsPx[], canvas: { width: number; height: number }): { headroom: number; edge: string; fighter: number } {
+  const centreX = canvas.width / 2
+  const centreY = canvas.height / 2
+  const left = SAFE_AREA_INSET * canvas.width
+  const right = (1 - SAFE_AREA_INSET) * canvas.width
+  const top = SAFE_AREA_INSET * canvas.height
+  const bottom = (1 - SAFE_AREA_INSET) * canvas.height
+
+  let headroom = Infinity
+  let edge = 'none'
+  let fighter = -1
+  let index = 0
+  const consider = (candidate: number, name: string): void => {
+    if (candidate < headroom) {
+      headroom = candidate
+      edge = name
+      fighter = index
+    }
+  }
+  for (const box of bounds) {
+    if (box.minX < centreX) consider((left - centreX) / (box.minX - centreX), 'left')
+    if (box.maxX > centreX) consider((right - centreX) / (box.maxX - centreX), 'right')
+    if (box.minY < centreY) consider((top - centreY) / (box.minY - centreY), 'top')
+    if (box.maxY > centreY) consider((bottom - centreY) / (box.maxY - centreY), 'bottom')
+    index += 1
+  }
+  return { headroom, edge, fighter }
+}
+
+/** How far the nearest part of either fighter sits inside the safe-area inset, in px. Negative is a violation. */
+function insetMarginPx(bounds: readonly BoundsPx[], canvas: { width: number; height: number }): number {
+  const left = SAFE_AREA_INSET * canvas.width
+  const right = (1 - SAFE_AREA_INSET) * canvas.width
+  const top = SAFE_AREA_INSET * canvas.height
+  const bottom = (1 - SAFE_AREA_INSET) * canvas.height
+  let margin = Infinity
+  for (const box of bounds) {
+    margin = Math.min(margin, box.minX - left, right - box.maxX, box.minY - top, bottom - box.maxY)
+  }
+  return margin
+}
+
+// ---------------------------------------------------------------------------
+// Reporting
+// ---------------------------------------------------------------------------
+
+interface PairingReport {
+  label: string
+  viewport: { width: number; height: number }
+  canvas: { width: number; height: number }
+  band: { low: number; high: number }
+  ticks: number
+  inBandTicks: number
+  extent: Spread
+  bodyHeight: Spread
+  bodyHeightInBand: Spread
+  safeViolationTicks: number
+  /** Screen separation per world unit of separation, i.e. the frame's pixels-per-unit scale, per tick. */
+  pxPerWorldUnit: Spread
+  /** Tick-to-tick |screen change| / |world change|: how much of a real approach/retreat survives the camera's own zoom. */
+  attenuation: Spread
+  /** Full on-screen bounds (props included), per tick, both fighters. */
+  fullWidthPx: Spread
+  fullHeightPx: Spread
+  /** Smallest gap in px between any part of either fighter and the safe-area inset; negative is a violation. */
+  minInsetMarginPx: number
+  /** The largest flat framing distance that would still clear the body floor on every in-band tick, first-order. */
+  floorDistanceCeiling: number
+  /**
+   * The same, read on the *median* in-band tick rather than the worst one --
+   * i.e. the distance at which half the in-band frames clear the floor.
+   * Printed alongside the strict figure because the strict one turns out to
+   * be set by deep-lunge frames, where the body genuinely is not vertical and
+   * a head-to-foot *vertical* span is measuring lean as much as scale.
+   */
+  floorDistanceCeilingMedian: number
+  /** The smallest framing distance that would still keep every prop inside the safe area on every tick, first-order. */
+  safeDistanceFloor: number
+  /** The same, restricted to in-band ticks -- the ones a flat framing distance would actually govern. */
+  safeDistanceFloorInBand: number
+  minBodyHeightInBand: number
+  /** The single in-band tick that sets `floorDistanceCeiling`, so the finding can be re-derived by hand. */
+  bindingFloorTick?: { tick: number; extent: number; distance: number; bodyHeightPx: number }
+  /**
+   * The single in-band tick that sets `safeDistanceFloorInBand`, including
+   * whose silhouette binds and by how much its props overhang his own body:
+   * `fullHeightPx` far above `bodyHeightPx` means the frame is capped by
+   * something the fighter is *carrying*, not by the fighter.
+   */
+  bindingSafeTick?: {
+    tick: number
+    extent: number
+    distance: number
+    edge: string
+    headroom: number
+    marginPx: number
+    fighter: string
+    fullHeightPx: number
+    bodyHeightPx: number
+  }
+}
+
+function analyse(
+  label: string,
+  viewport: { width: number; height: number },
+  trace: BoutTrace,
+  radii: Record<Archetype, number>,
+): PairingReport {
+  const margin = EQUIPMENT_MARGIN * (radii[trace.archetypes[0]] + radii[trace.archetypes[1]])
+  const band = { low: BAND_SEPARATION_LOW + margin, high: BAND_SEPARATION_HIGH + margin }
+
+  const extents: number[] = []
+  const bodyHeights: number[] = []
+  const bodyHeightsInBand: number[] = []
+  const fullWidths: number[] = []
+  const fullHeights: number[] = []
+  const pxPerUnit: number[] = []
+  const attenuation: number[] = []
+  let minInsetMargin = Infinity
+  let inBandTicks = 0
+  let safeViolationTicks = 0
+  let floorDistanceCeiling = Infinity
+  let safeDistanceFloor = 0
+  let safeDistanceFloorInBand = 0
+  let minBodyHeightInBand = Infinity
+  const floorCeilings: number[] = []
+  let bindingFloorTick: PairingReport['bindingFloorTick']
+  let bindingSafeTick: PairingReport['bindingSafeTick']
+
+  trace.samples.forEach((sample, index) => {
+    const inBand = sample.groupExtent >= band.low && sample.groupExtent <= band.high
+    extents.push(sample.groupExtent)
+    bodyHeights.push(...sample.bodyHeightPx)
+    if (inBand) {
+      inBandTicks += 1
+      bodyHeightsInBand.push(...sample.bodyHeightPx)
+      const smallest = Math.min(...sample.bodyHeightPx)
+      minBodyHeightInBand = Math.min(minBodyHeightInBand, smallest)
+      // height_px scales as 1/distance, so the flat distance that would put
+      // this tick exactly on the floor is `height * distance / floor`; the
+      // smallest such value over the band is the ceiling for all of them.
+      const ceiling = (smallest * sample.distance) / BODY_HEIGHT_FLOOR_PX
+      floorCeilings.push(ceiling)
+      if (ceiling < floorDistanceCeiling) {
+        floorDistanceCeiling = ceiling
+        bindingFloorTick = { tick: sample.tick, extent: sample.groupExtent, distance: sample.distance, bodyHeightPx: smallest }
+      }
+    }
+
+    for (const box of sample.fullBoundsPx) {
+      fullWidths.push(box.maxX - box.minX)
+      fullHeights.push(box.maxY - box.minY)
+    }
+    const margin = insetMarginPx(sample.fullBoundsPx, trace.canvas)
+    minInsetMargin = Math.min(minInsetMargin, margin)
+    if (margin < 0) safeViolationTicks += 1
+    const { headroom, edge, fighter } = safeAreaHeadroom(sample.fullBoundsPx, trace.canvas)
+    const required = sample.distance / headroom
+    safeDistanceFloor = Math.max(safeDistanceFloor, required)
+    if (inBand && required > safeDistanceFloorInBand) {
+      safeDistanceFloorInBand = required
+      const box = sample.fullBoundsPx[fighter]
+      bindingSafeTick = {
+        tick: sample.tick,
+        extent: sample.groupExtent,
+        distance: sample.distance,
+        edge,
+        headroom,
+        marginPx: margin,
+        fighter: `${sample.ids[fighter]} (${TYPE_NAME[trace.archetypes[fighter]]})`,
+        fullHeightPx: box.maxY - box.minY,
+        bodyHeightPx: sample.bodyHeightPx[fighter],
+      }
+    }
+
+    if (sample.worldSeparation > 1e-6) pxPerUnit.push(sample.screenSeparationPx / sample.worldSeparation)
+    if (index > 0) {
+      const previous = trace.samples[index - 1]
+      const worldStep = Math.abs(sample.worldSeparation - previous.worldSeparation)
+      if (worldStep > 1e-4) attenuation.push(Math.abs(sample.screenSeparationPx - previous.screenSeparationPx) / worldStep)
+    }
+  })
+
+  return {
+    label,
+    viewport,
+    canvas: trace.canvas,
+    band,
+    ticks: trace.samples.length,
+    inBandTicks,
+    extent: spread(extents),
+    bodyHeight: spread(bodyHeights),
+    bodyHeightInBand: spread(bodyHeightsInBand),
+    safeViolationTicks,
+    fullWidthPx: spread(fullWidths),
+    fullHeightPx: spread(fullHeights),
+    minInsetMarginPx: minInsetMargin,
+    pxPerWorldUnit: spread(pxPerUnit),
+    attenuation: spread(attenuation),
+    floorDistanceCeiling,
+    floorDistanceCeilingMedian: spread(floorCeilings).median,
+    safeDistanceFloor,
+    safeDistanceFloorInBand,
+    minBodyHeightInBand,
+    bindingFloorTick,
+    bindingSafeTick,
+  }
+}
+
+function printPairingTable(reports: readonly PairingReport[]): void {
+  const header = [
+    'pairing'.padEnd(30),
+    'ticks'.padStart(5),
+    'band'.padStart(11),
+    'extent min/med/p95/max'.padStart(28),
+    'body min/med/max'.padStart(22),
+    'in-band body min/med'.padStart(24),
+    'full w/h med'.padStart(14),
+    'inset'.padStart(7),
+    'unsafe'.padStart(6),
+    'px/unit'.padStart(8),
+    'dScr/dWld'.padStart(10),
+  ]
+  console.log(header.join(' '))
+  for (const report of reports) {
+    console.log(
+      [
+        report.label.padEnd(30),
+        String(report.ticks).padStart(5),
+        `${fixed(report.band.low)}-${fixed(report.band.high)}`.padStart(11),
+        `${fixed(report.extent.min)}/${fixed(report.extent.median)}/${fixed(report.extent.p95)}/${fixed(report.extent.max)}`.padStart(28),
+        `${fixed(report.bodyHeight.min, 1)}/${fixed(report.bodyHeight.median, 1)}/${fixed(report.bodyHeight.max, 1)}`.padStart(22),
+        `${fixed(report.minBodyHeightInBand, 1)}/${fixed(report.bodyHeightInBand.median, 1)} (${report.inBandTicks}t)`.padStart(24),
+        `${fixed(report.fullWidthPx.median, 0)}/${fixed(report.fullHeightPx.median, 0)}`.padStart(14),
+        fixed(report.minInsetMarginPx, 0).padStart(7),
+        String(report.safeViolationTicks).padStart(6),
+        fixed(report.pxPerWorldUnit.median, 1).padStart(8),
+        fixed(report.attenuation.median, 1).padStart(10),
+      ].join(' '),
+    )
+  }
+}
+
+function printOverall(reports: readonly PairingReport[], viewport: { width: number; height: number }): void {
+  const extents = reports.flatMap((report) => [report.extent.min, report.extent.max])
+  const allExtent = spread(extents)
+  const bodyMin = Math.min(...reports.map((report) => report.bodyHeight.min))
+  const bodyMax = Math.max(...reports.map((report) => report.bodyHeight.max))
+  const inBandBodyMin = Math.min(...reports.map((report) => report.minBodyHeightInBand))
+  const violations = reports.reduce((sum, report) => sum + report.safeViolationTicks, 0)
+  const ticks = reports.reduce((sum, report) => sum + report.ticks, 0)
+  const inBand = reports.reduce((sum, report) => sum + report.inBandTicks, 0)
+  const pxPerUnit = spread(reports.map((report) => report.pxPerWorldUnit.median))
+  const attenuation = spread(reports.map((report) => report.attenuation.median))
+
+  console.log(
+    `\n  overall @ ${viewport.width}x${viewport.height}: ${ticks} ticks (${inBand} in band), ` +
+      `extent ${fixed(allExtent.min)}..${fixed(allExtent.max)}, ` +
+      `body ${fixed(bodyMin, 1)}..${fixed(bodyMax, 1)} px (in-band min ${fixed(inBandBodyMin, 1)}), ` +
+      `safe-area violations ${violations}, ` +
+      `px/world-unit median ${fixed(pxPerUnit.median, 1)}, ` +
+      `d(screen)/d(world) median ${fixed(attenuation.median, 1)} px/unit`,
+  )
+}
+
+/**
+ * The whole point of the run: is there a single flat framing distance that
+ * clears the body floor at 1280x820 inside the band while keeping every prop
+ * inside the safe area at all three viewports?
+ *
+ * First-order, and labelled as such: on-screen size scales as `1/distance`,
+ * and pulling the camera in magnifies screen offsets about the frame centre
+ * (which is exactly where the look target projects). Both hold well for a
+ * modest change of distance at a fixed elevation ratio; Task 6's sweep is
+ * what confirms a specific candidate by replay.
+ */
+function printFeasibility(byViewport: ReadonlyMap<string, readonly PairingReport[]>): void {
+  const wide = byViewport.get('1280x820')
+  if (!wide) {
+    console.log('\n(no 1280x820 run -- the body floor is only stated there, so no feasibility verdict)')
+    return
+  }
+
+  const floorCeiling = Math.min(...wide.map((report) => report.floorDistanceCeiling))
+  const floorPairing = wide.find((report) => report.floorDistanceCeiling === floorCeiling)
+
+  const bindingOver = (pick: (report: PairingReport) => number): { value: number; label: string } => {
+    let value = 0
+    let label = ''
+    for (const [key, reports] of byViewport) {
+      for (const report of reports) {
+        if (pick(report) > value) {
+          value = pick(report)
+          label = `${key} ${report.label}`
+        }
+      }
+    }
+    return { value, label }
+  }
+  const safeInBand = bindingOver((report) => report.safeDistanceFloorInBand)
+  const safeEverywhere = bindingOver((report) => report.safeDistanceFloor)
+
+  console.log('\n=== Is the 130 px body floor reachable? (first-order projection) ===')
+  console.log(`  largest flat distance that still clears ${BODY_HEIGHT_FLOOR_PX} px in band @1280x820: ${fixed(floorCeiling, 3)}  (binding: ${floorPairing?.label ?? '--'})`)
+  if (floorPairing?.bindingFloorTick) {
+    const at = floorPairing.bindingFloorTick
+    console.log(`     at tick ${at.tick}: extent ${fixed(at.extent)}, distance ${fixed(at.distance)}, body ${fixed(at.bodyHeightPx, 1)} px -> ${fixed(at.bodyHeightPx, 1)} x ${fixed(at.distance)} / ${BODY_HEIGHT_FLOOR_PX} = ${fixed(floorCeiling, 3)}`)
+  }
+  const medianCeiling = Math.min(...wide.map((report) => report.floorDistanceCeilingMedian))
+  console.log(`  ... the same read on each pairing's MEDIAN in-band tick instead of its worst: ${fixed(medianCeiling, 3)}`)
+  console.log(`  smallest distance keeping every prop inside the 5% inset, IN-BAND ticks only: ${fixed(safeInBand.value, 3)}  (binding: ${safeInBand.label})`)
+  for (const [key, reports] of byViewport) {
+    for (const report of reports) {
+      if (`${key} ${report.label}` !== safeInBand.label || !report.bindingSafeTick) continue
+      const at = report.bindingSafeTick
+      console.log(
+        `     at tick ${at.tick}: extent ${fixed(at.extent)}, distance ${fixed(at.distance)}, ${at.edge} edge, ` +
+          `headroom x${fixed(at.headroom, 3)} (${fixed(at.marginPx, 0)} px of inset margin left) -> ${fixed(at.distance)} / ${fixed(at.headroom, 3)} = ${fixed(safeInBand.value, 3)}`,
+      )
+      console.log(
+        `     bound by ${at.fighter}: full silhouette ${fixed(at.fullHeightPx, 0)} px tall against a ${fixed(at.bodyHeightPx, 0)} px body ` +
+          `-- ${fixed(at.fullHeightPx - at.bodyHeightPx, 0)} px of that is what he is carrying`,
+      )
+    }
+  }
+  console.log(`  ... and over ALL ticks, i.e. if the flat distance were used out to the widest frame: ${fixed(safeEverywhere.value, 3)}  (binding: ${safeEverywhere.label})`)
+  console.log('  (in-band is the number that constrains FLAT_DISTANCE; beyond the band Task 6 eases out toward the far clamp.)')
+  if (safeInBand.value <= floorCeiling) {
+    console.log(`  => a flat distance exists. Search space for Task 6: [${fixed(safeInBand.value, 3)}, ${fixed(floorCeiling, 3)}]`)
+  } else {
+    console.log(`  => NO flat distance satisfies both. The safe area binds at ${fixed(safeInBand.value, 3)}, the floor needs <= ${fixed(floorCeiling, 3)}.`)
+    console.log('     Report it as a design finding with these numbers. Do not lower the floor.')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+interface Args {
+  seed: number
+  only?: number
+  width?: number
+  maxTicks: number
+}
+
+function parseArgs(argv: readonly string[]): Args {
+  const get = (name: string): string | undefined => argv.find((arg) => arg.startsWith(`--${name}=`))?.split('=')[1]
+  const only = get('only')
+  const width = get('width')
+  return {
+    seed: Number(get('seed') ?? 20260815),
+    only: only === undefined ? undefined : Number(only),
+    width: width === undefined ? undefined : Number(width),
+    maxTicks: Number(get('max-ticks') ?? MAX_BOUT_TICKS),
+  }
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2))
+  const server = await createServer({
+    root: resolve('.'),
+    server: { host: '127.0.0.1', port: PORT, strictPort: true },
+  })
+  await server.listen()
+  const browser = await chromium.launch()
+  const startedAt = Date.now()
+
+  try {
+    const radii = await readEquipmentRadii(browser)
+    console.log(`seed ${args.seed}, camera delta ${CAMERA_DELTA_SECONDS.toFixed(5)} s/tick, safe-area inset ${SAFE_AREA_INSET * 100}% of canvas`)
+    console.log(
+      `horizontalEquipmentRadius: ${(['heavy', 'fast', 'technical'] as const).map((archetype) => `${TYPE_NAME[archetype]} ${radii[archetype].toFixed(4)}`).join(', ')}`,
+    )
+
+    const byViewport = new Map<string, PairingReport[]>()
+    for (const viewport of VIEWPORTS) {
+      if (args.width !== undefined && args.width !== viewport.width) continue
+      const key = `${viewport.width}x${viewport.height}`
+      const reports: PairingReport[] = []
+      console.log(`\n=== viewport ${key} ===`)
+
+      for (const pairing of buildPairings()) {
+        if (args.only !== undefined && args.only !== pairing.index) continue
+        const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } })
+        try {
+          const page = await openSeries(context, args.seed, pairing.lineup)
+          await skipToSlot(page, pairing.slot)
+          const trace = await traceBout(page, CAMERA_DELTA_SECONDS, args.maxTicks)
+          const label = `${String(pairing.index).padStart(2, '0')} ${TYPE_NAME[trace.archetypes[0]]} vs ${TYPE_NAME[trace.archetypes[1]]}`
+          reports.push(analyse(label, viewport, trace, radii))
+        } finally {
+          await context.close()
+        }
+      }
+
+      if (reports.length === 0) continue
+      console.log(`canvas ${reports[0].canvas.width}x${reports[0].canvas.height} CSS px inside the ${key} page`)
+      printPairingTable(reports)
+      printOverall(reports, viewport)
+      byViewport.set(key, reports)
+    }
+
+    printFeasibility(byViewport)
+    console.log(`\ndone in ${((Date.now() - startedAt) / 1000).toFixed(1)} s`)
+  } finally {
+    await browser.close()
+    await server.close()
+  }
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? (error.stack ?? error.message) : String(error))
+  process.exit(1)
+})

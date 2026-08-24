@@ -11,7 +11,7 @@
 // under `src/simulation/**`.
 
 import * as THREE from 'three'
-import { ArenaCamera, type ArenaCameraState, type HorizontalFramingTarget } from './ArenaCamera'
+import { ArenaCamera, measuredExtent, type ArenaCameraState, type HorizontalFramingTarget } from './ArenaCamera'
 import { createProceduralFighter, SEMANTIC_JOINT_NAMES, type JointName, type ProceduralFighter } from './ProceduralFighter'
 import { PoseController } from './PoseController'
 import type { JointTransform } from './poses/combatPoses'
@@ -73,7 +73,100 @@ export interface ArenaDebugSnapshot {
   trailPointCounts: Readonly<Record<CombatantId, number>>
   camera: ArenaCameraState
   eventCursor: number
+  /**
+   * The group extent the camera's own framing consumed for this frame:
+   * `ArenaCamera`'s exported `measuredExtent` over the same targets
+   * `applyFrame` built, at the camera's current `state.yaw`. Not a
+   * re-derivation from positions and radii -- that quantity (no yaw, no 10%
+   * equipment margin) is not what `extentToDistance` is fed, and a camera
+   * constant chosen against it would be chosen against a number the shipping
+   * camera never sees.
+   */
+  groupExtent: number
+  /**
+   * Each rig's on-screen head-to-foot height in CSS pixels: the projected
+   * vertical span of the *body* silhouette only (`BODY_SILHOUETTE_SLOTS` --
+   * the man and everything he wears, helmet and crest included), never of
+   * what he holds.
+   *
+   * Deliberately a different number from `fullBoundsPx` below. The slice's
+   * scale floor is a floor on how big the *fighter* reads, and a hoplomachus
+   * holding a 1.30-unit spear upright, or a murmillo behind a 1.10-unit
+   * scutum, would satisfy a floor measured over everything on screen without
+   * the man himself being any easier to see.
+   */
+  bodyHeightPx: Readonly<Record<CombatantId, number>>
+  /**
+   * Each rig's full on-screen axis-aligned bounds in CSS pixels: every
+   * slotted mesh, props included (spear, trident, net, both shields, crest,
+   * greaves, rim outlines). This is what the safe-area rule is checked
+   * against -- no part of either fighter may leave the canvas inset, however
+   * long the thing he is carrying.
+   *
+   * Origin is the canvas's top-left corner, `y` growing downward, matching
+   * DOM/screenshot pixel conventions rather than NDC.
+   */
+  fullBoundsPx: Readonly<Record<CombatantId, ScreenBoundsPx>>
+  /**
+   * Each rig's root (ground) point projected to canvas pixels -- the same
+   * point `rootPositions` reports in world space, deliberately, so that
+   * "screen separation / world separation" pairs two measurements of the
+   * identical pair of points and reads as a pixels-per-world-unit scale.
+   * A silhouette-box centre would fold each fighter's own vertical extent
+   * into that ratio.
+   */
+  centerPx: Readonly<Record<CombatantId, ScreenPointPx>>
+  /**
+   * The drawing surface every `*Px` field above is measured in: the canvas's
+   * own CSS size, which is markedly smaller than the viewport (the arena is
+   * one cell of a page that also carries HP cards and a battle feed). The
+   * safe area is an inset of *this*, never of the viewport.
+   */
+  canvasPx: { width: number; height: number }
 }
+
+/** Canvas-pixel bounds, top-left origin, `y` downward. */
+export interface ScreenBoundsPx {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
+/** A canvas-pixel point, top-left origin, `y` downward. */
+export interface ScreenPointPx {
+  x: number
+  y: number
+}
+
+/**
+ * Which `ProceduralFighter` mesh slots (`userData.slot`) count toward
+ * `ArenaDebugSnapshot.bodyHeightPx`: the man and what he wears. `'rim'` is
+ * included because every rim outline in the rig belongs to a body mesh
+ * (`addRimOutline` is only ever reached from `addBoxSegment`/`addSphere`,
+ * which no equipment builder uses) and it is drawn 5% larger than the mesh it
+ * outlines, so excluding it would under-report the silhouette that is
+ * actually on screen.
+ *
+ * The three *held* slots -- `'weapon'`, `'shield'`, `'net'` -- are absent on
+ * purpose, and so is anything a later kit adds: an unrecognised slot counts
+ * toward `fullBoundsPx` only. The safe direction for an unknown prop is that
+ * it cannot inflate a body-size floor.
+ */
+const BODY_SILHOUETTE_SLOTS: ReadonlySet<string> = new Set([
+  'cloth',
+  'skin',
+  'limb',
+  'rim',
+  'visor',
+  'breastplate',
+  'backplate',
+  'armor',
+  'helmet',
+  'crest',
+  'greave',
+  'shoulderGuard',
+])
 
 const CAMERA_MIN_DISTANCE = 11
 const CAMERA_MAX_DISTANCE = 18
@@ -442,7 +535,16 @@ export class ArenaView {
         }
         this.renderer!.render(this.scene, this.perspectiveCamera)
       }
-      this.getDebugSnapshot = (): ArenaDebugSnapshot => buildArenaDebugSnapshot(this.rigs, this.flashes, this.arenaCamera.state, this.eventCursor)
+      this.getDebugSnapshot = (): ArenaDebugSnapshot =>
+        buildArenaDebugSnapshot(this.rigs, this.flashes, this.arenaCamera.state, this.eventCursor, {
+          camera: this.perspectiveCamera,
+          // The canvas's CSS size, not the drawing-buffer size: `resize()`
+          // hands the renderer exactly these numbers with `updateStyle:
+          // false`, and a device-pixel-ratio-scaled buffer would make every
+          // measured pixel figure depend on the reviewer's monitor.
+          widthPx: this.canvas.clientWidth,
+          heightPx: this.canvas.clientHeight,
+        })
     }
   }
 
@@ -537,8 +639,16 @@ export class ArenaView {
    * from that elapsed wall-clock time. `main.ts` passes
    * `advanceCameraTime: !runtime.paused`, so an *unpaused* real frame still
    * damps the camera normally every tick, exactly as before.
+   *
+   * `cameraDeltaSeconds` (dev-only, set by `main.ts`'s
+   * `stepBattleAndCamera`) replaces that wall clock outright with an exact
+   * figure, and overrides `advanceCameraTime`. It is what makes a per-tick
+   * measurement trace mean anything: the camera's damping is wall-clock, so
+   * a harness that ran N ticks and then rendered would attribute one
+   * render's worth of real elapsed time to N ticks of motion. With a fixed
+   * `1/60` it damps exactly as `x1` playback does, one tick at a time.
    */
-  sync(frame: BattleRenderFrame, options?: { advanceCameraTime?: boolean }): void {
+  sync(frame: BattleRenderFrame, options?: { advanceCameraTime?: boolean; cameraDeltaSeconds?: number }): void {
     // Freeze before `applyFrame` -- including before its own `contextLost`
     // early return -- so the invariant holds even on a session where no
     // WebGL context exists to render into at all, not only on the normal
@@ -546,10 +656,13 @@ export class ArenaView {
     deepFreeze(frame.previous)
     deepFreeze(frame.current)
     deepFreeze(frame.events)
-    this.applyFrame(frame, { advanceCameraTime: options?.advanceCameraTime ?? true })
+    this.applyFrame(frame, {
+      advanceCameraTime: options?.advanceCameraTime ?? true,
+      cameraDeltaSeconds: options?.cameraDeltaSeconds,
+    })
   }
 
-  private applyFrame(frame: BattleRenderFrame, options: { advanceCameraTime: boolean }): void {
+  private applyFrame(frame: BattleRenderFrame, options: { advanceCameraTime: boolean; cameraDeltaSeconds?: number }): void {
     if (this.contextLost) return
     this.lastFrame = frame
 
@@ -609,7 +722,7 @@ export class ArenaView {
       framingTargets.push({ id, centerX: position.x, centerZ: position.z, radius: rig.fighter.horizontalEquipmentRadius })
     }
 
-    const elapsedSeconds = this.consumeCameraDelta(nowMs, options.advanceCameraTime)
+    const elapsedSeconds = this.consumeCameraDelta(nowMs, options.advanceCameraTime, options.cameraDeltaSeconds)
     const cameraState = this.arenaCamera.update(framingTargets, elapsedSeconds)
     this.applyCameraTransform(cameraState)
 
@@ -759,7 +872,17 @@ export class ArenaView {
     return targets
   }
 
-  private consumeCameraDelta(nowMs: number, advance: boolean): number {
+  private consumeCameraDelta(nowMs: number, advance: boolean, fixedSeconds?: number): number {
+    // An explicit delta is a deliberate figure, not a wall-clock reading, so
+    // it is neither clamped by `MAX_FRAME_DELTA_SECONDS` (which exists to
+    // absorb backgrounded-tab spikes) nor gated by `advance`. The wall clock
+    // is still re-baselined to now, so whichever real frame runs next
+    // measures from here rather than charging the camera for however long the
+    // fixed-step run took.
+    if (fixedSeconds !== undefined) {
+      this.lastCameraTimeMs = nowMs
+      return fixedSeconds
+    }
     if (!advance) return 0
     if (this.lastCameraTimeMs === null) {
       this.lastCameraTimeMs = nowMs
@@ -910,17 +1033,116 @@ export class ArenaView {
 // generally do not prune unused members out of an otherwise-live class.
 // ---------------------------------------------------------------------------
 
+/**
+ * Everything the pixel measurements below need in order to turn a world
+ * point into a canvas pixel: the live perspective camera and the canvas's own
+ * CSS size.
+ */
+interface ProjectionContext {
+  camera: THREE.PerspectiveCamera
+  widthPx: number
+  heightPx: number
+}
+
+/** Scratch vectors, module-level so a per-tick measurement run allocates nothing. */
+const PROJECTED_POINT = new THREE.Vector3()
+const MEASURED_CORNER = new THREE.Vector3()
+
+/**
+ * A world point in canvas pixels, top-left origin, `y` downward.
+ *
+ * Points behind the camera would project through the perspective divide with
+ * a negative `w` and come back mirrored. Nothing measured here can be behind
+ * it -- the camera always sits `11..18` units back from the look target it is
+ * pointed at, and everything measured is a fighter inside a `7.7`-radius
+ * arena floor -- so this deliberately carries no guard that would silently
+ * substitute a fake number for a real geometry bug.
+ */
+function projectToCanvasPx(point: THREE.Vector3, projection: ProjectionContext): ScreenPointPx {
+  PROJECTED_POINT.copy(point).project(projection.camera)
+  return {
+    x: (PROJECTED_POINT.x * 0.5 + 0.5) * projection.widthPx,
+    y: (0.5 - PROJECTED_POINT.y * 0.5) * projection.heightPx,
+  }
+}
+
+interface MutableBoundsPx {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
+function emptyBounds(): MutableBoundsPx {
+  return { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity }
+}
+
+/**
+ * Expands `bounds` over every mesh under `root` whose slot `includesSlot`
+ * accepts, by projecting the eight corners of that mesh's own *geometry*
+ * bounding box through its world matrix.
+ *
+ * The geometry box rather than a world-space `Box3`: a world AABB of a
+ * rotated mesh (every limb, and the whole weapon assembly, is rotated) is
+ * strictly larger than the mesh, and the safe-area question is whether the
+ * drawn thing leaves the frame, not whether a box around it would. The eight
+ * projected corners still bound the drawn mesh, because a perspective
+ * projection maps the convex hull of the box into the convex hull of the
+ * projected corners for any box entirely in front of the camera.
+ */
+function accumulateProjectedBounds(
+  root: THREE.Object3D,
+  projection: ProjectionContext,
+  includesSlot: (slot: string) => boolean,
+  bounds: MutableBoundsPx,
+): void {
+  root.traverse((object) => {
+    const mesh = object as THREE.Mesh
+    if (!mesh.isMesh) return
+    const slot = mesh.userData.slot
+    if (typeof slot !== 'string' || !includesSlot(slot)) return
+    const geometry = mesh.geometry
+    if (!geometry.boundingBox) geometry.computeBoundingBox()
+    const box = geometry.boundingBox
+    if (!box) return
+    for (const x of [box.min.x, box.max.x]) {
+      for (const y of [box.min.y, box.max.y]) {
+        for (const z of [box.min.z, box.max.z]) {
+          MEASURED_CORNER.set(x, y, z).applyMatrix4(mesh.matrixWorld)
+          const point = projectToCanvasPx(MEASURED_CORNER, projection)
+          bounds.minX = Math.min(bounds.minX, point.x)
+          bounds.maxX = Math.max(bounds.maxX, point.x)
+          bounds.minY = Math.min(bounds.minY, point.y)
+          bounds.maxY = Math.max(bounds.maxY, point.y)
+        }
+      }
+    }
+  })
+}
+
 function buildArenaDebugSnapshot(
   rigs: ReadonlyMap<CombatantId, FighterRig>,
   flashes: ContactFlashEffects,
   cameraState: ArenaCameraState,
   eventCursor: number,
+  projection: ProjectionContext,
 ): ArenaDebugSnapshot {
   const rootPositions: Record<CombatantId, Vec2> = {}
   const rootYaw: Record<CombatantId, number> = {}
   const jointRotations: Record<CombatantId, Record<JointName, readonly [number, number, number]>> = {}
   const trailPointCounts: Record<CombatantId, number> = {}
+  const bodyHeightPx: Record<CombatantId, number> = {}
+  const fullBoundsPx: Record<CombatantId, ScreenBoundsPx> = {}
+  const centerPx: Record<CombatantId, ScreenPointPx> = {}
+  const framingTargets: HorizontalFramingTarget[] = []
   let jointTransformsFinite = true
+
+  // What `WebGLRenderer.render` does before it projects anything. Repeated
+  // here so a snapshot read outside a render (or after a camera transform
+  // that has not been rendered yet) still measures the camera's current
+  // transform rather than the previous frame's.
+  projection.camera.updateMatrixWorld()
+  projection.camera.matrixWorldInverse.copy(projection.camera.matrixWorld).invert()
 
   for (const [id, rig] of rigs) {
     rootPositions[id] = { x: rig.fighter.root.position.x, z: rig.fighter.root.position.z }
@@ -962,6 +1184,30 @@ function buildArenaDebugSnapshot(
     }
     jointRotations[id] = rotationsForRig
     trailPointCounts[id] = rig.trailLine.visible ? rig.trailPoints.length : 0
+
+    // `applyFrame` already does this every rendered frame; repeated for the
+    // same reason the camera's matrices are refreshed above -- a snapshot
+    // must measure the rig as it currently stands, not as it stood at
+    // whatever the last render happened to be.
+    rig.fighter.root.updateMatrixWorld(true)
+
+    const body = emptyBounds()
+    accumulateProjectedBounds(rig.fighter.root, projection, (slot) => BODY_SILHOUETTE_SLOTS.has(slot), body)
+    bodyHeightPx[id] = Number.isFinite(body.maxY - body.minY) ? body.maxY - body.minY : 0
+
+    const full = emptyBounds()
+    accumulateProjectedBounds(rig.fighter.root, projection, () => true, full)
+    fullBoundsPx[id] = { minX: full.minX, maxX: full.maxX, minY: full.minY, maxY: full.maxY }
+
+    MEASURED_CORNER.setFromMatrixPosition(rig.fighter.root.matrixWorld)
+    centerPx[id] = projectToCanvasPx(MEASURED_CORNER, projection)
+
+    framingTargets.push({
+      id,
+      centerX: rig.fighter.root.position.x,
+      centerZ: rig.fighter.root.position.z,
+      radius: rig.fighter.horizontalEquipmentRadius,
+    })
   }
 
   return {
@@ -973,5 +1219,14 @@ function buildArenaDebugSnapshot(
     trailPointCounts,
     camera: cameraState,
     eventCursor,
+    // The same targets `applyFrame` builds (rig root position plus that rig's
+    // own `horizontalEquipmentRadius`) through the camera's own exported
+    // measure at the yaw the camera currently holds -- i.e. the exact number
+    // its distance mapping consumed for the frame just rendered.
+    groupExtent: measuredExtent(framingTargets, cameraState.yaw),
+    bodyHeightPx,
+    fullBoundsPx,
+    centerPx,
+    canvasPx: { width: projection.widthPx, height: projection.heightPx },
   }
 }

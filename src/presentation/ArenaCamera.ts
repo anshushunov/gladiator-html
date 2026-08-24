@@ -144,7 +144,16 @@ function clamp(value: number, min: number, max: number): number {
   return value
 }
 
-function extentToDistance(extent: number, minDistance: number, maxDistance: number): number {
+/**
+ * The pre-clamp distance mapping (`DISTANCE_BASE`/`DISTANCE_PER_EXTENT_UNIT`
+ * above) plus the clamp. Exported so a measurement harness can invert the one
+ * quantity the camera actually exposes -- `state.distance` -- back onto the
+ * extent that produced it, and so prove that `measuredExtent` below really is
+ * the camera's own measure rather than a lookalike (see
+ * `ArenaCamera.test.ts`'s "reports the same group extent the camera's own
+ * framing consumed"). Nothing in `src/` calls it from outside this module.
+ */
+export function extentToDistance(extent: number, minDistance: number, maxDistance: number): number {
   return clamp(DISTANCE_BASE + extent * DISTANCE_PER_EXTENT_UNIT, minDistance, maxDistance)
 }
 
@@ -286,6 +295,51 @@ function measureUnclampedYaw(targets: readonly HorizontalFramingTarget[], refere
  * `ArenaView` (it always frames at least one combatant), kept only so
  * `reset()`/`update()` never throw on it.
  */
+/**
+ * The screen-horizontal (`right`-axis) edges of the group at the given yaw,
+ * margins included. Factored out so `measureGroup` below and the exported
+ * `measuredExtent` cannot drift apart: they are the same arithmetic on the
+ * same inputs, so the extent a measurement harness reads back is bit-for-bit
+ * the extent the shipping camera's distance mapping consumed, not a
+ * reimplementation of it that happens to agree today.
+ */
+function measureScreenHorizontalEdges(
+  targets: readonly HorizontalFramingTarget[],
+  cos: number,
+  sin: number,
+): { minRight: number; maxRight: number } {
+  let minRight = Infinity
+  let maxRight = -Infinity
+  for (const target of targets) {
+    const halfWidth = target.radius * (1 + EQUIPMENT_MARGIN_FRACTION)
+    // right = (cos yaw, -sin yaw).
+    const right = target.centerX * cos - target.centerZ * sin
+    minRight = Math.min(minRight, right - halfWidth)
+    maxRight = Math.max(maxRight, right + halfWidth)
+  }
+  return { minRight, maxRight }
+}
+
+/**
+ * The group extent `extentToDistance` above is fed every frame: the
+ * screen-horizontal width of `targets` at `yaw`, each target's radius already
+ * carrying its 10% equipment margin.
+ *
+ * Exported purely as an instrument. `measureGroup` (the camera's own call
+ * site) is private, yaw-dependent, and applies that margin internally, so a
+ * harness that recomputed "the extent" from raw positions and radii would be
+ * measuring a quantity the shipping camera never sees -- and any camera
+ * constant chosen against it would be chosen against the wrong number. This
+ * shares `measureScreenHorizontalEdges` with `measureGroup`, so it cannot be
+ * that lookalike: pass the camera's own `state.yaw` and the same targets and
+ * the result is identical by construction.
+ */
+export function measuredExtent(targets: readonly HorizontalFramingTarget[], yaw: number): number {
+  if (targets.length === 0) return 0
+  const { minRight, maxRight } = measureScreenHorizontalEdges(targets, Math.cos(yaw), Math.sin(yaw))
+  return maxRight - minRight
+}
+
 function measureGroup(
   targets: readonly HorizontalFramingTarget[],
   yaw: number,
@@ -294,17 +348,13 @@ function measureGroup(
   const cos = Math.cos(yaw)
   const sin = Math.sin(yaw)
 
-  let minRight = Infinity
-  let maxRight = -Infinity
+  const { minRight, maxRight } = measureScreenHorizontalEdges(targets, cos, sin)
   let minDepth = Infinity
   let maxDepth = -Infinity
   for (const target of targets) {
     const halfWidth = target.radius * (1 + EQUIPMENT_MARGIN_FRACTION)
-    // right = (cos yaw, -sin yaw); depth (toward the camera) = (sin yaw, cos yaw).
-    const right = target.centerX * cos - target.centerZ * sin
+    // depth (toward the camera) = (sin yaw, cos yaw).
     const depth = target.centerX * sin + target.centerZ * cos
-    minRight = Math.min(minRight, right - halfWidth)
-    maxRight = Math.max(maxRight, right + halfWidth)
     minDepth = Math.min(minDepth, depth - halfWidth)
     maxDepth = Math.max(maxDepth, depth + halfWidth)
   }

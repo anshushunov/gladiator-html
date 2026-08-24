@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ArenaCamera, measureSpreadAxisAngle, type HorizontalFramingTarget } from './ArenaCamera'
+import { ArenaCamera, extentToDistance, measuredExtent, measureSpreadAxisAngle, type HorizontalFramingTarget } from './ArenaCamera'
 import { COMBAT_STYLES } from '../content/combatStyles'
 import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
 import { advanceBattleTick, createBattle, fighterBySide, type BattleState } from '../simulation/battle'
@@ -46,6 +46,45 @@ describe('ArenaCamera', () => {
     expect(inside.lookTargetX).toBe(0)
     expect(inside.distance).toBeGreaterThanOrEqual(11)
     expect(inside.distance).toBeLessThanOrEqual(18)
+  })
+
+  // The framing measurement harness (`scripts/measure-framing.ts`) reads
+  // `measuredExtent` because `measureGroup` -- the camera's own call site --
+  // is private, applies a 10% equipment margin per target, and measures
+  // across the *camera's* screen-horizontal axis rather than world X. A
+  // harness that recomputed any of that by hand would be measuring a
+  // quantity `extentToDistance` never sees, and Task 6's camera constants
+  // would then be chosen against the wrong number. These three tests pin the
+  // three ways that could go wrong.
+  describe('measuredExtent', () => {
+    it('reproduces the extent the camera itself framed by', () => {
+      // An off-axis pair (so the yaw is neither zero nor a symmetric special
+      // case) whose extent lands strictly inside the 11..18 clamp, which is
+      // what makes `state.distance` an invertible read on the extent the
+      // camera actually consumed.
+      const targets = pairOnAxis(23, 4, 0.7)
+      const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
+      const reset = camera.reset(targets)
+
+      expect(reset.distance).toBeGreaterThan(11)
+      expect(reset.distance).toBeLessThan(18)
+      expect(extentToDistance(measuredExtent(targets, reset.yaw), 11, 18)).toBe(reset.distance)
+    })
+
+    it("includes each target's 10% equipment margin", () => {
+      const targets: HorizontalFramingTarget[] = [
+        { id: 'a', centerX: -1, centerZ: 0, radius: 0.5 },
+        { id: 'b', centerX: 1, centerZ: 0, radius: 0.5 },
+      ]
+      expect(measuredExtent(targets, 0)).toBeCloseTo(2 + 2 * 0.5 * 1.1, 12)
+    })
+
+    it('measures across the frame, so a pair turned onto the view axis reads as margins alone', () => {
+      const targets = pairOnAxis(0, 4, 0.7)
+      // Yaw 90 degrees puts the pair's own axis along the camera's view
+      // depth: nothing of the separation is left across the frame.
+      expect(measuredExtent(targets, 90 * DEGREE)).toBeCloseTo(2 * 0.7 * 1.1, 12)
+    })
   })
 
   describe('look-target dead zone (8% of current distance)', () => {
