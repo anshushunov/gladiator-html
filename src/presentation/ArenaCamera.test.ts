@@ -4,6 +4,7 @@ import { COMBAT_STYLES } from '../content/combatStyles'
 import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
 import { SEASON_CHALLENGES, SEASON_ROSTER } from '../content/season'
 import { advanceBattleTick, createBattle, fighterBySide, type BattleState } from '../simulation/battle'
+import type { Archetype } from '../simulation/fighters'
 import { assignFighter, confirmLineup, createSeason, startNextSeries } from '../simulation/season'
 import { advanceSeriesTicks } from '../simulation/series'
 
@@ -68,8 +69,12 @@ const MAX_ZOOM_UNITS_PER_SECOND = 5
  * placeholder radius the group extent is wrong by up to 1.5 world units, which
  * is twice the framing dead zone at the band edge and moves every crossing in
  * the trace.
+ *
+ * Keyed by `Archetype` rather than by `string` on purpose: a fourth archetype
+ * would otherwise index to `undefined` here, make every extent `NaN`, and turn
+ * the bout replays into vacuous passes. This way it is a compile error.
  */
-const RIG_EQUIPMENT_RADIUS: Readonly<Record<string, number>> = {
+const RIG_EQUIPMENT_RADIUS: Readonly<Record<Archetype, number>> = {
   heavy: 0.7102112512268649,
   fast: 1.1464894876752016,
   technical: 1.3511201756074822,
@@ -373,40 +378,69 @@ describe('ArenaCamera', () => {
       }
 
       // ...and the dead zone really is what held it: the same drive one
-      // percent wider does move the camera, so the stillness above is the
-      // dead zone rather than the mapping being flat on both sides.
+      // percent wider is the chatter, in full. It is the measure of what the
+      // dead zone is holding back, so it is asserted quantitatively rather
+      // than as "something moved" -- measured 59 reversals and a 0.0553-unit
+      // span over the same 600 ticks, i.e. a 5 Hz tremor. (The same figure
+      // with `DISTANCE_DEAD_ZONE_FRACTION` set to zero and the drive left at
+      // `insideDeadZone` is 95 reversals and 0.0722.)
       const moved = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
       settle(moved, BAND_HIGH)
       const outsideDeadZone = 0.74
-      const seen = new Set<number>()
+      const chattering: number[] = []
       for (let step = 0; step < 600; step += 1) {
-        seen.add(moved.update(targetsWithExtent(BAND_HIGH + outsideDeadZone * Math.sin(step / 2)), 1 / 60).distance)
+        chattering.push(moved.update(targetsWithExtent(BAND_HIGH + outsideDeadZone * Math.sin(step / 2)), 1 / 60).distance)
       }
-      expect(seen.size).toBeGreaterThan(1)
+      expect(directionReversals(chattering).length).toBeGreaterThan(40)
+      expect(Math.max(...chattering) - Math.min(...chattering)).toBeGreaterThan(0.03)
     })
 
     it('sweeps out and back without overshoot or excessive zoom rate', () => {
+      // Two cameras on the same drive: the shipped clamp, and one whose floor
+      // is far below anything the mapping can produce. Every "the camera never
+      // goes below the flat distance" assertion has to be read off the second
+      // one -- `update` clamps its result into `[minDistance, maxDistance]`
+      // (`ArenaCamera.ts`'s own `clamp` on the damped distance), and the
+      // shipped `minDistance` IS `FLAT_DISTANCE`, so asserting that bound on
+      // the shipped camera asks the clamp about the clamp and cannot fail.
+      // Against `minDistance: 1` the same assertion measures the mapping's own
+      // floor. The two series being identical is itself the finding: the
+      // shipped floor clamp never binds, so it is a guard rather than part of
+      // the shape (which is exactly what `extentToDistance`'s doc comment
+      // claims, and what the old `11` used to get wrong).
       const camera = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
+      const unclamped = new ArenaCamera({ minDistance: 1, maxDistance: MAX_DISTANCE })
       settle(camera, BAND_HIGH)
+      settle(unclamped, BAND_HIGH)
       const seen: number[] = []
+      const seenUnclamped: number[] = []
+      const step = (extent: number): void => {
+        seen.push(camera.update(targetsWithExtent(extent), 1 / 60).distance)
+        seenUnclamped.push(unclamped.update(targetsWithExtent(extent), 1 / 60).distance)
+      }
       // 0.05 of extent per tick is 3 world units per second of spread -- about
       // four times the fastest separation the nine bouts below ever produce.
       // Deliberately harsher than play: this is the input a lurch would show
       // up on.
-      for (let e = BAND_HIGH; e <= BAND_HIGH + 6; e += 0.05) { camera.update(targetsWithExtent(e), 1 / 60); seen.push(camera.state.distance) }
-      for (let e = BAND_HIGH + 6; e >= BAND_HIGH; e -= 0.05) { camera.update(targetsWithExtent(e), 1 / 60); seen.push(camera.state.distance) }
+      for (let e = BAND_HIGH; e <= BAND_HIGH + 6; e += 0.05) step(e)
+      for (let e = BAND_HIGH + 6; e >= BAND_HIGH; e -= 0.05) step(e)
       const atSweepEnd = seen.length
       // The sweep ends with the camera still 3.3 units wide of home -- that is
       // the 1.25 s lag, not overshoot, and there is no way to tell the two
       // apart without letting it arrive. 600 idle ticks is 10 s, eight time
       // constants.
-      for (let i = 0; i < 600; i += 1) { camera.update(targetsWithExtent(BAND_HIGH), 1 / 60); seen.push(camera.state.distance) }
+      for (let i = 0; i < 600; i += 1) step(BAND_HIGH)
 
-      // Never past either clamp, in either direction: the flat distance is
-      // also `minDistance`, so undershooting it would put the camera inside
-      // the framing the whole band is shot at.
+      expect(seenUnclamped).toEqual(seen)
+
+      // Never past either clamp, in either direction. The floor is the live
+      // one: the flat distance is the shipped `minDistance`, so undershooting
+      // it would put the camera inside the framing the whole band is shot at,
+      // and on the shipped camera the clamp would hide that. (The ceiling is
+      // the brief's own assertion, kept verbatim -- but note it is guaranteed
+      // by the same clamp and is slack besides: the sweep peaks at 13.99.)
       expect(Math.max(...seen)).toBeLessThanOrEqual(MAX_DISTANCE + 1e-6)
-      expect(Math.min(...seen)).toBeGreaterThanOrEqual(FLAT_DISTANCE)
+      expect(Math.min(...seenUnclamped)).toBeGreaterThanOrEqual(FLAT_DISTANCE)
 
       // Exactly one turn, at the top of the sweep: out monotonically, back
       // monotonically, no ringing at either junction.
@@ -421,13 +455,14 @@ describe('ArenaCamera', () => {
       // reference at 6.42 rather than at the band edge's 6.07242 (0.35 of
       // extent, comfortably inside its own 0.77-wide dead zone at that width),
       // and 6.42 maps to 8.878. Structurally the residue cannot exceed
-      // `extentToDistance(BAND_HIGH / 0.88) - FLAT_DISTANCE = 0.356`; measured
-      // it is 0.068, which is 0.8% of the framing distance and about a pixel
-      // of on-screen body height. Bounded at 0.1 to pin the measurement, not
-      // the structural ceiling.
-      const settled = seen[seen.length - 1]
+      // `extentToDistance(BAND_HIGH / 0.88) - FLAT_DISTANCE = 0.3554`; measured
+      // it is 0.0677, which is 0.8% of the framing distance and about a pixel
+      // of on-screen body height. Bounded at 0.08 -- 18% over the measurement,
+      // a fifth of the structural ceiling -- so it pins what the camera does
+      // rather than accommodating what it could do.
+      const settled = seenUnclamped[seenUnclamped.length - 1]
       expect(settled).toBeGreaterThanOrEqual(FLAT_DISTANCE)
-      expect(settled).toBeLessThan(FLAT_DISTANCE + 0.1)
+      expect(settled).toBeLessThan(FLAT_DISTANCE + 0.08)
 
       expect(maxZoomRate(seen)).toBeLessThan(MAX_ZOOM_UNITS_PER_SECOND)
     })
@@ -1095,13 +1130,18 @@ describe('framing distance over real bouts', () => {
   /** Per-tick framing distance, and how often the group extent crossed the band edge while producing it. */
   interface BoutMotion {
     distances: number[]
+    /** The same bout through a camera whose floor clamp cannot bind -- see `expectSmoothFraming`. */
+    unclampedDistances: number[]
     bandEdgeCrossings: number
   }
 
   function driveCamera(nextBattle: () => BattleState | null, opening: BattleState): BoutMotion {
     const camera = new ArenaCamera({ minDistance: FLAT_DISTANCE, maxDistance: MAX_DISTANCE })
+    const unclamped = new ArenaCamera({ minDistance: 1, maxDistance: MAX_DISTANCE })
     camera.reset(framing(opening))
+    unclamped.reset(framing(opening))
     const distances: number[] = []
+    const unclampedDistances: number[] = []
     let previousExtent = measuredExtent(framing(opening), camera.state.yaw)
     let bandEdgeCrossings = 0
     for (let tick = 0; tick < 4000; tick += 1) {
@@ -1113,8 +1153,9 @@ describe('framing distance over real bouts', () => {
       if ((previousExtent - BAND_HIGH) * (extent - BAND_HIGH) < 0) bandEdgeCrossings += 1
       previousExtent = extent
       distances.push(state.distance)
+      unclampedDistances.push(unclamped.update(targets, 1 / 60).distance)
     }
-    return { distances, bandEdgeCrossings }
+    return { distances, unclampedDistances, bandEdgeCrossings }
   }
 
   /**
@@ -1130,14 +1171,25 @@ describe('framing distance over real bouts', () => {
    * flipped at the junction counts in the dozens: 95 over 600 ticks, measured
    * with `DISTANCE_DEAD_ZONE_FRACTION` set to zero on the sibling test's own
    * inside-the-dead-zone drive.
+   *
+   * The two clamp bounds are read off `unclampedDistances` for the reason the
+   * sweep test spells out: `update` clamps into `[minDistance, maxDistance]`
+   * and the shipped `minDistance` is `FLAT_DISTANCE` itself, so on the shipped
+   * camera "never below the flat distance" is the clamp answering about
+   * itself. The second camera's floor is `1`, far below anything the mapping
+   * can produce, so the bound below is the mapping's. Their series being
+   * identical says the shipped floor clamp never binds in a real bout either.
    */
   function expectSmoothFraming(motion: BoutMotion): void {
     expect(motion.bandEdgeCrossings).toBeGreaterThanOrEqual(1)
     expect(motion.distances.length).toBeGreaterThan(600)
-    expect(directionReversals(motion.distances).length).toBeLessThanOrEqual(4)
+    // Measured: 0 reversals in all 27 recorded traces and in eight of the nine
+    // standalone pairings; 2 in retiarius-vs-hoplomachus, the worst anywhere.
+    expect(directionReversals(motion.distances).length).toBeLessThanOrEqual(2)
     expect(maxZoomRate(motion.distances)).toBeLessThan(MAX_ZOOM_UNITS_PER_SECOND)
-    expect(Math.min(...motion.distances)).toBeGreaterThanOrEqual(FLAT_DISTANCE)
-    expect(Math.max(...motion.distances)).toBeLessThanOrEqual(MAX_DISTANCE)
+    expect(motion.unclampedDistances).toEqual(motion.distances)
+    expect(Math.min(...motion.unclampedDistances)).toBeGreaterThanOrEqual(FLAT_DISTANCE)
+    expect(Math.max(...motion.unclampedDistances)).toBeLessThanOrEqual(MAX_DISTANCE)
   }
 
   it('replays the recorded browser traces without chattering, overshooting or lurching', () => {
