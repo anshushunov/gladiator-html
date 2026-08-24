@@ -156,15 +156,35 @@ const BAND_HIGH_EXTENT = BAND_HIGH_SEPARATION + 2 * WIDEST_EQUIPMENT_RADIUS * (1
  * either, because it already sits above any flat value low enough to be
  * legible.
  *
- * `8.83` comes from `scripts/measure-framing.ts --sweep`: 7,189 candidate
+ * The candidate set comes from `scripts/measure-framing.ts --sweep`: 7,189
  * `(FLAT_DISTANCE, EASE_WIDTH_EXTENT)` pairs replayed against 46,647 recorded
  * ticks -- all nine pairings at three viewports -- rejecting any candidate that
  * puts anything but a polearm outside the canvas's 5% inset on any tick, or
  * that drops the on-screen body height below 130 px at the 92nd percentile of
  * in-band ticks at 1280x820. Below the surviving frontier the safe area fails;
- * above it the floor does. `8.83` is the balance point, and the frontier is
- * narrow enough that the balance point is the only part of it where BOTH
- * margins clear the measurement's own ~1% accuracy.
+ * above it the floor does.
+ *
+ * The value itself is then picked from DIRECT measurement rather than from the
+ * sweep, because near the binding safe-area tick the replay is not good enough:
+ * it magnifies recorded frames about the canvas centre, and it cannot carry the
+ * look-target dead zone (8% of the CURRENT distance), which re-centres the
+ * frame by several px exactly where the margin is a few px wide. Measured at
+ * `EASE_WIDTH_EXTENT = 7.0`, four full 46,647-tick runs:
+ *
+ *   flat   floor margin   safe-area margin
+ *   8.74      +3.15%       0.1 px  (+0.03%)   <- replay predicted 4.7 px
+ *   8.79      +2.51%       1.5 px  (+0.60%)
+ *   8.83      +2.00%       5.7 px  (+2.41%)   <- this constant
+ *   8.88      +1.42%       6.1 px  (+2.55%)
+ *
+ * `8.83` is the knee. Below it the safe-area margin falls off a cliff (the
+ * binding frame is a near-junction one at 1024x768, where the camera still sits
+ * exactly here because the 12% distance dead zone has not fired -- so no ease
+ * width can rescue it); above it the margin has saturated onto a different,
+ * far-region binding frame and further distance buys ~nothing while still
+ * costing body height. See the task report for why the amendment's 3% floor
+ * margin and a safe-area margin above this harness's own ~1% accuracy are not
+ * jointly reachable.
  */
 export const FLAT_DISTANCE = 8.83
 

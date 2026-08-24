@@ -123,6 +123,21 @@ const SAFE_AREA_LIMITED_FLAT_DISTANCE = 8.578
 const FLOOR_MARGIN_FRACTION = 0.03
 
 /**
+ * This harness's own accuracy, as Task 5 measured it rather than as anyone
+ * assumed it: placing the camera at the predicted 9.313 re-derived 9.384
+ * (0.76% high) and 6.278 against 6.317 (0.6% low), and the projection
+ * calibration's resolution floor (set by how far off broadside the damped yaw
+ * sits) is about the same. Every distance printed here is +/- ~1%.
+ *
+ * Used by the candidate choice below as the minimum margin a criterion must
+ * hold for the choice between two candidates to mean anything. That is the
+ * human's own argument for `FLOOR_MARGIN_FRACTION` -- "a gate that is passed or
+ * failed within its own measurement noise tests nothing" -- applied to the
+ * other hard criterion, which they did not attach a number to.
+ */
+const MEASUREMENT_ACCURACY_FRACTION = 0.01
+
+/**
  * **Frozen before the camera sweep was run**, from Task 5's recorded trace of
  * the SHIPPED camera -- see `printPercentileFreeze`, which prints the whole
  * derivation, and the task report's first section. The rule:
@@ -247,9 +262,32 @@ interface BoutTrace {
 // Browser driving
 // ---------------------------------------------------------------------------
 
+/**
+ * Playwright's default navigation timeout is 30 s, and the full matrix opens 27
+ * fresh contexts over ~7 minutes against a Vite DEV server that transforms on
+ * demand. Under load a cold load of the whole app graph (three.js included) can
+ * exceed that, and losing a 7-minute run to one slow navigation is expensive
+ * enough to be worth a retry -- observed once while re-measuring for review
+ * round 1.
+ *
+ * Deliberately a retry on the NAVIGATION only, not on the measurement: nothing
+ * below this line is retried, so a flaky page load cannot turn into a silently
+ * re-rolled trace.
+ */
+const NAVIGATION_TIMEOUT_MS = 90_000
+const NAVIGATION_ATTEMPTS = 3
+
 async function openSeries(context: BrowserContext, seed: number, lineup: readonly [string, string, string]): Promise<Page> {
   const page = await context.newPage()
-  await page.goto(`http://127.0.0.1:${PORT}/?seed=${seed}&snapshot`)
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await page.goto(`http://127.0.0.1:${PORT}/?seed=${seed}&snapshot`, { timeout: NAVIGATION_TIMEOUT_MS })
+      break
+    } catch (error) {
+      if (attempt >= NAVIGATION_ATTEMPTS) throw error
+      console.log(`  (navigation attempt ${attempt} failed, retrying: ${error instanceof Error ? error.message.split('\n')[0] : String(error)})`)
+    }
+  }
   await page.waitForFunction(() => Boolean((window as unknown as { __GLADIATOR_TEST__?: unknown }).__GLADIATOR_TEST__))
   await page.evaluate((assignments) => {
     const test = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
@@ -1283,7 +1321,10 @@ function printPercentileFreeze(file: RecordingFile): void {
     if (worst >= required && chosen < 0) chosen = p
   }
   console.log(`  ${'percentile'.padStart(10)} ${'worst pairing needs'.padStart(20)}  clears?`)
-  for (const p of [5, 25, 50, 60, 70, 75, 80, 85, 86, 87, 88, 90, 95]) {
+  // Includes the percentiles either side of the frozen P, so a reader can check
+  // its adjacency -- "p91 does not clear and p92 does" -- straight from this
+  // log rather than from a table assembled by hand somewhere else.
+  for (const p of [5, 25, 50, 60, 65, 68, 69, 70, 75, 80, 85, 88, 90, 91, 92, 93, 95]) {
     const worst = Math.min(...sorted.map((entry) => quantile(entry.values, p / 100)))
     const which = sorted.find((entry) => quantile(entry.values, p / 100) === worst)
     console.log(`  ${`p${String(p).padStart(2, '0')}`.padStart(10)} ${fixed(worst, 4).padStart(20)}  ${worst >= required ? 'yes' : 'no '}  (${which?.label ?? '--'})`)
@@ -1553,8 +1594,19 @@ function printAmendedVerdict(file: RecordingFile): void {
 
   const percent = Math.round(FROZEN_BODY_FLOOR_PERCENTILE * 100)
   console.log(`  [2] body height at p${percent} of in-band ticks @1280x820, floor ${BODY_HEIGHT_FLOOR_PX} px:`)
+  // `quantile` is nearest-rank on an ASCENDING array, so `q_p >= floor` says
+  // the value at rank ceil(p*n) clears -- i.e. the top (100-p)% of in-band
+  // ticks reach the floor, NOT that (100-p)% fall below it. The share below the
+  // floor is therefore printed outright rather than left to be inferred from
+  // the percentile, because inferring it the obvious way gets it backwards by
+  // an order of magnitude.
   let worst = Infinity
   let worstLabel = '--'
+  let totalInBand = 0
+  let totalBelow = 0
+  console.log(
+    `      ${'pairing'.padEnd(30)} ${`p${percent}`.padStart(8)} ${'median'.padStart(8)} ${'min'.padStart(7)} ${'< floor'.padStart(9)} ${'ticks'.padStart(6)}`,
+  )
   for (const trace of file.traces) {
     if (trace.viewport.width !== 1280) continue
     const values: number[] = []
@@ -1564,18 +1616,30 @@ function printAmendedVerdict(file: RecordingFile): void {
     }
     values.sort((a, b) => a - b)
     const atP = quantile(values, FROZEN_BODY_FLOOR_PERCENTILE)
-    const median = quantile(values, 0.5)
+    const below = values.filter((value) => value < BODY_HEIGHT_FLOOR_PX).length
+    totalInBand += values.length
+    totalBelow += below
     console.log(
-      `      ${trace.label.padEnd(30)} p${percent} ${fixed(atP, 2).padStart(8)} px  (median ${fixed(median, 1)}, min ${fixed(values[0] ?? Number.NaN, 1)}, ${values.length} in-band ticks)`,
+      `      ${trace.label.padEnd(30)} ${fixed(atP, 2).padStart(8)} ${fixed(quantile(values, 0.5), 1).padStart(8)} ` +
+        `${fixed(values[0] ?? Number.NaN, 1).padStart(7)} ${`${fixed((below / Math.max(values.length, 1)) * 100, 1)}%`.padStart(9)} ${String(values.length).padStart(6)}`,
     )
     if (atP < worst) {
       worst = atP
       worstLabel = trace.label
     }
   }
+  // `Number.isFinite` rather than a bare `>=`: with no in-band ticks at all
+  // (a `--only`/`--max-ticks` run that never reaches the band) `worst` is still
+  // `Infinity`, and `Infinity >= 130` would print a PASS backed by no frames.
+  const verdict = !Number.isFinite(worst)
+    ? 'NO VERDICT (no in-band ticks measured)'
+    : worst >= BODY_HEIGHT_FLOOR_PX
+      ? `PASS (+${fixed((worst / BODY_HEIGHT_FLOOR_PX - 1) * 100, 2)}%)`
+      : `FAIL (${fixed((worst / BODY_HEIGHT_FLOOR_PX - 1) * 100, 2)}%)`
+  console.log(`      => worst pairing ${worstLabel}: ${fixed(worst, 2)} px, ${verdict}`)
   console.log(
-    `      => worst pairing ${worstLabel}: ${fixed(worst, 2)} px, ` +
-      `${worst >= BODY_HEIGHT_FLOOR_PX ? `PASS (+${fixed(((worst / BODY_HEIGHT_FLOOR_PX - 1) * 100), 2)}%)` : `FAIL (${fixed(((worst / BODY_HEIGHT_FLOOR_PX - 1) * 100), 2)}%)`}`,
+    `      what p${percent} asserts: at least ${100 - percent}% of in-band ticks reach ${BODY_HEIGHT_FLOOR_PX} px. ` +
+      `Measured share BELOW it: ${fixed((totalBelow / Math.max(totalInBand, 1)) * 100, 1)}% of ${totalInBand} in-band ticks.`,
   )
 }
 
@@ -1628,6 +1692,32 @@ function printSweep(file: RecordingFile, results: readonly CandidateResult[]): v
     console.log(`${row(best)}  ${best.insetLabel}`)
   }
 
+  // The candidates that clear the floor by the same >=3% the human's ruling
+  // used to define P. They exist, and which ease widths they need is the whole
+  // shape of the trade: a low FLAT_DISTANCE buys floor margin, and the safe
+  // area then only tolerates it if the ease is narrow enough to get the camera
+  // out fast at large extents -- which is exactly what makes the junction
+  // steep. Printed per ease width, best safe-area margin first, so the cost of
+  // the floor margin is visible rather than asserted.
+  const clearingByFullMargin = survivors.filter((result) => result.bodyAtP >= BODY_HEIGHT_FLOOR_PX * (1 + FLOOR_MARGIN_FRACTION))
+  console.log(
+    `\n  candidates clearing the floor by >=${FLOOR_MARGIN_FRACTION * 100}% (the margin P was defined with): ${clearingByFullMargin.length} of ${survivors.length} survivors`,
+  )
+  if (clearingByFullMargin.length > 0) {
+    console.log(`      ${'ease'.padStart(6)} ${'best flat'.padStart(10)} ${'floor'.padStart(8)} ${'safe'.padStart(8)} ${'inset px'.padStart(9)} ${'C1 slope'.padStart(9)} ${'motion'.padStart(8)}`)
+    for (const ease of [...new Set(clearingByFullMargin.map((result) => result.candidate.easeWidthExtent))].sort((a, b) => a - b)) {
+      const best = clearingByFullMargin.filter((result) => result.candidate.easeWidthExtent === ease).sort((a, b) => b.safeSlack - a.safeSlack)[0]
+      console.log(
+        `      ${fixed(ease, 2).padStart(6)} ${fixed(best.candidate.flatDistance, 3).padStart(10)} ` +
+          `${`+${fixed((best.bodyAtP / BODY_HEIGHT_FLOOR_PX - 1) * 100, 2)}%`.padStart(8)} ${`+${fixed(best.safeSlack * 100, 2)}%`.padStart(8)} ` +
+          `${fixed(best.minInsetPx, 1).padStart(9)} ${junctionSlope(best.candidate, bandHighForSlope).toExponential(1).padStart(9)} ${fixed(best.totalMotion, 1).padStart(8)}`,
+      )
+    }
+    console.log('      (C1 slope is the world units of distance per unit of extent just past the junction: how hard the')
+    console.log('       camera is yanked the moment the pair leaves the band. Motion is the total |distance change| over')
+    console.log('       the nine 1280x820 traces, so it prices the same thing over a whole bout.)')
+  }
+
   // The brief's C1 test is part of the specification, so a candidate that fails
   // it is not a candidate. Reported separately rather than folded into the
   // rejection reasons, because it is a property of the SHAPE alone -- no trace
@@ -1642,19 +1732,34 @@ function printSweep(file: RecordingFile, results: readonly CandidateResult[]): v
   console.log(`  while the safe area rejects everything above EASE ${fixed(Math.max(...survivors.map((result) => result.candidate.easeWidthExtent)), 2)}.`)
 
   const winner = [...survivors].sort((a, b) => a.totalMotion - b.totalMotion || a.candidate.flatDistance - b.candidate.flatDistance)[0]
-  // The brief's tie-break is least total camera motion. It is applied here, but
-  // only among the candidates that hold the most slack -- because on THIS
-  // frontier motion spans 50% while the slack spans 0.8 percentage points
-  // against a harness accurate to about 1 percentage point, so ranking by
-  // motion alone would trade the entire safety margin for a difference no
-  // player could see. `SLACK_TIE_TOLERANCE` is a twentieth of that +/-1%:
-  // candidates within it of the best are genuinely indistinguishable, and among
-  // those the brief's rule decides.
-  const SLACK_TIE_TOLERANCE = 5e-4
-  const bestSlack = Math.max(...survivors.map((result) => result.balancedSlack))
-  const balanced = survivors
-    .filter((result) => result.balancedSlack >= bestSlack - SLACK_TIE_TOLERANCE)
-    .sort((a, b) => a.totalMotion - b.totalMotion || b.balancedSlack - a.balancedSlack)[0]
+
+  // Selection, in three steps. Every number in it comes from the human's
+  // amendment, Task 5's measurement, or the brief -- none from me:
+  //
+  //   1. the hard criteria reject (the amendment) -- already done above;
+  //   2. keep the candidates that hold BOTH margins meaningfully: the floor by
+  //      the amendment's own FLOOR_MARGIN_FRACTION, and the safe area by at
+  //      least MEASUREMENT_ACCURACY_FRACTION, since a hard constraint held by
+  //      less than the instrument's accuracy is not held in any way a reader
+  //      can rely on. Both are preferences rather than gates -- if the set is
+  //      empty the sweep falls back and SAYS it fell back, so an impossibility
+  //      is never manufactured by the selection rule;
+  //   3. among those, the brief's own objective: least total camera motion,
+  //      which is also the best available proxy for how hard the camera is
+  //      yanked at the junction. Widest safe area breaks any remaining tie.
+  //
+  // An earlier revision ranked on `min(floorSlack, safeSlack)` with a tolerance
+  // parameter of my own invention. That is what it cost: it preferred 8.83
+  // (floor +2.00%, safe +2.41%) over 8.74 (floor +3.05%, safe +1.96%) by four
+  // hundredths of a percentage point, giving up a whole point of margin on the
+  // criterion under scrutiny to buy half a point on the one that had 4.7 px of
+  // real headroom either way. Treating the two as interchangeable was the
+  // error: only one of them is what the ruling is about, and the other is a
+  // constraint that either holds with room or does not.
+  const clearingFloorByMargin = survivors.filter((result) => result.bodyAtP >= BODY_HEIGHT_FLOOR_PX * (1 + FLOOR_MARGIN_FRACTION))
+  const holdingBoth = clearingFloorByMargin.filter((result) => result.safeSlack >= MEASUREMENT_ACCURACY_FRACTION)
+  const preferred = holdingBoth.length > 0 ? holdingBoth : clearingFloorByMargin.length > 0 ? clearingFloorByMargin : survivors
+  const balanced = [...preferred].sort((a, b) => a.totalMotion - b.totalMotion || b.safeSlack - a.safeSlack)[0]
   const motions = survivors.map((result) => result.totalMotion)
   console.log(
     `\n  the brief's stated tie-break, LEAST TOTAL CAMERA MOTION: flat ${fixed(winner.candidate.flatDistance, 3)}, ` +
@@ -1666,9 +1771,14 @@ function printSweep(file: RecordingFile, results: readonly CandidateResult[]): v
       `(${fixed((Math.max(...motions) / Math.min(...motions) - 1) * 100, 1)}%), while the slack held spans ` +
       `${fixed(Math.min(...survivors.map((result) => result.balancedSlack)) * 100, 2)}..${fixed(Math.max(...survivors.map((result) => result.balancedSlack)) * 100, 2)}%.`,
   )
-  console.log('     Motion barely discriminates on this frontier; the slack does, and the frontier is narrower than this')
-  console.log(`     harness's own +/-1%. So the winner is the LEAST-MOTION candidate among those holding the most slack`)
-  console.log(`     (within ${SLACK_TIE_TOLERANCE * 100} percentage points of the best, ${survivors.filter((result) => result.balancedSlack >= bestSlack - SLACK_TIE_TOLERANCE).length} candidates).`)
+  console.log('     Motion barely discriminates on this frontier; the margins do, and the frontier is narrower than this')
+  console.log(
+    `     harness's own +/-1%. ${clearingFloorByMargin.length} candidates clear the floor by >=${FLOOR_MARGIN_FRACTION * 100}%, of which ` +
+      `${holdingBoth.length} also hold the safe area by >=${MEASUREMENT_ACCURACY_FRACTION * 100}%;`,
+  )
+  console.log(
+    `     the winner is the least-motion candidate among ${holdingBoth.length > 0 ? 'those' : clearingFloorByMargin.length > 0 ? 'the former (NO candidate holds both -- fell back)' : 'ALL survivors (NO candidate clears the floor margin -- fell back twice)'}.`,
+  )
   console.log(
     `\n  => WINNER: FLAT_DISTANCE ${fixed(balanced.candidate.flatDistance, 3)}, ` +
       `EASE_WIDTH_EXTENT ${fixed(balanced.candidate.easeWidthExtent, 2)}`,
@@ -1678,6 +1788,12 @@ function printSweep(file: RecordingFile, results: readonly CandidateResult[]): v
       `(+${fixed((balanced.bodyAtP / BODY_HEIGHT_FLOOR_PX - 1) * 100, 2)}%), safe-area slack +${fixed(balanced.safeSlack * 100, 2)}% ` +
       `(${fixed(balanced.minInsetPx, 1)} px at ${balanced.insetLabel}), motion ${fixed(balanced.totalMotion, 1)}`,
   )
+  console.log('     NOT the decision -- a candidate. This sweep nominates; only a --record run decides, and on the')
+  console.log('     safe area the two have been measured to disagree badly at the near-junction binding tick: the')
+  console.log('     replay predicted 4.7 px of margin at flat 8.740 and a real run measured 0.1 px. The replay')
+  console.log('     magnifies recorded frames about the canvas CENTRE and cannot carry the look-target dead zone')
+  console.log('     (8% of the CURRENT distance), which re-centres the frame by a few px -- decisive exactly where')
+  console.log('     the margin is a few px wide. Read a safe-area slack below ~5 px here as "unknown, go measure".')
   console.log('  the ten most balanced candidates overall:')
   console.log(header)
   for (const result of [...survivors].sort((a, b) => b.balancedSlack - a.balancedSlack).slice(0, 10)) console.log(row(result))
