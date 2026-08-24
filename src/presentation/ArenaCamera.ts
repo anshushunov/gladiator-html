@@ -54,7 +54,28 @@ export interface ArenaCameraOptions {
 /** design.md: "leaves an 8% viewport dead zone." */
 const LOOK_DEAD_ZONE_FRACTION = 0.08
 
-/** design.md: "leaves a 12% framing dead zone." */
+/**
+ * design.md: "leaves a 12% framing dead zone."
+ *
+ * Load-bearing for the band edge, as of the 2026-08-24 readable-gladiator-types
+ * slice, and not only for the extent jitter its own doc comment below
+ * describes. `extentToDistance` became piecewise in that slice, which gives it
+ * a decision boundary at `BAND_HIGH_EXTENT`, and the classic failure of a
+ * decision boundary is chatter: a pair that hovers across it flips the decision
+ * every few ticks and the camera dollies in and out at the frequency of the
+ * fighters' footwork. This dead zone is the only thing that prevents it -- and
+ * it prevents it completely, because it is gated on the *extent* rather than on
+ * the distance, so it does not care that the mapping is flat on one side of the
+ * junction and sloped on the other. Measured (`ArenaCamera.test.ts`, "framing
+ * distance under motion"): a pair oscillating across the edge at 5 Hz with an
+ * amplitude just inside `0.12 x BAND_HIGH_EXTENT` holds the distance bit-for-
+ * bit constant for 600 ticks; the same drive with this fraction set to zero
+ * reverses direction 95 times over those same 600 ticks, tremoring 0.072 world
+ * units at 5 Hz. No enter/exit hysteresis was added on top,
+ * because measurement said none was needed: swings that DO clear the dead zone
+ * are tracked with exactly one camera reversal per swing, each trailing the
+ * pair's own turn by 0.8-1.1 s.
+ */
 const DISTANCE_DEAD_ZONE_FRACTION = 0.12
 
 /** design.md: "a 0.75 s damping time constant" for the look target. */

@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { ArenaCamera, extentToDistance, measuredExtent, measureSpreadAxisAngle, type HorizontalFramingTarget } from './ArenaCamera'
 import { COMBAT_STYLES } from '../content/combatStyles'
 import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
+import { SEASON_CHALLENGES, SEASON_ROSTER } from '../content/season'
 import { advanceBattleTick, createBattle, fighterBySide, type BattleState } from '../simulation/battle'
+import { assignFighter, confirmLineup, createSeason, startNextSeries } from '../simulation/season'
+import { advanceSeriesTicks } from '../simulation/series'
 
 const DEGREE = Math.PI / 180
 
@@ -32,6 +35,46 @@ const MAX_DISTANCE = 18
 const BAND_LOW = 2.46244
 const BAND_HIGH = 6.07242
 
+/**
+ * The fastest the framing distance may travel, in world units per second, on
+ * any input the fighters can actually produce. Three figures bracket it, all
+ * measured (see the task-7 report):
+ *
+ *   - 4.11  the worst single-tick rate over the 46,647 recorded ticks of
+ *           `scripts/measure-framing.ts --record` at the shipped constants,
+ *           and 4.06 over the nine bouts this file replays below. Both occur
+ *           in the opening seconds, damping down from the wide reset shot;
+ *   - 4.02  the worst rate over the synthetic out-and-back sweep below, which
+ *           spreads the pair at 3 extent-units per second -- about four times
+ *           faster than any real separation;
+ *   - 7.35  `(18 - 8.81) / 1.25`: what the 1.25 s lag would do on its very
+ *           first tick if the distance target ever *stepped* from the flat
+ *           region to the far clamp. This is the failure the bound exists to
+ *           catch -- a mapping or a damping constant that lets the camera jump
+ *           rather than travel.
+ *
+ * `5` sits about 20% above the worst measurement and a third below the step
+ * response, so it is a bound on lurch rather than a restatement of the
+ * measurement.
+ */
+const MAX_ZOOM_UNITS_PER_SECOND = 5
+
+/**
+ * The three archetypes' `horizontalEquipmentRadius`, measured off the built
+ * rig -- the `radii` field of the recordings under `.superpowers/framing/`,
+ * and the same measurement `ArenaCamera.ts`'s `WIDEST_EQUIPMENT_RADIUS`
+ * quotes to four places. Written out so the real-bout replay at the bottom of
+ * this file frames with the widths the shipping camera actually sees: with a
+ * placeholder radius the group extent is wrong by up to 1.5 world units, which
+ * is twice the framing dead zone at the band edge and moves every crossing in
+ * the trace.
+ */
+const RIG_EQUIPMENT_RADIUS: Readonly<Record<string, number>> = {
+  heavy: 0.7102112512268649,
+  fast: 1.1464894876752016,
+  technical: 1.3511201756074822,
+}
+
 /** A symmetric pair, `separation` apart, whose axis sits `axisDegrees` off world X -- the exact input the camera's yaw exists to answer. */
 function pairOnAxis(axisDegrees: number, separation = 3, radius = 0.5): HorizontalFramingTarget[] {
   const half = separation / 2
@@ -49,6 +92,57 @@ function onScreenSeparation(targets: readonly HorizontalFramingTarget[], yaw: nu
   const sin = Math.sin(yaw)
   const projected = targets.map((target) => target.centerX * cos - target.centerZ * sin)
   return Math.max(...projected) - Math.min(...projected)
+}
+
+/**
+ * A pair sitting exactly `extent` wide across the frame: symmetric about the
+ * origin and along world X, so the spread axis is `0`, the camera's yaw stays
+ * `0`, and the look target never moves. That isolation is the point -- the
+ * motion tests below are about the distance axis alone, and a drifting look
+ * target would fire the *other* dead zone (8% of the current distance) and
+ * confuse a translation with a zoom.
+ *
+ * `0.6` is a plain stand-in radius rather than a roster one: extent is what the
+ * distance mapping consumes, and this solves for it exactly
+ * (`measuredExtent(targetsWithExtent(e), 0) === e` to the last bit, which the
+ * first assertion of the first test below checks rather than assumes).
+ */
+const SYNTHETIC_RADIUS = 0.6
+function targetsWithExtent(extent: number): HorizontalFramingTarget[] {
+  const half = (extent - 2 * SYNTHETIC_RADIUS * (1 + 0.1)) / 2
+  return [
+    { id: 'a', centerX: -half, centerZ: 0, radius: SYNTHETIC_RADIUS },
+    { id: 'b', centerX: half, centerZ: 0, radius: SYNTHETIC_RADIUS },
+  ]
+}
+
+/**
+ * The indices at which `series` changes direction. Exactly zero-length steps
+ * (`Math.sign` of `0`) are not direction changes and are skipped, so a camera
+ * parked by a dead zone reads as no reversals rather than as a reversal per
+ * tick.
+ *
+ * This is the measure both motion tests turn on. Chatter is not "the distance
+ * moved" -- following a pair that really is spreading and closing is the
+ * camera's job -- it is *reversing more often than the pair does*, which is
+ * why the oscillation test compares this count against the same count taken on
+ * its own drive signal.
+ */
+function directionReversals(series: readonly number[]): number[] {
+  const indices: number[] = []
+  for (let i = 2; i < series.length; i += 1) {
+    const before = Math.sign(series[i - 1] - series[i - 2])
+    const after = Math.sign(series[i] - series[i - 1])
+    if (before !== 0 && after !== 0 && before !== after) indices.push(i)
+  }
+  return indices
+}
+
+/** The worst single-tick zoom speed in a per-tick distance series, in world units per second at 60 ticks/s. */
+function maxZoomRate(distances: readonly number[]): number {
+  let worst = 0
+  for (let i = 1; i < distances.length; i += 1) worst = Math.max(worst, Math.abs(distances[i] - distances[i - 1]) * 60)
+  return worst
 }
 
 describe('ArenaCamera', () => {
@@ -181,6 +275,161 @@ describe('ArenaCamera', () => {
       expect(extentToDistance(11.37, MIN_DISTANCE, MAX_DISTANCE)).toBeLessThan(MAX_DISTANCE)
       expect(extentToDistance(11.37, MIN_DISTANCE, MAX_DISTANCE)).toBeGreaterThan(15)
       expect(extentToDistance(BAND_HIGH + 7.0, MIN_DISTANCE, MAX_DISTANCE)).toBeCloseTo(MAX_DISTANCE, 9)
+    })
+  })
+
+  // Task 7. The three tests above pin the mapping's *shape*; these pin what it
+  // does over time, which is where a piecewise mapping actually fails. A band
+  // edge is a decision boundary, and the classic failure of one is chatter:
+  // the pair hovers across it, the decision flips every few ticks, and the
+  // camera dollies in and out at the frequency of the fighters' footwork. No
+  // static assertion on `extentToDistance` can see that -- it only shows up
+  // once the 12% framing dead zone and the 1.25 s damping are in the loop.
+  describe('framing distance under motion', () => {
+    // `ArenaCamera`'s constructor starts at the middle of the clamp, so a test
+    // that samples immediately measures the opening settle rather than the
+    // band edge. `reset` hard-cuts past that; the 300 idle ticks (5 s, four
+    // damping time constants) are belt and braces, and they also leave the
+    // sticky extent reference sitting exactly on the band edge, which is the
+    // hardest place for it to start.
+    const settle = (camera: ArenaCamera, extent: number): void => {
+      camera.reset(targetsWithExtent(extent))
+      for (let i = 0; i < 300; i += 1) camera.update(targetsWithExtent(extent), 1 / 60)
+    }
+
+    /**
+     * How far the pair swings either side of the band edge in the oscillation
+     * test. It has to clear the framing dead zone, which is 12% of the sticky
+     * extent reference -- `0.12 x 6.07242 = 0.7287` world units of extent at
+     * the edge. Measured: at amplitude `0.5`, and at `0.72` (just inside the
+     * dead zone), the distance is bit-for-bit constant across all 600 ticks --
+     * see the sibling test below, which pins exactly that. A test driven that
+     * gently would prove only that the dead zone swallowed the wobble, never
+     * that the mapping behaves once it does not.
+     *
+     * `1.0` clears the dead zone by 37% and swings the extent from 5.07 to
+     * 7.07, i.e. right across the junction between the flat region and the
+     * eased one.
+     */
+    const OSCILLATION_AMPLITUDE = 1.0
+
+    it('does not chatter when the pair oscillates across the band edge', () => {
+      const camera = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
+      settle(camera, BAND_HIGH)
+      expect(measuredExtent(targetsWithExtent(BAND_HIGH), camera.state.yaw)).toBe(BAND_HIGH)
+
+      const extents: number[] = []
+      const distances: number[] = []
+      for (let step = 0; step < 600; step += 1) {
+        const extent = BAND_HIGH + OSCILLATION_AMPLITUDE * Math.sin(step / 30)
+        extents.push(extent)
+        camera.update(targetsWithExtent(extent), 1 / 60)
+        distances.push(camera.state.distance)
+      }
+
+      // The drive has to reach the camera at all, or every bound below is
+      // vacuous. Measured span: 0.1768 world units (8.810 to 8.987).
+      const span = Math.max(...distances) - Math.min(...distances)
+      expect(span).toBeGreaterThan(0.1)
+      expect(span).toBeLessThan(0.35)
+
+      // The heart of it. `sin(step / 30)` over 600 ticks is 3.18 periods, so
+      // the pair itself turns around six times; a camera that tracks it must
+      // turn around six times too. The question is only whether it turns
+      // around anywhere *else*, and whether each turn belongs to one of the
+      // pair's.
+      const driveTurns = directionReversals(extents)
+      const cameraTurns = directionReversals(distances)
+      expect(driveTurns.length).toBe(6)
+      expect(cameraTurns.length).toBe(driveTurns.length)
+
+      // Each camera reversal trails the drive's own turning point by 49-64
+      // ticks (0.8-1.1 s: the 1.25 s damping, plus the delay while the
+      // sticky extent reference waits for the swing to clear the dead zone).
+      // This is what tells tracking from chattering: a chattering camera
+      // reverses on its own schedule, at the tick rate of the input crossing
+      // the edge, not ~0.9 s behind each of the pair's own turns.
+      cameraTurns.forEach((tick, index) => {
+        const lag = tick - driveTurns[index]
+        expect(lag).toBeGreaterThan(30)
+        expect(lag).toBeLessThan(80)
+      })
+
+      expect(maxZoomRate(distances)).toBeLessThan(MAX_ZOOM_UNITS_PER_SECOND)
+    })
+
+    it('holds the framing distance bit-for-bit still for a swing that stays inside the framing dead zone', () => {
+      // The chatter input proper: fast (a full period every 12.6 ticks, about
+      // 5 Hz -- far faster than any footwork) and straddling the band edge, but
+      // never wider than the dead zone. `DISTANCE_DEAD_ZONE_FRACTION` is what
+      // makes this a non-event, and this test is why that constant is
+      // load-bearing for the band edge rather than merely documented: it is
+      // the only thing between a hovering pair and a 5 Hz zoom.
+      const insideDeadZone = 0.72 // 0.12 x 6.07242 = 0.72869
+      const held = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
+      settle(held, BAND_HIGH)
+      for (let step = 0; step < 600; step += 1) {
+        expect(held.update(targetsWithExtent(BAND_HIGH + insideDeadZone * Math.sin(step / 2)), 1 / 60).distance).toBe(FLAT_DISTANCE)
+      }
+
+      // ...and the dead zone really is what held it: the same drive one
+      // percent wider does move the camera, so the stillness above is the
+      // dead zone rather than the mapping being flat on both sides.
+      const moved = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
+      settle(moved, BAND_HIGH)
+      const outsideDeadZone = 0.74
+      const seen = new Set<number>()
+      for (let step = 0; step < 600; step += 1) {
+        seen.add(moved.update(targetsWithExtent(BAND_HIGH + outsideDeadZone * Math.sin(step / 2)), 1 / 60).distance)
+      }
+      expect(seen.size).toBeGreaterThan(1)
+    })
+
+    it('sweeps out and back without overshoot or excessive zoom rate', () => {
+      const camera = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
+      settle(camera, BAND_HIGH)
+      const seen: number[] = []
+      // 0.05 of extent per tick is 3 world units per second of spread -- about
+      // four times the fastest separation the nine bouts below ever produce.
+      // Deliberately harsher than play: this is the input a lurch would show
+      // up on.
+      for (let e = BAND_HIGH; e <= BAND_HIGH + 6; e += 0.05) { camera.update(targetsWithExtent(e), 1 / 60); seen.push(camera.state.distance) }
+      for (let e = BAND_HIGH + 6; e >= BAND_HIGH; e -= 0.05) { camera.update(targetsWithExtent(e), 1 / 60); seen.push(camera.state.distance) }
+      const atSweepEnd = seen.length
+      // The sweep ends with the camera still 3.3 units wide of home -- that is
+      // the 1.25 s lag, not overshoot, and there is no way to tell the two
+      // apart without letting it arrive. 600 idle ticks is 10 s, eight time
+      // constants.
+      for (let i = 0; i < 600; i += 1) { camera.update(targetsWithExtent(BAND_HIGH), 1 / 60); seen.push(camera.state.distance) }
+
+      // Never past either clamp, in either direction: the flat distance is
+      // also `minDistance`, so undershooting it would put the camera inside
+      // the framing the whole band is shot at.
+      expect(Math.max(...seen)).toBeLessThanOrEqual(MAX_DISTANCE + 1e-6)
+      expect(Math.min(...seen)).toBeGreaterThanOrEqual(FLAT_DISTANCE)
+
+      // Exactly one turn, at the top of the sweep: out monotonically, back
+      // monotonically, no ringing at either junction.
+      const turns = directionReversals(seen)
+      expect(turns.length).toBe(1)
+      expect(turns[0]).toBeGreaterThan(120)
+      expect(turns[0]).toBeLessThan(atSweepEnd)
+
+      // Home again -- but not exactly on `FLAT_DISTANCE`, and the residue is
+      // structural rather than a settling artefact. The 12% dead zone is
+      // sticky on EXTENT: coming back down, the last firing leaves the extent
+      // reference at 6.42 rather than at the band edge's 6.07242 (0.35 of
+      // extent, comfortably inside its own 0.77-wide dead zone at that width),
+      // and 6.42 maps to 8.878. Structurally the residue cannot exceed
+      // `extentToDistance(BAND_HIGH / 0.88) - FLAT_DISTANCE = 0.356`; measured
+      // it is 0.068, which is 0.8% of the framing distance and about a pixel
+      // of on-screen body height. Bounded at 0.1 to pin the measurement, not
+      // the structural ceiling.
+      const settled = seen[seen.length - 1]
+      expect(settled).toBeGreaterThanOrEqual(FLAT_DISTANCE)
+      expect(settled).toBeLessThan(FLAT_DISTANCE + 0.1)
+
+      expect(maxZoomRate(seen)).toBeLessThan(MAX_ZOOM_UNITS_PER_SECOND)
     })
   })
 
@@ -804,5 +1053,146 @@ describe('yaw continuity over real bouts', () => {
 
     expect(total).toBeGreaterThan(0)
     expect(overThreshold / total).toBeLessThanOrEqual(FRAMING_ERROR_BOUND_FRACTION)
+  })
+})
+
+/**
+ * Task 7, step 3: the same motion bounds over real fights rather than over a
+ * synthetic drive.
+ *
+ * The first test here replays the browser recording itself. Task 5's harness
+ * (`scripts/measure-framing.ts --record`) drove the shipping app in Chromium
+ * and wrote a per-tick `groupExtent`/`distance` trace for each of nine pairings
+ * at three viewports; Task 6 chose `FLAT_DISTANCE` against those 46,647 ticks.
+ * The recordings themselves are ~17 MB of gitignored measurement output, so
+ * rather than committing a fixture this reconstructs three of those traces from
+ * the simulation -- same season seed, same lineup, same slot, the fighters' own
+ * per-tick positions and the rig-measured equipment radii, one camera update
+ * per tick at the presentation clock's own 1/60 s. That reconstruction was
+ * checked against `rec-8.81-full-ease7.00.json` during Task 7 and is the
+ * recorded trace, not a lookalike: the extents agree to 1.8e-15 and the
+ * distances are bit-for-bit identical over all three bouts. The tick counts and
+ * opening distances asserted below are copied straight out of that file, so the
+ * identity is pinned here rather than merely claimed.
+ *
+ * Reaching the recording's bouts is why this file's imports go up to the season
+ * layer: the app derives each bout's seed from the season seed and the slot
+ * (`deriveSeriesSeed`/`deriveBoutSeed`), so a standalone `createBattle` at the
+ * same seed is a *different* fight -- it diverges from the recording at tick 18.
+ * The three pairings replayed are the three the recording ran in slot 0, one per
+ * home archetype, which is also why no bout-skipping is needed.
+ */
+describe('framing distance over real bouts', () => {
+  const framing = (battle: BattleState): HorizontalFramingTarget[] => {
+    const home = fighterBySide(battle, 'home')
+    const away = fighterBySide(battle, 'away')
+    return [
+      { id: 'home', centerX: home.position.x, centerZ: home.position.z, radius: RIG_EQUIPMENT_RADIUS[home.definition.archetype] },
+      { id: 'away', centerX: away.position.x, centerZ: away.position.z, radius: RIG_EQUIPMENT_RADIUS[away.definition.archetype] },
+    ]
+  }
+
+  /** Per-tick framing distance, and how often the group extent crossed the band edge while producing it. */
+  interface BoutMotion {
+    distances: number[]
+    bandEdgeCrossings: number
+  }
+
+  function driveCamera(nextBattle: () => BattleState | null, opening: BattleState): BoutMotion {
+    const camera = new ArenaCamera({ minDistance: FLAT_DISTANCE, maxDistance: MAX_DISTANCE })
+    camera.reset(framing(opening))
+    const distances: number[] = []
+    let previousExtent = measuredExtent(framing(opening), camera.state.yaw)
+    let bandEdgeCrossings = 0
+    for (let tick = 0; tick < 4000; tick += 1) {
+      const battle = nextBattle()
+      if (!battle) break
+      const targets = framing(battle)
+      const state = camera.update(targets, 1 / 60)
+      const extent = measuredExtent(targets, state.yaw)
+      if ((previousExtent - BAND_HIGH) * (extent - BAND_HIGH) < 0) bandEdgeCrossings += 1
+      previousExtent = extent
+      distances.push(state.distance)
+    }
+    return { distances, bandEdgeCrossings }
+  }
+
+  /**
+   * The band-edge motion bounds, over whatever the fighters actually did.
+   *
+   * Deliberately weaker than the synthetic oscillation test's "no reversal the
+   * pair did not ask for": a real bout closes and spreads repeatedly, and the
+   * camera is *supposed* to follow that. What this catches is the edge-triggered
+   * kind -- reversals that come from the mapping's decision boundary flipping
+   * rather than from the fight. Measured over all three recorded traces and all
+   * nine standalone pairings: zero reversals in every bout except
+   * retiarius-vs-hoplomachus, which has two, against 19,115 ticks. A camera that
+   * flipped at the junction counts in the dozens: 95 over 600 ticks, measured
+   * with `DISTANCE_DEAD_ZONE_FRACTION` set to zero on the sibling test's own
+   * inside-the-dead-zone drive.
+   */
+  function expectSmoothFraming(motion: BoutMotion): void {
+    expect(motion.bandEdgeCrossings).toBeGreaterThanOrEqual(1)
+    expect(motion.distances.length).toBeGreaterThan(600)
+    expect(directionReversals(motion.distances).length).toBeLessThanOrEqual(4)
+    expect(maxZoomRate(motion.distances)).toBeLessThan(MAX_ZOOM_UNITS_PER_SECOND)
+    expect(Math.min(...motion.distances)).toBeGreaterThanOrEqual(FLAT_DISTANCE)
+    expect(Math.max(...motion.distances)).toBeLessThanOrEqual(MAX_DISTANCE)
+  }
+
+  it('replays the recorded browser traces without chattering, overshooting or lurching', () => {
+    // `label`, `ticks` and `openingDistance` are read out of
+    // `.superpowers/framing/rec-8.81-full-ease7.00.json`; `lineup` is the one
+    // `scripts/measure-framing.ts` opened the series with.
+    const recorded = [
+      { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 2106, openingDistance: 15.082901146815477, crossings: 1 },
+      { label: '04 retiarius vs retiarius', lineup: ['aquila', 'nerva', 'brutus'], ticks: 1721, openingDistance: 15.931454116156672, crossings: 1 },
+      { label: '07 hoplomachus vs retiarius', lineup: ['nerva', 'brutus', 'aquila'], ticks: 1689, openingDistance: 16.29718777542238, crossings: 5 },
+    ] as const
+
+    for (const trace of recorded) {
+      let season = createSeason({ roster: SEASON_ROSTER, challenges: SEASON_CHALLENGES, combatStyles: COMBAT_STYLES, seed: BASELINE_TEST_SEED })
+      season = startNextSeries(season).state
+      trace.lineup.forEach((fighterId, slot) => { season = assignFighter(season, fighterId, slot).state })
+      season = confirmLineup(season).state
+
+      let series = season.activeSeries!
+      const opening = series.activeBattle!
+      const motion = driveCamera(() => {
+        if (series.phase !== 'fighting') return null
+        const before = series.activeBattle!.encounter.tick
+        series = advanceSeriesTicks(series, 1)
+        const battle = series.activeBattle!
+        return battle.encounter.tick === before ? null : battle
+      }, opening)
+
+      // This is the recorded bout, not merely a bout: same length, same
+      // opening shot. (`toBeCloseTo` rather than `toBe` only because
+      // `approach` goes through `Math.exp`, which no standard guarantees is
+      // bit-identical across platforms -- it was exact on this one.)
+      expect(motion.distances.length, `${trace.label}: recorded tick count`).toBe(trace.ticks)
+      expect(motion.distances[0], `${trace.label}: recorded opening distance`).toBeCloseTo(trace.openingDistance, 9)
+      expect(motion.bandEdgeCrossings, `${trace.label}: recorded band-edge crossings`).toBe(trace.crossings)
+
+      expectSmoothFraming(motion)
+    }
+  })
+
+  it('holds for all nine archetype pairings, not only the three the recording ran in slot 0', () => {
+    let totalTicks = 0
+    for (const home of homeRoster) {
+      for (const away of opponents) {
+        let battle: BattleState = createBattle({ home, away, seed: BASELINE_TEST_SEED, combatStyles: COMBAT_STYLES })
+        const motion = driveCamera(() => {
+          if (battle.phase !== 'running') return null
+          battle = advanceBattleTick(battle)
+          return battle
+        }, battle)
+        expectSmoothFraming(motion)
+        totalTicks += motion.distances.length
+      }
+    }
+    // Guards the loop itself: nine bouts of real length, not nine early exits.
+    expect(totalTicks).toBeGreaterThan(9000)
   })
 })
