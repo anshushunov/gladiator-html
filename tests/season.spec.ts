@@ -232,9 +232,12 @@ test('names the order each recorded bout was fought under on the season summary'
   await expect(bouts.nth(1)).toContainText('Order: Standard.')
   await expect(bouts.nth(2)).toContainText('Order: Guarded.')
   // Row identity, so the three assertions above cannot be read off the wrong
-  // bouts if the summary is ever reordered.
-  await expect(bouts.nth(0)).toContainText('Brutus vs Drusus')
-  await expect(bouts.nth(2)).toContainText('Nerva vs Magnus')
+  // bouts if the summary is ever reordered. Includes each fighter's type
+  // (`Name (Type)`, added to the season summary in Task 2's fix round) so
+  // this still matches the literal rendered text rather than a substring
+  // the rename made stale.
+  await expect(bouts.nth(0)).toContainText('Brutus (Murmillo) vs Drusus (Retiarius)')
+  await expect(bouts.nth(2)).toContainText('Nerva (Hoplomachus) vs Magnus (Murmillo)')
 })
 
 test('keeps a gladiator driven to broken off the roster, says why on the planning screen, and still lets the player confirm the short lineup', async ({ page }) => {

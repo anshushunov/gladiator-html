@@ -229,9 +229,11 @@ test('names each bout\'s order on the series summary rows', async ({ page }) => 
   await expect(rows.nth(1)).toContainText('Order: Standard.')
   await expect(rows.nth(2)).toContainText('Order: Guarded.')
   // Row identity, so the three assertions above cannot be read off the wrong
-  // bouts if the summary is ever reordered.
-  await expect(rows.nth(0)).toContainText('Brutus vs Drusus')
-  await expect(rows.nth(2)).toContainText('Nerva vs Magnus')
+  // bouts if the summary is ever reordered. Includes each fighter's type
+  // (`Name (Type)`, Task 2's series-summary format) so this still matches the
+  // literal rendered text rather than a substring the rename made stale.
+  await expect(rows.nth(0)).toContainText('Brutus (Murmillo) vs Drusus (Retiarius)')
+  await expect(rows.nth(2)).toContainText('Nerva (Hoplomachus) vs Magnus (Murmillo)')
 })
 
 // ---------------------------------------------------------------------------
