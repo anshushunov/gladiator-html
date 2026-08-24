@@ -217,7 +217,7 @@ const CAMERA_MAX_DISTANCE = 18
  * *angle* rather than a fixed height: the old camera sat at `(0, 8.8, 13)`
  * looking at the origin, an elevation/distance ratio of `8.8/13`. Framing
  * distance now varies (`CAMERA_MIN_DISTANCE..CAMERA_MAX_DISTANCE`, i.e.
- * 8.83..18 since the readable-gladiator-types slice, 11..18 before it);
+ * 8.81..18 since the readable-gladiator-types slice, 11..18 before it);
  * re-deriving height from that same ratio
  * every frame keeps the pitch constant as the shot zooms, which is what
  * "no vertical zoom response" (design.md) actually asks for -- height is
@@ -1107,7 +1107,7 @@ const MEASURED_CORNER = new THREE.Vector3()
  * Points behind the camera would project through the perspective divide with
  * a negative `w` and come back mirrored. Nothing measured here can be behind
  * it -- the camera always sits `CAMERA_MIN_DISTANCE..CAMERA_MAX_DISTANCE`
- * (8.83..18) units back from the look target it is
+ * (8.81..18) units back from the look target it is
  * pointed at, and everything measured is a fighter inside a `7.7`-radius
  * arena floor -- so this deliberately carries no guard that would silently
  * substitute a fake number for a real geometry bug.

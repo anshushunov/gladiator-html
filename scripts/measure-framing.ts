@@ -123,19 +123,30 @@ const SAFE_AREA_LIMITED_FLAT_DISTANCE = 8.578
 const FLOOR_MARGIN_FRACTION = 0.03
 
 /**
- * This harness's own accuracy, as Task 5 measured it rather than as anyone
- * assumed it: placing the camera at the predicted 9.313 re-derived 9.384
- * (0.76% high) and 6.278 against 6.317 (0.6% low), and the projection
- * calibration's resolution floor (set by how far off broadside the damped yaw
- * sits) is about the same. Every distance printed here is +/- ~1%.
+ * Below this much predicted safe-area margin, the SWEEP's answer is not an
+ * answer -- it is "go measure".
  *
- * Used by the candidate choice below as the minimum margin a criterion must
- * hold for the choice between two candidates to mean anything. That is the
- * human's own argument for `FLOOR_MARGIN_FRACTION` -- "a gate that is passed or
- * failed within its own measurement noise tests nothing" -- applied to the
- * other hard criterion, which they did not attach a number to.
+ * Measured, not assumed, and the two halves of the evidence point opposite
+ * ways, which is the whole reason for a threshold rather than a correction:
+ *
+ *   - at flat 8.83 the replay predicted 5.7 px and a browser run measured
+ *     5.74 px -- accurate to a rounding;
+ *   - at flat 8.75 the replay predicted 5.0 px and a browser run measured
+ *     **0.36 px**.
+ *
+ * The replay magnifies recorded frames about the canvas centre and cannot carry
+ * the look-target dead zone, which is 8% of the CURRENT distance -- so its own
+ * firing schedule depends on the distance mapping being swept, and one flipped
+ * firing moves the look target by tens of canvas px. That is invisible to the
+ * replay and decisive wherever the margin is a few px wide.
+ *
+ * So the candidate choice below will not prefer a candidate whose safe-area
+ * margin the replay cannot see, and the printed note says the same number. An
+ * earlier revision gated at 1% of relative distance slack (~2.4 px) while
+ * telling the reader to distrust anything under ~5 px, which cannot both be
+ * true.
  */
-const MEASUREMENT_ACCURACY_FRACTION = 0.01
+const REPLAY_SAFE_AREA_RESOLUTION_PX = 5
 
 /**
  * **Frozen before the camera sweep was run**, from Task 5's recorded trace of
@@ -1383,8 +1394,6 @@ interface CandidateResult {
    * could SHRINK before the safe area does. Same units, opposite directions.
    */
   safeSlack: number
-  /** `min(safeSlack, bodyAtP / floor - 1)`: the slack the candidate holds on whichever criterion is tighter. */
-  balancedSlack: number
 }
 
 function sweep(file: RecordingFile, grid: { flat: number[]; ease: number[] }): CandidateResult[] {
@@ -1451,7 +1460,6 @@ function sweep(file: RecordingFile, grid: { flat: number[]; ease: number[] }): C
       if (rejection === undefined && !(bodyAtP >= BODY_HEIGHT_FLOOR_PX)) {
         rejection = `body height at p${Math.round(FROZEN_BODY_FLOOR_PERCENTILE * 100)} is ${fixed(bodyAtP, 2)} px < ${BODY_HEIGHT_FLOOR_PX} (${worstPairing})`
       }
-      const floorSlack = bodyAtP / BODY_HEIGHT_FLOOR_PX - 1
       results.push({
         candidate,
         rejection,
@@ -1461,7 +1469,6 @@ function sweep(file: RecordingFile, grid: { flat: number[]; ease: number[] }): C
         minInsetPx,
         insetLabel,
         safeSlack,
-        balancedSlack: Math.min(safeSlack, floorSlack),
       })
     }
   }
@@ -1675,6 +1682,32 @@ function printSweep(file: RecordingFile, results: readonly CandidateResult[]): v
   // of BOTH margins it holds -- not on the floor gate alone, and not on camera
   // motion alone, which barely discriminates across it.
   const bandHighForSlope = bandHighExtent(file.radii)
+
+  // Selection, in three steps. Every number in it comes from the human's
+  // amendment, Task 5's measurement, or the brief -- none from me:
+  //
+  //   1. the hard criteria reject (the amendment) -- already done above;
+  //   2. keep the candidates that hold BOTH margins meaningfully: the floor by
+  //      the amendment's own FLOOR_MARGIN_FRACTION, and the safe area by more
+  //      than this replay can actually resolve. Both are preferences rather
+  //      than gates -- if the set is empty the sweep falls back and SAYS it
+  //      fell back, so an impossibility is never manufactured by the rule;
+  //   3. among those, the brief's own objective: least total camera motion,
+  //      which is also the best available proxy for how hard the camera is
+  //      yanked at the junction. Widest safe area breaks any remaining tie.
+  //
+  // An earlier revision ranked on `min(floorSlack, safeSlack)` with a tolerance
+  // parameter of my own invention. That is what it cost: it preferred a flat
+  // distance with +2.00% of floor margin over one with +3.05% by four
+  // hundredths of a percentage point, giving up a whole point on the criterion
+  // under scrutiny to buy half a point on the one that had px of real headroom
+  // either way. Treating the two as interchangeable was the error: only one of
+  // them is what the ruling is about, and the other is a constraint that either
+  // holds with room or does not.
+  const clearingFloorByMargin = survivors.filter((result) => result.bodyAtP >= BODY_HEIGHT_FLOOR_PX * (1 + FLOOR_MARGIN_FRACTION))
+  const holdingBoth = clearingFloorByMargin.filter((result) => result.minInsetPx >= REPLAY_SAFE_AREA_RESOLUTION_PX)
+  const preferenceOrder = (a: CandidateResult, b: CandidateResult): number => a.totalMotion - b.totalMotion || b.safeSlack - a.safeSlack
+
   const row = (result: CandidateResult): string =>
     `      ${fixed(result.candidate.flatDistance, 3).padStart(7)} ${fixed(result.candidate.easeWidthExtent, 2).padStart(6)} ${fixed(result.totalMotion, 1).padStart(8)} ` +
     `${fixed(result.bodyAtP, 2).padStart(8)} ${`+${fixed((result.bodyAtP / BODY_HEIGHT_FLOOR_PX - 1) * 100, 2)}%`.padStart(8)} ` +
@@ -1683,12 +1716,17 @@ function printSweep(file: RecordingFile, results: readonly CandidateResult[]): v
     `      ${'flat'.padStart(7)} ${'ease'.padStart(6)} ${'motion'.padStart(8)} ${'body@P'.padStart(8)} ${'floor'.padStart(8)} ` +
     `${'safe'.padStart(8)} ${'inset px'.padStart(8)} ${'C1 slope'.padStart(9)}`
 
-  console.log('\n  the surviving frontier by flat distance, at each one\'s most BALANCED ease')
+  // Both tables below are ordered by the SAME rule that picks the winner, so
+  // that what they show and what gets chosen cannot drift apart. (They used to
+  // rank on a `min(floorSlack, safeSlack)` score that the selection no longer
+  // uses, which meant the most-read table showed one ease while the argument
+  // was about another.)
+  console.log("\n  the surviving frontier by flat distance, at each one's best ease under the selection rule")
   console.log('  ("floor" = how much the distance could grow before the floor fails; "safe" = how much it could shrink')
-  console.log('   before the inset does -- the same units, opposite directions, so the smaller of the two is the slack held):')
+  console.log('   before the inset does -- the same units, opposite directions):')
   console.log(`${header}  binding tick for the inset`)
   for (const flat of survivingFlats) {
-    const best = [...survivors].filter((result) => result.candidate.flatDistance === flat).sort((a, b) => b.balancedSlack - a.balancedSlack)[0]
+    const best = [...survivors].filter((result) => result.candidate.flatDistance === flat).sort(preferenceOrder)[0]
     console.log(`${row(best)}  ${best.insetLabel}`)
   }
 
@@ -1733,33 +1771,8 @@ function printSweep(file: RecordingFile, results: readonly CandidateResult[]): v
 
   const winner = [...survivors].sort((a, b) => a.totalMotion - b.totalMotion || a.candidate.flatDistance - b.candidate.flatDistance)[0]
 
-  // Selection, in three steps. Every number in it comes from the human's
-  // amendment, Task 5's measurement, or the brief -- none from me:
-  //
-  //   1. the hard criteria reject (the amendment) -- already done above;
-  //   2. keep the candidates that hold BOTH margins meaningfully: the floor by
-  //      the amendment's own FLOOR_MARGIN_FRACTION, and the safe area by at
-  //      least MEASUREMENT_ACCURACY_FRACTION, since a hard constraint held by
-  //      less than the instrument's accuracy is not held in any way a reader
-  //      can rely on. Both are preferences rather than gates -- if the set is
-  //      empty the sweep falls back and SAYS it fell back, so an impossibility
-  //      is never manufactured by the selection rule;
-  //   3. among those, the brief's own objective: least total camera motion,
-  //      which is also the best available proxy for how hard the camera is
-  //      yanked at the junction. Widest safe area breaks any remaining tie.
-  //
-  // An earlier revision ranked on `min(floorSlack, safeSlack)` with a tolerance
-  // parameter of my own invention. That is what it cost: it preferred 8.83
-  // (floor +2.00%, safe +2.41%) over 8.74 (floor +3.05%, safe +1.96%) by four
-  // hundredths of a percentage point, giving up a whole point of margin on the
-  // criterion under scrutiny to buy half a point on the one that had 4.7 px of
-  // real headroom either way. Treating the two as interchangeable was the
-  // error: only one of them is what the ruling is about, and the other is a
-  // constraint that either holds with room or does not.
-  const clearingFloorByMargin = survivors.filter((result) => result.bodyAtP >= BODY_HEIGHT_FLOOR_PX * (1 + FLOOR_MARGIN_FRACTION))
-  const holdingBoth = clearingFloorByMargin.filter((result) => result.safeSlack >= MEASUREMENT_ACCURACY_FRACTION)
   const preferred = holdingBoth.length > 0 ? holdingBoth : clearingFloorByMargin.length > 0 ? clearingFloorByMargin : survivors
-  const balanced = [...preferred].sort((a, b) => a.totalMotion - b.totalMotion || b.safeSlack - a.safeSlack)[0]
+  const balanced = [...preferred].sort(preferenceOrder)[0]
   const motions = survivors.map((result) => result.totalMotion)
   console.log(
     `\n  the brief's stated tie-break, LEAST TOTAL CAMERA MOTION: flat ${fixed(winner.candidate.flatDistance, 3)}, ` +
@@ -1768,13 +1781,14 @@ function printSweep(file: RecordingFile, results: readonly CandidateResult[]): v
   )
   console.log(
     `     but motion across the frontier spans only ${fixed(Math.min(...motions), 1)}..${fixed(Math.max(...motions), 1)} ` +
-      `(${fixed((Math.max(...motions) / Math.min(...motions) - 1) * 100, 1)}%), while the slack held spans ` +
-      `${fixed(Math.min(...survivors.map((result) => result.balancedSlack)) * 100, 2)}..${fixed(Math.max(...survivors.map((result) => result.balancedSlack)) * 100, 2)}%.`,
+      `(${fixed((Math.max(...motions) / Math.min(...motions) - 1) * 100, 1)}%), while the floor margin spans ` +
+      `${fixed(Math.min(...survivors.map((result) => result.bodyAtP / BODY_HEIGHT_FLOOR_PX - 1)) * 100, 2)}..` +
+      `${fixed(Math.max(...survivors.map((result) => result.bodyAtP / BODY_HEIGHT_FLOOR_PX - 1)) * 100, 2)}%.`,
   )
   console.log('     Motion barely discriminates on this frontier; the margins do, and the frontier is narrower than this')
   console.log(
     `     harness's own +/-1%. ${clearingFloorByMargin.length} candidates clear the floor by >=${FLOOR_MARGIN_FRACTION * 100}%, of which ` +
-      `${holdingBoth.length} also hold the safe area by >=${MEASUREMENT_ACCURACY_FRACTION * 100}%;`,
+      `${holdingBoth.length} also keep >=${REPLAY_SAFE_AREA_RESOLUTION_PX} px of safe area (below that the replay cannot see it -- see below);`,
   )
   console.log(
     `     the winner is the least-motion candidate among ${holdingBoth.length > 0 ? 'those' : clearingFloorByMargin.length > 0 ? 'the former (NO candidate holds both -- fell back)' : 'ALL survivors (NO candidate clears the floor margin -- fell back twice)'}.`,
@@ -1789,14 +1803,14 @@ function printSweep(file: RecordingFile, results: readonly CandidateResult[]): v
       `(${fixed(balanced.minInsetPx, 1)} px at ${balanced.insetLabel}), motion ${fixed(balanced.totalMotion, 1)}`,
   )
   console.log('     NOT the decision -- a candidate. This sweep nominates; only a --record run decides, and on the')
-  console.log('     safe area the two have been measured to disagree badly at the near-junction binding tick: the')
-  console.log('     replay predicted 4.7 px of margin at flat 8.740 and a real run measured 0.1 px. The replay')
-  console.log('     magnifies recorded frames about the canvas CENTRE and cannot carry the look-target dead zone')
-  console.log('     (8% of the CURRENT distance), which re-centres the frame by a few px -- decisive exactly where')
-  console.log('     the margin is a few px wide. Read a safe-area slack below ~5 px here as "unknown, go measure".')
-  console.log('  the ten most balanced candidates overall:')
+  console.log('     safe area the two have been measured to disagree badly below the knee: at flat 8.75 the replay')
+  console.log('     predicted 5.0 px of margin and a browser run measured 0.36 px, while at flat 8.83 it predicted')
+  console.log('     5.7 px and a browser run measured 5.74 px. See REPLAY_SAFE_AREA_RESOLUTION_PX for why: the')
+  console.log('     look-target dead zone is 8% of the CURRENT distance, so one flipped firing moves the look target')
+  console.log(`     by tens of px and the replay cannot see it. Treat a predicted margin under ${REPLAY_SAFE_AREA_RESOLUTION_PX} px as "go measure".`)
+  console.log('  the ten the selection rule ranks highest (same order as the per-flat table above):')
   console.log(header)
-  for (const result of [...survivors].sort((a, b) => b.balancedSlack - a.balancedSlack).slice(0, 10)) console.log(row(result))
+  for (const result of [...preferred].sort(preferenceOrder).slice(0, 10)) console.log(row(result))
   const bandHigh = bandHighExtent(file.radii)
   for (const [title, candidate] of [
     ['the winner', balanced.candidate],

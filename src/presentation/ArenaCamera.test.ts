@@ -19,7 +19,7 @@ const DEGREE = Math.PI / 180
 // ---------------------------------------------------------------------------
 
 /** `ArenaView.CAMERA_MIN_DISTANCE` is now this, so the clamp cannot override the flat region. */
-const FLAT_DISTANCE = 8.83
+const FLAT_DISTANCE = 8.81
 const MIN_DISTANCE = FLAT_DISTANCE
 const MAX_DISTANCE = 18
 

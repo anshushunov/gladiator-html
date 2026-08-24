@@ -165,28 +165,41 @@ const BAND_HIGH_EXTENT = BAND_HIGH_SEPARATION + 2 * WIDEST_EQUIPMENT_RADIUS * (1
  * above it the floor does.
  *
  * The value itself is then picked from DIRECT measurement rather than from the
- * sweep, because near the binding safe-area tick the replay is not good enough:
- * it magnifies recorded frames about the canvas centre, and it cannot carry the
- * look-target dead zone (8% of the CURRENT distance), which re-centres the
- * frame by several px exactly where the margin is a few px wide. Measured at
- * `EASE_WIDTH_EXTENT = 7.0`, four full 46,647-tick runs:
+ * sweep, because near the binding safe-area frame the replay is not good
+ * enough: it magnifies recorded frames about the canvas centre, and it cannot
+ * carry the look-target dead zone (8% of the CURRENT distance, so its own
+ * firing schedule depends on the distance mapping), which re-centres the frame
+ * by tens of px exactly where the margin is a few px wide. Measured, browser
+ * runs only -- every row below is a `--record` pass, and the recording that
+ * backs it is kept beside the task report:
  *
- *   flat   floor margin   safe-area margin
- *   8.74      +3.15%       0.1 px  (+0.03%)   <- replay predicted 4.7 px
- *   8.79      +2.51%       1.5 px  (+0.60%)
- *   8.83      +2.00%       5.7 px  (+2.41%)   <- this constant
- *   8.88      +1.42%       6.1 px  (+2.55%)
+ *   flat   floor margin   safe-area margin   run
+ *   8.75      +3.02%        0.36 px          full, EASE 7.25 (predicted 5.0 px)
+ *   8.79      +2.51%        1.46 px          full
+ *   8.80        --          1.74 px          1024x768 only
+ *   8.81      +2.25%        5.61 px          full   <- this constant
+ *   8.82        --          5.67 px          1024x768 only
+ *   8.83      +2.00%        5.74 px          full
  *
- * `8.83` is the knee. Below it the safe-area margin falls off a cliff (the
- * binding frame is a near-junction one at 1024x768, where the camera still sits
- * exactly here because the 12% distance dead zone has not fired -- so no ease
- * width can rescue it); above it the margin has saturated onto a different,
- * far-region binding frame and further distance buys ~nothing while still
- * costing body height. See the task report for why the amendment's 3% floor
- * margin and a safe-area margin above this harness's own ~1% accuracy are not
- * jointly reachable.
+ * `8.81` is the knee, and it is a cliff rather than a curve: the binding frame
+ * changes identity across it. Below 8.81 the tightest frame is a near-junction
+ * one at 1024x768 (pairing 07 tick 1495) whose own margin steps 1.74 -> 6.60 px
+ * between 8.80 and 8.81 as a look-target firing flips; at and above 8.81 the
+ * tightest frame is a far-region one (pairing 05 tick 183) that grows only
+ * ~0.06 px per 0.01 of distance. So below the knee the safe area collapses, and
+ * above it further distance buys ~nothing while still costing body height.
+ *
+ * No ease width rescues the sub-knee frames: at that tick the camera sits at
+ * exactly `FLAT_DISTANCE` even though the extent (6.47) is past
+ * `BAND_HIGH_EXTENT`, because the sticky *extent* reference the 12% framing
+ * dead zone gates on is still inside the flat region -- and that stickiness is
+ * ease-independent by construction.
+ *
+ * See the task report for why the amendment's 3% floor margin and a safe-area
+ * margin above this harness's own ~1% accuracy are not jointly reachable: 8.75
+ * reaches +3.02% and pays 0.36 px for it.
  */
-export const FLAT_DISTANCE = 8.83
+export const FLAT_DISTANCE = 8.81
 
 /**
  * How much extent past the band it takes to ease all the way out to
