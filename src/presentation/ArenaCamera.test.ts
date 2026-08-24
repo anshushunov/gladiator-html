@@ -6,6 +6,32 @@ import { advanceBattleTick, createBattle, fighterBySide, type BattleState } from
 
 const DEGREE = Math.PI / 180
 
+// ---------------------------------------------------------------------------
+// The swept framing constants (Task 6), written out as literals rather than
+// imported.
+//
+// Importing them would turn every assertion below into a restatement of the
+// implementation -- `f(x) === CONST` cannot fail however `f` is rewritten. As
+// literals they pin the shape *and* the numbers, and the numbers are not
+// arbitrary: they were chosen by `scripts/measure-framing.ts --sweep` against
+// 46,647 recorded ticks, and changing either one silently is exactly the
+// regression these tests exist to catch.
+// ---------------------------------------------------------------------------
+
+/** `ArenaView.CAMERA_MIN_DISTANCE` is now this, so the clamp cannot override the flat region. */
+const FLAT_DISTANCE = 8.83
+const MIN_DISTANCE = FLAT_DISTANCE
+const MAX_DISTANCE = 18
+
+/**
+ * The tactical band in group-extent terms. `BAND_LOW` is the narrowest pairing
+ * (murmillo vs murmillo): `0.9 + 2 x 0.7102 x 1.1`. `BAND_HIGH` is the widest
+ * (hoplomachus vs hoplomachus): `3.1 + 2 x 1.3511 x 1.1`, which is where the
+ * flat region has to end for the band to be flat for every pairing.
+ */
+const BAND_LOW = 2.46244
+const BAND_HIGH = 6.07242
+
 /** A symmetric pair, `separation` apart, whose axis sits `axisDegrees` off world X -- the exact input the camera's yaw exists to answer. */
 function pairOnAxis(axisDegrees: number, separation = 3, radius = 0.5): HorizontalFramingTarget[] {
   const half = separation / 2
@@ -59,16 +85,20 @@ describe('ArenaCamera', () => {
   describe('measuredExtent', () => {
     it('reproduces the extent the camera itself framed by', () => {
       // An off-axis pair (so the yaw is neither zero nor a symmetric special
-      // case) whose extent lands strictly inside the 11..18 clamp, which is
-      // what makes `state.distance` an invertible read on the extent the
-      // camera actually consumed.
-      const targets = pairOnAxis(23, 4, 0.7)
-      const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
+      // case) held WIDE, at extent 10.54. `state.distance` is only an
+      // invertible read on the extent inside the eased region: across the band
+      // the mapping is deliberately flat, so every extent there frames at
+      // `FLAT_DISTANCE` and reading the extent back off the distance is
+      // impossible in principle. (Before Task 6 a separation of 4 was wide
+      // enough for this; it is now inside the flat region.)
+      const targets = pairOnAxis(23, 9, 0.7)
+      const camera = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
       const reset = camera.reset(targets)
 
-      expect(reset.distance).toBeGreaterThan(11)
-      expect(reset.distance).toBeLessThan(18)
-      expect(extentToDistance(measuredExtent(targets, reset.yaw), 11, 18)).toBe(reset.distance)
+      expect(measuredExtent(targets, reset.yaw)).toBeGreaterThan(BAND_HIGH)
+      expect(reset.distance).toBeGreaterThan(MIN_DISTANCE)
+      expect(reset.distance).toBeLessThan(MAX_DISTANCE)
+      expect(extentToDistance(measuredExtent(targets, reset.yaw), MIN_DISTANCE, MAX_DISTANCE)).toBe(reset.distance)
     })
 
     it("includes each target's 10% equipment margin", () => {
@@ -84,6 +114,73 @@ describe('ArenaCamera', () => {
       // Yaw 90 degrees puts the pair's own axis along the camera's view
       // depth: nothing of the separation is left across the frame.
       expect(measuredExtent(targets, 90 * DEGREE)).toBeCloseTo(2 * 0.7 * 1.1, 12)
+    })
+  })
+
+  // Task 6. The defect these replace: `clamp(8.5 + 0.8 x extent, 11, 18)` put a
+  // close-quarters exchange at 11 world units, which measured 50-90 px of body
+  // on a 518 px canvas. The band is now framed at one flat distance, chosen by
+  // sweeping 7,189 candidates against 46,647 recorded ticks.
+  describe('piecewise framing distance', () => {
+    it('is flat across the tactical band', () => {
+      for (const extent of [BAND_LOW, (BAND_LOW + BAND_HIGH) / 2, BAND_HIGH]) {
+        expect(extentToDistance(extent, MIN_DISTANCE, MAX_DISTANCE)).toBeCloseTo(FLAT_DISTANCE, 6)
+      }
+    })
+
+    it('is flat below the band too, so approaching fighters do not pull the camera in further', () => {
+      // The flat region is `extent <= BAND_HIGH`, not `BAND_LOW <= extent <=
+      // BAND_HIGH`: below the band the two are nearly on top of each other and
+      // there is nothing left to zoom into. It also matters for the safe area,
+      // since those are the largest silhouettes on screen.
+      for (const extent of [0, 0.5, BAND_LOW / 2]) {
+        expect(extentToDistance(extent, MIN_DISTANCE, MAX_DISTANCE)).toBeCloseTo(FLAT_DISTANCE, 6)
+      }
+    })
+
+    it('widens monotonically beyond the band and respects the far clamp', () => {
+      let previous = FLAT_DISTANCE
+      for (let extent = BAND_HIGH; extent <= BAND_HIGH + 12; extent += 0.25) {
+        const d = extentToDistance(extent, MIN_DISTANCE, MAX_DISTANCE)
+        expect(d).toBeGreaterThanOrEqual(previous - 1e-9)
+        previous = d
+      }
+      expect(extentToDistance(1e6, MIN_DISTANCE, MAX_DISTANCE)).toBe(MAX_DISTANCE)
+    })
+
+    it('joins the regions with a continuous first derivative', () => {
+      const h = 1e-6
+      const slope = (x: number): number =>
+        (extentToDistance(x + h, MIN_DISTANCE, MAX_DISTANCE) - extentToDistance(x - h, MIN_DISTANCE, MAX_DISTANCE)) / (2 * h)
+
+      // Inside the band the mapping is flat, so the left-hand slope is exactly zero.
+      expect(slope(BAND_HIGH - 10 * h)).toBeCloseTo(0, 3)
+      // Outside it the right-hand slope agrees.
+      expect(slope(BAND_HIGH + 10 * h)).toBeCloseTo(0, 3)
+
+      // ...and it does so as a limit, not by luck. A smoothstep's slope grows
+      // LINEARLY in the distance from the junction, so halving the offset
+      // halves the slope. A junction that merely met (C0 -- a straight line
+      // resuming at the band edge, which is what the old mapping would have
+      // done) would hold a constant non-zero slope all the way in, and that
+      // constant is the lurch this shape exists to avoid. This is the
+      // assertion that tells the two apart; a fixed-offset slope check cannot,
+      // because how small it reads is set by EASE_WIDTH_EXTENT rather than by
+      // continuity.
+      const near = slope(BAND_HIGH + 1e-3)
+      const nearer = slope(BAND_HIGH + 5e-4)
+      expect(near).toBeGreaterThan(0)
+      expect(nearer / near).toBeCloseTo(0.5, 2)
+    })
+
+    it('reaches the far clamp inside the eased region rather than at it', () => {
+      // EASE_WIDTH_EXTENT is 7.0, so the clamp is reached at BAND_HIGH + 7.0 =
+      // 13.07 -- above the widest extent the nine pairings produce (11.37). The
+      // camera therefore tops out near 16.6 in play, and the `18` clamp is a
+      // guard rather than a framing the fight ever sits at.
+      expect(extentToDistance(11.37, MIN_DISTANCE, MAX_DISTANCE)).toBeLessThan(MAX_DISTANCE)
+      expect(extentToDistance(11.37, MIN_DISTANCE, MAX_DISTANCE)).toBeGreaterThan(15)
+      expect(extentToDistance(BAND_HIGH + 7.0, MIN_DISTANCE, MAX_DISTANCE)).toBeCloseTo(MAX_DISTANCE, 9)
     })
   })
 
@@ -189,13 +286,21 @@ describe('ArenaCamera', () => {
      * (design.md's own number, used here to solve backward for the margin
      * fraction actually baked into "extent", which is otherwise opaque from
      * outside the module).
+     *
+     * The geometry it is called with has to sit in the EASED region, wide
+     * enough that the mapping is strictly increasing there. Across the band the
+     * mapping is flat by design, so a dead-zone crossing produces no distance
+     * change at all and this search would measure nothing. (`DEAD_ZONE_SPACING`
+     * and `DEAD_ZONE_BASE_RADIUS` below give extent 8.76, and the crossing lands
+     * at 9.81 -- both inside the eased region, and both strictly inside the
+     * clamp.)
      */
     function findRadiusBoundary(baseRadius: number, spacing: number): number {
       let low = baseRadius
       let high = baseRadius * 6 + 5
       for (let i = 0; i < 50; i += 1) {
         const mid = (low + high) / 2
-        const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
+        const camera = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
         const before = camera.reset([
           { id: 'a', centerX: -spacing, centerZ: 0, radius: baseRadius },
           { id: 'b', centerX: spacing, centerZ: 0, radius: baseRadius },
@@ -213,35 +318,32 @@ describe('ArenaCamera', () => {
       return high
     }
 
-    it('does not re-zoom for a radius growth inside the boundary, and does for one just outside it', () => {
-      const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
-      const before = camera.reset([
-        { id: 'a', centerX: -2, centerZ: 0, radius: 1 },
-        { id: 'b', centerX: 2, centerZ: 0, radius: 1 },
-      ]).distance
-      const boundary = findRadiusBoundary(1, 2)
+    /** Half the separation, and each target's starting radius: extent `2*3.5 + 2*0.8*1.1 = 8.76`, in the eased region. */
+    const DEAD_ZONE_SPACING = 3.5
+    const DEAD_ZONE_BASE_RADIUS = 0.8
 
-      const inside = camera.update(
-        [
-          { id: 'a', centerX: -2, centerZ: 0, radius: boundary - 0.01 },
-          { id: 'b', centerX: 2, centerZ: 0, radius: boundary - 0.01 },
-        ],
-        10,
-      ).distance
+    const deadZonePair = (radius: number): HorizontalFramingTarget[] => [
+      { id: 'a', centerX: -DEAD_ZONE_SPACING, centerZ: 0, radius },
+      { id: 'b', centerX: DEAD_ZONE_SPACING, centerZ: 0, radius },
+    ]
+
+    it('does not re-zoom for a radius growth inside the boundary, and does for one just outside it', () => {
+      const camera = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
+      const before = camera.reset(deadZonePair(DEAD_ZONE_BASE_RADIUS)).distance
+      const boundary = findRadiusBoundary(DEAD_ZONE_BASE_RADIUS, DEAD_ZONE_SPACING)
+
+      // Both readings have to sit strictly inside the clamp, or the clamp
+      // rather than the dead zone is what "did not re-zoom" would be showing.
+      expect(before).toBeGreaterThan(MIN_DISTANCE)
+      expect(before).toBeLessThan(MAX_DISTANCE)
+
+      const inside = camera.update(deadZonePair(boundary - 0.01), 10).distance
       expect(inside).toBe(before)
 
-      camera.reset([
-        { id: 'a', centerX: -2, centerZ: 0, radius: 1 },
-        { id: 'b', centerX: 2, centerZ: 0, radius: 1 },
-      ])
-      const outside = camera.update(
-        [
-          { id: 'a', centerX: -2, centerZ: 0, radius: boundary + 0.01 },
-          { id: 'b', centerX: 2, centerZ: 0, radius: boundary + 0.01 },
-        ],
-        10,
-      ).distance
+      camera.reset(deadZonePair(DEAD_ZONE_BASE_RADIUS))
+      const outside = camera.update(deadZonePair(boundary + 0.01), 10).distance
       expect(outside).not.toBe(before)
+      expect(outside).toBeLessThan(MAX_DISTANCE)
     })
 
     it('the boundary radius implies exactly a 10% equipment margin under the documented 12% dead zone', () => {
@@ -249,8 +351,8 @@ describe('ArenaCamera', () => {
       // extentBoundary = 2*spacing + 2*boundary*(1+m)
       // extentBoundary - extentBefore = 0.12 * extentBefore  (the dead-zone
       // crossing condition), with margin fraction m the only unknown left.
-      const spacing = 2
-      const baseRadius = 1
+      const spacing = DEAD_ZONE_SPACING
+      const baseRadius = DEAD_ZONE_BASE_RADIUS
       const boundary = findRadiusBoundary(baseRadius, spacing)
 
       // k = 1 + m; solved from: 2*(boundary-baseRadius)*k = 0.12*(2*spacing + 2*baseRadius*k)

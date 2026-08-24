@@ -10,8 +10,11 @@
 // design.md's "Arena, camera, and effects" section fixes the numbers this
 // module must hit exactly: an 8% look-target dead zone, a 12% framing (group
 // extent) dead zone, a 0.75s look-target damping time constant, a separate
-// 1.25s distance damping time constant, a 10% equipment-radius margin, a
-// distance clamp of 11..18 world units, and -- since the 2026-08-18
+// 1.25s distance damping time constant, a 10% equipment-radius margin, an
+// upper distance clamp of 18 world units (the lower one was 11 until the
+// 2026-08-24 readable-gladiator-types slice replaced it with the swept
+// `FLAT_DISTANCE` below, so that the clamp could not override the flat
+// region), and -- since the 2026-08-18
 // combat-axis amendment -- a 5 degree yaw dead zone, and -- since the
 // 2026-08-19 legibility slice -- a +/-90 degree yaw clamp (widened from the
 // amendment's +/-30, made safe by the continuity fix below) and a 0.5s yaw
@@ -122,17 +125,62 @@ const MAX_YAW_RADIANS = (90 * Math.PI) / 180
  */
 const MIN_DEAD_ZONE_REFERENCE = 1e-6
 
+/** design.md: the tactical band's upper edge, in PAIR SEPARATION -- the longest authored attack reach. */
+const BAND_HIGH_SEPARATION = 3.1
+
+/** The widest `horizontalEquipmentRadius` in the roster: the hoplomachus', measured off the built rig. */
+const WIDEST_EQUIPMENT_RADIUS = 1.3511
+
 /**
- * Maps a desired group extent (world units, already including each target's
- * margin) onto a pre-clamp camera distance. There is no simulation constant
- * to derive this from -- it is authored purely so that a close-quarters
- * exchange (extent roughly 2-4 units) sits near the `11` clamp and the
- * duel arena's near-maximum separation (extent roughly 11-13 units) sits
- * near the `18` clamp; the clamp itself is what design.md actually pins, and
- * this mapping only ever feeds that clamp.
+ * The same band edge, expressed in the GROUP EXTENT that `extentToDistance`
+ * below actually consumes.
+ *
+ * Extent adds both fighters' equipment radii with this module's own margin, so
+ * the band's edges differ per pairing -- from 2.46-4.66 (murmillo vs murmillo,
+ * the narrowest) to 3.87-6.07 (hoplomachus vs hoplomachus, the widest). The
+ * flat region has to cover the band for EVERY pairing, so it ends at the widest
+ * one's upper edge, which is what this arithmetic spells out (6.07242). Written
+ * as the derivation rather than as the number so that it stays correct if the
+ * margin changes, and so it is checkable without a spreadsheet.
  */
-const DISTANCE_BASE = 8.5
-const DISTANCE_PER_EXTENT_UNIT = 0.8
+const BAND_HIGH_EXTENT = BAND_HIGH_SEPARATION + 2 * WIDEST_EQUIPMENT_RADIUS * (1 + EQUIPMENT_MARGIN_FRACTION)
+
+/**
+ * The single distance the whole tactical band is framed at.
+ *
+ * **Swept, not authored.** The mapping this replaces was
+ * `clamp(8.5 + 0.8 * extent, 11, 18)`, whose lower clamp already made a flat
+ * region below extent 3.125 -- the defect was that `11` is too far out. It put
+ * the typical in-band exchange at 93-111 px of body height on a 518 px canvas,
+ * and the worst at 68. The old line could not simply "resume" at the band edge
+ * either, because it already sits above any flat value low enough to be
+ * legible.
+ *
+ * `8.83` comes from `scripts/measure-framing.ts --sweep`: 7,189 candidate
+ * `(FLAT_DISTANCE, EASE_WIDTH_EXTENT)` pairs replayed against 46,647 recorded
+ * ticks -- all nine pairings at three viewports -- rejecting any candidate that
+ * puts anything but a polearm outside the canvas's 5% inset on any tick, or
+ * that drops the on-screen body height below 130 px at the 92nd percentile of
+ * in-band ticks at 1280x820. Below the surviving frontier the safe area fails;
+ * above it the floor does. `8.83` is the balance point, and the frontier is
+ * narrow enough that the balance point is the only part of it where BOTH
+ * margins clear the measurement's own ~1% accuracy.
+ */
+export const FLAT_DISTANCE = 8.83
+
+/**
+ * How much extent past the band it takes to ease all the way out to
+ * `maxDistance`. Also swept, and bounded above rather than below: the safe area
+ * rejects everything past about 7.25, because a wider ease holds the camera in
+ * close while the pair spreads right out, and they then crop horizontally on
+ * the narrow 542 px canvas at 1024x768.
+ *
+ * At `7.00` the far clamp is reached at extent `6.07 + 7.00 = 13.07`, above the
+ * widest extent the nine pairings actually produce (11.37) -- so in play the
+ * camera tops out near 16.6 and `maxDistance` is a guard rather than a framing
+ * the fight sits at.
+ */
+const EASE_WIDTH_EXTENT = 7.0
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -145,16 +193,37 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * The pre-clamp distance mapping (`DISTANCE_BASE`/`DISTANCE_PER_EXTENT_UNIT`
- * above) plus the clamp. Exported so a measurement harness can invert the one
- * quantity the camera actually exposes -- `state.distance` -- back onto the
- * extent that produced it, and so prove that `measuredExtent` below really is
- * the camera's own measure rather than a lookalike (see
- * `ArenaCamera.test.ts`'s "reports the same group extent the camera's own
- * framing consumed"). Nothing in `src/` calls it from outside this module.
+ * Group extent (world units, margins already included) to a camera distance,
+ * in two regions:
+ *
+ *   - **flat**, at or below `BAND_HIGH_EXTENT`: every frame of the tactical
+ *     band, and every closer-than-band frame too, is shot from exactly
+ *     `FLAT_DISTANCE`. Below the band there is nothing left to zoom into -- the
+ *     two fighters are on top of each other -- and those are the largest
+ *     silhouettes on screen, so pulling in further is what would crop them.
+ *   - **eased**, above it: a smoothstep out to `maxDistance` over
+ *     `EASE_WIDTH_EXTENT` of further spread. Smoothstep rather than a straight
+ *     line because its derivative is zero at both ends, so the camera leaves
+ *     the flat region and arrives at the clamp without a lurch at either
+ *     junction (C1). A line would start moving at full rate the instant the
+ *     pair crossed the band edge.
+ *
+ * The clamp is applied last and is a guard, not part of the shape:
+ * `ArenaView`'s `CAMERA_MIN_DISTANCE` is `FLAT_DISTANCE` itself, precisely so
+ * that it cannot override the flat region the way the old `11` did.
+ *
+ * Exported so a measurement harness can invert the one quantity the camera
+ * actually exposes -- `state.distance` -- back onto the extent that produced
+ * it, and so prove that `measuredExtent` below really is the camera's own
+ * measure rather than a lookalike (see `ArenaCamera.test.ts`'s "reports the
+ * same group extent the camera's own framing consumed"). Nothing in `src/`
+ * calls it from outside this module.
  */
 export function extentToDistance(extent: number, minDistance: number, maxDistance: number): number {
-  return clamp(DISTANCE_BASE + extent * DISTANCE_PER_EXTENT_UNIT, minDistance, maxDistance)
+  if (extent <= BAND_HIGH_EXTENT) return clamp(FLAT_DISTANCE, minDistance, maxDistance)
+  const t = Math.min(1, (extent - BAND_HIGH_EXTENT) / EASE_WIDTH_EXTENT)
+  const eased = t * t * (3 - 2 * t)
+  return clamp(FLAT_DISTANCE + eased * (maxDistance - FLAT_DISTANCE), minDistance, maxDistance)
 }
 
 /**

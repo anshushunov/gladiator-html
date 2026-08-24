@@ -11,7 +11,7 @@
 // under `src/simulation/**`.
 
 import * as THREE from 'three'
-import { ArenaCamera, measuredExtent, type ArenaCameraState, type HorizontalFramingTarget } from './ArenaCamera'
+import { ArenaCamera, FLAT_DISTANCE, measuredExtent, type ArenaCameraState, type HorizontalFramingTarget } from './ArenaCamera'
 import { createProceduralFighter, SEMANTIC_JOINT_NAMES, type JointName, type ProceduralFighter } from './ProceduralFighter'
 import { PoseController } from './PoseController'
 import type { JointTransform } from './poses/combatPoses'
@@ -199,7 +199,17 @@ export const HELD_EQUIPMENT_SLOTS: ReadonlySet<string> = new Set(['weapon', 'shi
 /** The held slot `boundsPxWithoutWeapon` drops: the gladius, spear and trident are all built under it. */
 const LONG_HANDHELD_WEAPON_SLOT = 'weapon'
 
-const CAMERA_MIN_DISTANCE = 11
+/**
+ * The lower clamp is `FLAT_DISTANCE` itself, not a separate number.
+ *
+ * It was `11` until the readable-gladiator-types slice, and that was the whole
+ * defect: `extentToDistance` maps the entire tactical band to `FLAT_DISTANCE`,
+ * and any lower clamp above it would silently override the flat region and put
+ * the close-quarters exchange straight back where it was. Tying the two
+ * together means the clamp can never do that -- it can only ever bind above the
+ * flat region, which is the eased side, where it is a genuine guard.
+ */
+const CAMERA_MIN_DISTANCE = FLAT_DISTANCE
 const CAMERA_MAX_DISTANCE = 18
 
 /**
