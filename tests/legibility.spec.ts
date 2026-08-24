@@ -46,15 +46,16 @@ import type { BoutIndex } from '../src/simulation/series'
 // before this file was executed; where a run disagrees with one, the run is
 // the finding.
 //
-// RUN THE WHOLE SUITE WITH `--workers=1`.
-// This file drives 45 full bouts, each stepping and rendering ~1200-2700 ticks
-// through Chromium's software rasterizer, which is itself multi-threaded. Run
+// THIS FILE IS WHY `playwright.config.ts` SETS `workers: 1`.
+// It drives 45 full bouts, each stepping and rendering ~1200-2700 ticks through
+// Chromium's software rasterizer, which is itself multi-threaded. Run
 // concurrently with the other spec files it starves them, and their (default,
-// 30 s) timeouts are what fail -- measured on this machine: `npx playwright
-// test` gave 3 deliberate screenshot failures plus 7 spurious timeouts in
-// 14.6 min, while `npx playwright test --workers=1` gave the 3 deliberate
-// failures and nothing else in 12.5 min. Serialising is both cleaner and
-// faster here, because this file dominates the wall clock either way.
+// 30 s) timeouts are what fail -- measured on this machine: default workers
+// gave 3 deliberate screenshot failures plus 7 spurious timeouts in 14.6 min,
+// against 3 deliberate failures and nothing else in 12.5 min at one worker.
+// Serialising is both cleaner and faster here, because this file dominates the
+// wall clock either way. The config comment carries the full measurement and
+// the reason a `dependencies:` project split was rejected.
 // ---------------------------------------------------------------------------
 
 const SEED = 20260815
@@ -513,10 +514,20 @@ function insetMarginPx(boxes: readonly BoundsPx[], canvas: { width: number; heig
  * two measurements pair exactly and the ratio is dimensionless.
  *
  * Inside the tactical band the shipped mapping IS flat, so a camera that frames
- * the band as designed scores ~1. Anything that puts the camera further out in
- * band -- the old `11` lower clamp, a raised flat distance, a mapping that
- * zooms out as the pair spreads -- scales the ratio down by exactly the
- * distance ratio.
+ * the band as designed scores ~1, and the ratio is in effect
+ * `FLAT_DISTANCE / (the distance the camera actually sat at)`.
+ *
+ * **What that does and does not catch, stated exactly, because the denominator
+ * is read off the app rather than pinned.** It catches anything that separates
+ * the camera from its own flat distance INSIDE the band: the old `11` lower
+ * clamp overriding the flat region (measured: 0.805), a mapping that zooms out
+ * as the pair spreads, damping that never converges, a band edge that stops
+ * covering the band. It does NOT catch `FLAT_DISTANCE` itself being raised --
+ * the denominator moves with it and the ratio stays ~1. That regression is
+ * group 1's: the 130 px floor is external to the camera and cannot follow it,
+ * and a raised flat distance shrinks the body until p92 fails. Neither test is
+ * a substitute for the other, and this one must not be read as covering the
+ * constant it divides by.
  */
 function attenuationRatio(
   inBand: readonly Sample[],
@@ -566,8 +577,16 @@ const TRACE_TIMEOUT_MS = 180_000
 // Chromium's software rasterizer is already multi-threaded and eight traces
 // contend for the same cores. It also stretched individual traces from ~15 s to
 // ~2 min under that contention, and four safe-area traces failed on the run
-// that measured it -- every one of them passing unchanged when re-run without
-// it. A slower suite beats a suite that fails where nothing regressed.
+// that measured it -- every one of them passing unchanged, with identical
+// measured margins, when re-run without it.
+//
+// Those four were almost certainly timeouts (a ~2 min trace against the 180 s
+// limit below leaves little room, and the same contention timed out DOM tests
+// in other files at their 30 s default) -- but the failure detail was not
+// captured before the next run overwrote it, so read that as inference, not as
+// record. What is on record is that the measurements themselves are
+// load-independent: two full runs at different worker counts and very different
+// machine load printed byte-identical numbers for all 52 measured lines.
 
 // ---------------------------------------------------------------------------
 // Group 0: the band definition itself
@@ -667,9 +686,22 @@ for (const viewport of VIEWPORTS) {
         let tightest = Infinity
         let tightestTick = -1
         let violations = 0
+        let nonFinite = 0
         for (const sample of trace.samples) {
           const margin = insetMarginPx(amendedSafeAreaBoxes(sample, trace.archetypes), canvas)
-          if (margin < 0) violations += 1
+          // `NaN` is a violation, not a skip. `insetMarginPx` propagates a
+          // non-finite bound (a point behind the camera, a degenerate box)
+          // straight through `Math.min`, and BOTH comparisons below are false
+          // for `NaN` -- so counting only `margin < 0` would drop those ticks
+          // out of the measurement silently, and a trace where every tick was
+          // non-finite would leave `tightest` at `Infinity` and pass all four
+          // assertions having measured nothing.
+          if (!Number.isFinite(margin)) {
+            nonFinite += 1
+            violations += 1
+          } else if (margin < 0) {
+            violations += 1
+          }
           if (margin < tightest) {
             tightest = margin
             tightestTick = sample.tick
@@ -677,22 +709,23 @@ for (const viewport of VIEWPORTS) {
         }
 
         report(
-          `safe area ${viewport.width}x${viewport.height} ${pairing.label}: ${violations} violation ticks, ` +
+          `safe area ${viewport.width}x${viewport.height} ${pairing.label}: ${violations} violation ticks` +
+            `${nonFinite > 0 ? ` (${nonFinite} non-finite)` : ''}, ` +
             `tightest ${tightest.toFixed(2)} px at tick ${tightestTick}, canvas ${canvas.width}x${canvas.height}, ${trace.samples.length} ticks`,
         )
 
         expect(
           violations,
-          `${pairing.label} at ${viewport.width}x${viewport.height}: ticks with anything but a polearm outside the ${SAFE_INSET * 100}% canvas inset`,
+          `${pairing.label} at ${viewport.width}x${viewport.height}: ticks with anything but a polearm outside the ${SAFE_INSET * 100}% canvas inset (${nonFinite} of them non-finite)`,
         ).toBe(0)
-        // Not a restatement of the count above: `margin < 0` is false for `NaN`,
-        // so a non-finite projection (a point behind the camera, a degenerate
-        // bounding box) would report zero violations while measuring nothing.
-        // This assertion fails on it, and names the tick.
+        // Belt and braces on the same population, and not a restatement: this
+        // one fails on `Infinity` -- the value `tightest` still holds if the
+        // loop never saw a finite margin at all.
         expect(
           tightest,
           `${pairing.label} at ${viewport.width}x${viewport.height}: tightest inset margin, at tick ${tightestTick} on a ${canvas.width}x${canvas.height} canvas`,
-        ).toBeGreaterThanOrEqual(0)
+        ).toBeLessThan(Number.POSITIVE_INFINITY)
+        expect(tightest).toBeGreaterThanOrEqual(0)
       })
     }
   })
