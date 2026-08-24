@@ -620,7 +620,15 @@ export class SeriesView {
     section.append(heading, resultLine, scoreLine, nextLine)
     if (nextOpponent && nextHomeId) {
       const comparison = getAssignmentComparison(state, nextHomeId, nextBoutIndex)
-      nextLine.textContent = `Next: ${fighterName(state.homeRoster, nextHomeId)} vs ${nextOpponent.name} ${RC.emDash} ${comparison}.`
+      // `Name (Type)` on both sides, the same format `buildSummaryBout` and the
+      // planning cards use. The between-bouts screen is the one phase that
+      // showed no fighter cards and named no gladiator type anywhere, so this
+      // line is the whole of its type vocabulary -- found by
+      // `tests/legibility.spec.ts`'s six-phase assertion, which is the
+      // enumerated verification the design spec's acceptance #1 asks for.
+      const nextHomeType = fighterType(state.homeRoster, nextHomeId)
+      const nextAwayType = TYPE_NAMES[nextOpponent.archetype]
+      nextLine.textContent = `Next: ${fighterName(state.homeRoster, nextHomeId)} (${nextHomeType}) vs ${nextOpponent.name} (${nextAwayType}) ${RC.emDash} ${comparison}.`
       section.append(this.buildTemperamentBadge(state, nextBoutIndex), this.buildOrderSelector(state, nextBoutIndex))
     }
     const start = el('button', { class: 'button button--primary', type: 'button', 'data-action': 'start-next', 'data-testid': 'start-next-bout' }, 'Start next bout')
