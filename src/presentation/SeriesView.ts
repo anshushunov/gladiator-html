@@ -1,6 +1,6 @@
 import { formatBattleFeed } from './battleFeed'
 import { getAssignmentComparison, requiredAssignmentCount, type BoutIndex, type BoutOutcome, type PlanningSlot, type SeriesPhase, type SeriesState } from '../simulation/series'
-import type { FighterDefinition, FighterSide } from '../simulation/fighters'
+import type { Archetype, FighterDefinition, FighterSide } from '../simulation/fighters'
 import { fighterBySide, type BattleState } from '../simulation/battle'
 import { isFightable, startingHpFor } from '../simulation/condition'
 import type { RosterEntry } from '../simulation/season'
@@ -8,7 +8,8 @@ import { DISPOSITION_IDS, isDispositionId, type DispositionId } from '../simulat
 import { CONDITION_LABELS, fightTelegraph, restTelegraph } from './conditionTelegraph'
 import { ORDER_LABELS, ORDER_TELEGRAPHS, TEMPERAMENT_DESCRIPTIONS, TEMPERAMENT_LABELS } from './dispositionLabels'
 import { formatPower } from './formatPower'
-import { COUNTER_RULE_TEXT, TYPE_DESCRIPTIONS, TYPE_NAMES } from './gladiatorTypes'
+import { typeVocabularyFor, type TypeVocabulary } from './gladiatorTypes'
+import { SHIPPED_LEGIBILITY_MODE, type LegibilityMode } from './legibilityMode'
 
 export type SeriesIntent =
   | { type: 'assign'; fighterId: string; boutIndex: BoutIndex }
@@ -62,10 +63,30 @@ function fighterName(roster: readonly FighterDefinition[], id: string): string {
 /** Same lookup shape as `fighterName`, for the gladiator type -- used
  * anywhere a fighter is named without a `FighterDefinition` already in hand
  * (the active battle card and the series summary rows), so those surfaces
- * name fighters by type the same way the planning/matchup cards already do. */
-function fighterType(roster: readonly FighterDefinition[], id: string): string {
+ * name fighters by type the same way the planning/matchup cards already do.
+ * Takes the vocabulary rather than reaching for `TYPE_NAMES`: the review
+ * toggle switches the whole label set at construction (see `TypeVocabulary`),
+ * and a module-level constant here would quietly survive it. */
+function fighterType(vocabulary: TypeVocabulary, roster: readonly FighterDefinition[], id: string): string {
   const archetype = roster.find(({ id: fighterId }) => fighterId === id)?.archetype
-  return archetype ? TYPE_NAMES[archetype] : ''
+  return archetype ? vocabulary.names[archetype] : ''
+}
+
+/**
+ * Attributes for a type label: the extra ones plus a `title` tooltip carrying
+ * the type's one-line description -- and *no* `title` at all when the active
+ * vocabulary has no description for it. The superseded `Heavy`/`Fast`/
+ * `Technical` labels had no tooltip, and an empty `title=""` is a different
+ * thing from no tooltip, so the `labels: false` review configuration has to
+ * omit the attribute rather than blank it.
+ */
+function typeLabelAttrs(
+  vocabulary: TypeVocabulary,
+  archetype: Archetype,
+  extra: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  const description = vocabulary.descriptions[archetype]
+  return description ? { ...extra, title: description } : { ...extra }
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -97,10 +118,24 @@ export class SeriesView {
   private lastRoster: readonly RosterEntry[] = []
   private pendingFocus: PendingFocus | null = null
   private lastFeedEventId = -1
+  /**
+   * The label set this view names gladiators with. Resolved once, at
+   * construction, from the review-only legibility mode -- this view is one of
+   * the three owners the mode has to reach (the others are `ArenaCamera`'s
+   * mapping and `ProceduralFighter`'s prop specs). `main.ts` only *builds*
+   * these three, so a toggle implemented there alone could not change a single
+   * label on screen.
+   */
+  private readonly vocabulary: TypeVocabulary
 
-  constructor(shell: HTMLElement, onIntent: (intent: SeriesIntent) => void) {
+  constructor(
+    shell: HTMLElement,
+    onIntent: (intent: SeriesIntent) => void,
+    legibility: LegibilityMode = SHIPPED_LEGIBILITY_MODE,
+  ) {
     this.shell = shell
     this.onIntent = onIntent
+    this.vocabulary = typeVocabularyFor(legibility)
     shell.addEventListener('click', (event) => this.handleClick(event))
     shell.addEventListener('keydown', (event) => this.handleKeyDown(event))
   }
@@ -338,13 +373,19 @@ export class SeriesView {
     const section = el('section', { class: 'planning', 'aria-labelledby': 'planning-heading' })
     const heading = el('h2', { id: 'planning-heading', tabindex: '-1' }, 'Plan the series')
     const instruction = el('p', { id: 'assignment-instruction', class: 'planning__instruction' }, this.instructionText(state))
-    const counterRule = el('p', { class: 'planning__counter-rule' }, COUNTER_RULE_TEXT)
+    const counterRule = el('p', { class: 'planning__counter-rule' }, this.vocabulary.counterRuleText)
     // The triangle is the House of Mars's own training scheme, not a claim
     // about the historical gladiator types it borrows names from. Reuses
     // `.fighter-option__telegraph` (a muted secondary-note style already
     // defined for the roster cards below) rather than adding a CSS class:
     // this slice's allowlist does not cover `src/style.css`.
-    const counterNote = el('p', { class: 'fighter-option__telegraph' }, "The school's own scheme, not history.")
+    //
+    // Absent entirely under the superseded vocabulary (`labels: false`): the
+    // note is part of the naming change, so a review configuration that turns
+    // the naming change off must not leave its disclaimer behind.
+    const counterNote = this.vocabulary.counterRuleNote
+      ? el('p', { class: 'fighter-option__telegraph' }, this.vocabulary.counterRuleNote)
+      : null
     // Every gladiator in the season roster gets a card, in roster order:
     // fightable ones as buttons, broken ones as disabled cards carrying the
     // rest forecast. The design doc's UI section calls for exactly that
@@ -364,7 +405,7 @@ export class SeriesView {
     }
     const confirm = el('button', { class: 'button button--primary planning__confirm', type: 'button', 'data-action': 'confirm', 'data-testid': 'confirm-lineup' }, 'Confirm lineup')
     confirm.disabled = !isLineupReady(state)
-    section.append(heading, instruction, counterRule, counterNote, roster, matchups, confirm)
+    section.append(heading, instruction, counterRule, ...(counterNote ? [counterNote] : []), roster, matchups, confirm)
     // The season only ever hands the planning screen its fightable
     // gladiators (`SeriesState.homeRoster`) -- a broken one is simply absent
     // from the cards above, with no on-screen trace of them at all. This row
@@ -394,7 +435,7 @@ export class SeriesView {
     const title = el('span', { class: 'fighter-option__title' })
     title.append(
       el('span', { class: 'fighter-option__name' }, entry.fighter.name),
-      el('span', { class: 'fighter-option__archetype', title: TYPE_DESCRIPTIONS[entry.fighter.archetype] }, TYPE_NAMES[entry.fighter.archetype]),
+      el('span', typeLabelAttrs(this.vocabulary, entry.fighter.archetype, { class: 'fighter-option__archetype' }), this.vocabulary.names[entry.fighter.archetype]),
     )
     const conditionRow = el('span', { class: 'fighter-option__condition' })
     conditionRow.append(
@@ -443,7 +484,7 @@ export class SeriesView {
     const title = el('span', { class: 'fighter-option__title' })
     title.append(
       el('span', { class: 'fighter-option__name' }, fighter.name),
-      el('span', { class: 'fighter-option__archetype', title: TYPE_DESCRIPTIONS[fighter.archetype] }, TYPE_NAMES[fighter.archetype]),
+      el('span', typeLabelAttrs(this.vocabulary, fighter.archetype, { class: 'fighter-option__archetype' }), this.vocabulary.names[fighter.archetype]),
     )
     button.append(
       title,
@@ -491,7 +532,7 @@ export class SeriesView {
     // screen ~20px per slot against a height budget it has to keep (see
     // `.matchup-slot__controls` in `style.css`).
     const styleLine = el('span', { class: 'matchup-slot__style' })
-    styleLine.append(el('em', { title: TYPE_DESCRIPTIONS[opponent.archetype] }, TYPE_NAMES[opponent.archetype]), this.buildTemperamentBadge(state, boutIndex))
+    styleLine.append(el('em', typeLabelAttrs(this.vocabulary, opponent.archetype), this.vocabulary.names[opponent.archetype]), this.buildTemperamentBadge(state, boutIndex))
     opponentBlock.append(
       el('strong', {}, opponent.name),
       el('small', {}, opponent.school),
@@ -614,8 +655,8 @@ export class SeriesView {
           // half of this screen's type vocabulary, and it named neither man's
           // type while the series summary named both. Present tense ("wins")
           // is kept from the original wording, unlike the summary's "won".
-          const homeType = fighterType(state.homeRoster, result.homeFighterId)
-          const awayType = fighterType(state.opponents, result.opponentId)
+          const homeType = fighterType(this.vocabulary, state.homeRoster, result.homeFighterId)
+          const awayType = fighterType(this.vocabulary, state.opponents, result.opponentId)
           return `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} ${homeName} (${homeType}) vs ${awayName} (${awayType}): ${winnerName} wins ${endedText}.`
         })()
     const resultLine = el('p', { class: 'interstitial__result', 'aria-live': 'polite', 'data-testid': 'bout-result-summary' }, resultText)
@@ -633,8 +674,8 @@ export class SeriesView {
       // line is the whole of its type vocabulary -- found by
       // `tests/legibility.spec.ts`'s six-phase assertion, which is the
       // enumerated verification the design spec's acceptance #1 asks for.
-      const nextHomeType = fighterType(state.homeRoster, nextHomeId)
-      const nextAwayType = TYPE_NAMES[nextOpponent.archetype]
+      const nextHomeType = fighterType(this.vocabulary, state.homeRoster, nextHomeId)
+      const nextAwayType = this.vocabulary.names[nextOpponent.archetype]
       nextLine.textContent = `Next: ${fighterName(state.homeRoster, nextHomeId)} (${nextHomeType}) vs ${nextOpponent.name} (${nextAwayType}) ${RC.emDash} ${comparison}.`
       section.append(this.buildTemperamentBadge(state, nextBoutIndex), this.buildOrderSelector(state, nextBoutIndex))
     }
@@ -668,14 +709,14 @@ export class SeriesView {
     // `BoutOutcome` union at the season layer).
     if (result.kind === 'forfeit') {
       const awayName = fighterName(state.opponents, result.opponentId)
-      const awayType = fighterType(state.opponents, result.opponentId)
+      const awayType = fighterType(this.vocabulary, state.opponents, result.opponentId)
       return el('li', { class: 'summary__bout', 'data-testid': 'bout-result' },
         `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} forfeited: no gladiator available to face ${awayName} (${awayType}).`)
     }
     const homeName = fighterName(state.homeRoster, result.homeFighterId)
     const awayName = fighterName(state.opponents, result.opponentId)
-    const homeType = fighterType(state.homeRoster, result.homeFighterId)
-    const awayType = fighterType(state.opponents, result.opponentId)
+    const homeType = fighterType(this.vocabulary, state.homeRoster, result.homeFighterId)
+    const awayType = fighterType(this.vocabulary, state.opponents, result.opponentId)
     const winnerName = result.winnerSide === 'home' ? homeName : awayName
     const homePercent = Math.round(result.remainingHpRatio.home * 100)
     const awayPercent = Math.round(result.remainingHpRatio.away * 100)
@@ -720,7 +761,7 @@ export class SeriesView {
     label.append(
       el('small', {}, definition.school),
       el('h2', {}, definition.name),
-      el('span', { class: 'fighter-option__archetype', title: TYPE_DESCRIPTIONS[definition.archetype] }, TYPE_NAMES[definition.archetype]),
+      el('span', typeLabelAttrs(this.vocabulary, definition.archetype, { class: 'fighter-option__archetype' }), this.vocabulary.names[definition.archetype]),
     )
     title.append(el('span', { class: 'sigil' }, side === 'home' ? 'I' : 'II'), label, el('strong', { 'data-hp': side }, String(fighter.hp)))
     const health = el('div', { class: 'health' })

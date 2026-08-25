@@ -11,6 +11,7 @@ import {
 } from './presentation/CombatAudio'
 import { collectFootstepThresholds, type PlantedFootByCombatant } from './presentation/footstepThresholds'
 import { DecisionPanel } from './presentation/DecisionPanel'
+import { resolveLegibilityMode, SHIPPED_LEGIBILITY_MODE } from './presentation/legibilityMode'
 import { COMBAT_STYLES } from './content/combatStyles'
 import { SEASON_CHALLENGES, SEASON_ROSTER } from './content/season'
 import {
@@ -95,6 +96,20 @@ interface GladiatorTestApi {
   getAudioDebugLog?(): readonly CombatCue[]
   /** Dev-only (`import.meta.env.DEV`); absent from production builds. Unlike `triggerAudioCue`/`getAudioDebugLog`, available regardless of `?audioDebug=1` -- this reads the real `CombatAudio` instance's own event cursor (Task 19 addition) so a reset fixture can prove it actually clears across a real bout/rematch boundary, not just in `CombatAudio.test.ts`'s unit-level isolation; see `CombatAudio.getDebugEventCursor`. */
   getAudioEventCursor?(): number | null
+  /**
+   * Dev-only (`import.meta.env.DEV`); absent from production builds. The
+   * review configuration this session actually resolved from `?legibility=`
+   * (`presentation/legibilityMode.ts`).
+   *
+   * Exists so the two review recorders (`scripts/record-review-clips.ts`,
+   * `scripts/record-blinded-stills.ts`) can ASSERT the app is in the
+   * configuration they asked for instead of assuming it. Both live outside the
+   * tsconfig program and mirror the configuration names by hand; without this
+   * a typo, or a name that drifted out of sync with the app, would silently
+   * record the shipped build five times over and the whole attribution
+   * exercise would be worthless while looking fine.
+   */
+  getLegibilityMode?(): { labels: boolean; camera: boolean; silhouettes: boolean }
 }
 
 /**
@@ -134,11 +149,30 @@ if (import.meta.env.DEV) {
   snapshotMode = new URLSearchParams(window.location.search).has('snapshot')
 }
 
+// Dev/test-only, gated exactly like `snapshotMode` above: `?legibility=<name>`
+// selects one of the five review configurations the readable-gladiator-types
+// human review gate is recorded in (`presentation/legibilityMode.ts`). This is
+// the ONLY place the parameter is read, and `vite build` replaces
+// `import.meta.env.DEV` with `false`, so a production build resolves the
+// shipped mode whatever the URL says.
+//
+// Note what this line does and does not do. It resolves a mode; it changes
+// nothing by itself. The three things the mode switches are owned by three
+// other modules -- the label set by `SeriesView`/`SeasonView` (via
+// `gladiatorTypes.typeVocabularyFor`), the extent->distance mapping by
+// `ArenaCamera`, the prop specs by `ProceduralFighter` -- and `main.ts` only
+// constructs their owners. So the mode has to be *passed* into all of them,
+// below, and a toggle that stopped here would reach none of them.
+let legibilityMode = SHIPPED_LEGIBILITY_MODE
+if (import.meta.env.DEV) {
+  legibilityMode = resolveLegibilityMode(window.location.search)
+}
+
 const shell = required<HTMLElement>('.game-shell')
 const canvas = required<HTMLCanvasElement>('canvas')
 
-const seriesView = new SeriesView(shell, applyIntent)
-const seasonView = new SeasonView(required<HTMLElement>('#season-ui'))
+const seriesView = new SeriesView(shell, applyIntent, legibilityMode)
+const seasonView = new SeasonView(required<HTMLElement>('#season-ui'), legibilityMode)
 // `SeasonView`'s own constructor takes no intent callback (its buttons are
 // plain markup, `data-action="start-series"`/`"rematch-season"`) -- routed
 // here instead, as a second click listener on the same `shell` `SeriesView`
@@ -146,7 +180,7 @@ const seasonView = new SeasonView(required<HTMLElement>('#season-ui'))
 // `handleClick` simply has no `case` for these two action names, the same
 // way this one ignores every action it does not recognize.
 shell.addEventListener('click', handleSeasonClick)
-const arenaView = new ArenaView(canvas)
+const arenaView = new ArenaView(canvas, legibilityMode)
 const combatAudio = new CombatAudio(createBrowserAudioBackend())
 
 /**
@@ -670,6 +704,7 @@ if (import.meta.env.DEV) {
   window.__GLADIATOR_TEST__.settleCameraSeconds = (seconds) => arenaView.settleCameraSeconds?.(seconds)
   window.__GLADIATOR_TEST__.getArenaDebugSnapshot = () => arenaView.getDebugSnapshot?.() ?? null
   window.__GLADIATOR_TEST__.getAudioEventCursor = () => combatAudio.getDebugEventCursor?.() ?? null
+  window.__GLADIATOR_TEST__.getLegibilityMode = () => ({ ...legibilityMode })
   // Final-review fix #1's own test hook -- see `forcePresentationThrowOnce`'s doc comment above.
   window.__GLADIATOR_TEST__.forcePresentationThrowOnce = () => {
     forcePresentationThrowOnce = true

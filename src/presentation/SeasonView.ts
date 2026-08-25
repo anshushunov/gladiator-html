@@ -9,10 +9,12 @@
 import type { BoutOutcome } from '../simulation/series'
 import type { ChallengeDefinition, ConditionDelta, RosterEntry, SeasonState } from '../simulation/season'
 import { isFightable, startingHpFor, type FighterCondition } from '../simulation/condition'
+import type { Archetype } from '../simulation/fighters'
 import { CONDITION_LABELS, fightTelegraph, restTelegraph } from './conditionTelegraph'
 import { ORDER_LABELS, TEMPERAMENT_LABELS } from './dispositionLabels'
 import { formatPower } from './formatPower'
-import { TYPE_DESCRIPTIONS, TYPE_NAMES } from './gladiatorTypes'
+import { typeVocabularyFor, type TypeVocabulary } from './gladiatorTypes'
+import { SHIPPED_LEGIBILITY_MODE, type LegibilityMode } from './legibilityMode'
 
 const RC = { arrow: '→', middleDot: '·', enDash: '–', emDash: '—' }
 
@@ -40,10 +42,24 @@ function fighterNameFor(roster: readonly RosterEntry[], id: string): string {
 
 /** Same lookup shape as `fighterNameFor`, for the gladiator type -- the
  * season-summary bout rows only ever have a roster + a fighter id in hand,
- * same as `SeriesView`'s own `fighterType` for its series-summary rows. */
-function fighterTypeFor(roster: readonly RosterEntry[], id: string): string {
+ * same as `SeriesView`'s own `fighterType` for its series-summary rows.
+ * Takes the active vocabulary rather than reaching for `TYPE_NAMES`, for the
+ * same reason `SeriesView.fighterType` does: the review-only legibility mode
+ * switches the whole label set at construction. */
+function fighterTypeFor(vocabulary: TypeVocabulary, roster: readonly RosterEntry[], id: string): string {
   const archetype = roster.find((entry) => entry.fighter.id === id)?.fighter.archetype
-  return archetype ? TYPE_NAMES[archetype] : ''
+  return archetype ? vocabulary.names[archetype] : ''
+}
+
+/** See `SeriesView`'s `typeLabelAttrs`: no `title` at all when the active
+ * vocabulary carries no description, rather than an empty one. */
+function typeLabelAttrs(
+  vocabulary: TypeVocabulary,
+  archetype: Archetype,
+  extra: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  const description = vocabulary.descriptions[archetype]
+  return description ? { ...extra, title: description } : { ...extra }
 }
 
 export class SeasonView {
@@ -69,9 +85,14 @@ export class SeasonView {
    *   ended without ever reaching the summary -- still count as "just
    *   arrived". */
   private lastFocusedPhase: SeasonState['phase'] | null = null
+  /** The label set this screen names gladiators with -- see
+   * `SeriesView.vocabulary`. Resolved once, at construction, from the
+   * review-only legibility mode. */
+  private readonly vocabulary: TypeVocabulary
 
-  constructor(host: HTMLElement) {
+  constructor(host: HTMLElement, legibility: LegibilityMode = SHIPPED_LEGIBILITY_MODE) {
     this.host = host
+    this.vocabulary = typeVocabularyFor(legibility)
   }
 
   render(state: SeasonState): void {
@@ -127,7 +148,7 @@ export class SeasonView {
     })
     card.append(el('h3', { class: 'season-challenge-card__heading' }, `Challenge ${challenge.index + 1}`))
     if (challenge.featuredThreat) {
-      card.append(el('p', { class: 'season-challenge-card__featured', title: TYPE_DESCRIPTIONS[challenge.featuredThreat] }, `Featured threat: ${TYPE_NAMES[challenge.featuredThreat]}`))
+      card.append(el('p', typeLabelAttrs(this.vocabulary, challenge.featuredThreat, { class: 'season-challenge-card__featured' }), `Featured threat: ${this.vocabulary.names[challenge.featuredThreat]}`))
     }
     const list = el('ul', { class: 'season-challenge-card__opponents' })
     for (const [index, opponent] of challenge.opponents.entries()) {
@@ -138,7 +159,7 @@ export class SeasonView {
         // `formatPower`: see its own doc comment -- `scaleOpponent` leaves
         // `power` a raw float, formatted here for display only, shared with
         // `SeriesView.buildMatchupSlot` so the two screens never disagree.
-        el('span', { class: 'season-challenge-card__stats', title: TYPE_DESCRIPTIONS[opponent.archetype] }, `${TYPE_NAMES[opponent.archetype]} ${RC.middleDot} HP ${opponent.maxHp} ${RC.middleDot} Power ${formatPower(opponent.power)}`),
+        el('span', typeLabelAttrs(this.vocabulary, opponent.archetype, { class: 'season-challenge-card__stats' }), `${this.vocabulary.names[opponent.archetype]} ${RC.middleDot} HP ${opponent.maxHp} ${RC.middleDot} Power ${formatPower(opponent.power)}`),
         el('span', {
           class: 'temperament-badge',
           'data-testid': 'challenge-temperament',
@@ -154,7 +175,7 @@ export class SeasonView {
   private buildRosterCard(entry: RosterEntry, deltas: readonly ConditionDelta[]): HTMLElement {
     const card = el('article', { class: 'season-roster-card', 'data-testid': 'season-roster-card' })
     const title = el('div', { class: 'season-roster-card__title' })
-    title.append(el('strong', {}, entry.fighter.name), el('span', { class: 'season-roster-card__archetype', title: TYPE_DESCRIPTIONS[entry.fighter.archetype] }, TYPE_NAMES[entry.fighter.archetype]))
+    title.append(el('strong', {}, entry.fighter.name), el('span', typeLabelAttrs(this.vocabulary, entry.fighter.archetype, { class: 'season-roster-card__archetype' }), this.vocabulary.names[entry.fighter.archetype]))
     card.append(title)
     card.append(el('span', { class: 'season-roster-card__school' }, entry.fighter.school))
     card.append(conditionBadge(entry.condition))
@@ -212,7 +233,7 @@ export class SeasonView {
       // class, since this slice's allowlist does not cover `src/style.css`.
       row.append(
         el('strong', {}, entry.fighter.name),
-        el('span', { class: 'season-roster-card__archetype', title: TYPE_DESCRIPTIONS[entry.fighter.archetype] }, TYPE_NAMES[entry.fighter.archetype]),
+        el('span', typeLabelAttrs(this.vocabulary, entry.fighter.archetype, { class: 'season-roster-card__archetype' }), this.vocabulary.names[entry.fighter.archetype]),
         el('span', {}, ` ${RC.middleDot} ${entry.boutsFought} bout${entry.boutsFought === 1 ? '' : 's'} fought ${RC.middleDot} finishes `),
         conditionBadge(entry.condition),
       )
@@ -228,12 +249,12 @@ export class SeasonView {
 
   private buildOutcomeRow(roster: readonly RosterEntry[], challenge: ChallengeDefinition, outcome: BoutOutcome): HTMLLIElement {
     const opponent = challenge.opponents[outcome.boutIndex]
-    const opponentType = TYPE_NAMES[opponent.archetype]
+    const opponentType = this.vocabulary.names[opponent.archetype]
     if (outcome.kind === 'forfeit') {
       return el('li', { class: 'season-summary__bout', 'data-testid': 'season-summary-bout' }, `Bout ${outcome.boutIndex + 1} ${RC.emDash} forfeited: no gladiator available to face ${opponent.name} (${opponentType}).`)
     }
     const homeName = fighterNameFor(roster, outcome.homeFighterId)
-    const homeType = fighterTypeFor(roster, outcome.homeFighterId)
+    const homeType = fighterTypeFor(this.vocabulary, roster, outcome.homeFighterId)
     const winnerName = outcome.winnerSide === 'home' ? homeName : opponent.name
     const endedText = outcome.endedBy === 'defeat' ? 'by defeat' : 'on the time limit'
     return el(

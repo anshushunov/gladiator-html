@@ -26,6 +26,7 @@
 
 import * as THREE from 'three'
 import type { Archetype } from '../simulation/fighters'
+import { effectiveLegibilityMode, type LegibilityMode } from './legibilityMode'
 
 // ---------------------------------------------------------------------------
 // Semantic contract
@@ -128,6 +129,14 @@ export const EQUIPMENT_ANCHOR_NAMES: readonly EquipmentAnchorName[] = [
 
 export interface ProceduralFighterOptions {
   archetype: Archetype
+  /**
+   * Review-only (see `legibilityMode.ts`). `silhouettes: false` draws the
+   * superseded kits instead of the shipped ones -- **displayed geometry
+   * only**. `horizontalEquipmentRadius` below always describes the final
+   * props; see `createProceduralFighter`. Defaults to the shipped mode, so
+   * nothing but the review recorder ever passes it.
+   */
+  legibility?: LegibilityMode
 }
 
 export interface ProceduralFighter {
@@ -1055,6 +1064,203 @@ function buildEquipment(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Review-only: the kits this slice replaced
+//
+// **Not reachable in a production build.** Restored verbatim from `a073f20`
+// (the merge base of the 2026-08-24 readable-gladiator-types slice) so the
+// `baseline`, `labels-only` and `camera-only` review configurations show a
+// reviewer the fighters the failed 2026-08-23 gate actually saw -- three
+// round-shielded, box-weaponed rigs in red/blue/green -- rather than a
+// re-approximation of them in the new kit vocabulary.
+//
+// Only `equipment` and `clothColor` are restored. `BodyProportions` are
+// byte-identical either side of the slice (checked against `a073f20`), so the
+// superseded rig shares `STYLE_SPECS[archetype].body` with the shipped one --
+// which also means the two differ in exactly what the slice changed, and the
+// `silhouettes` toggle attributes exactly that.
+//
+// Reached only via `ProceduralFighterOptions.legibility` with
+// `silhouettes: false`, which only `?legibility=` under `import.meta.env.DEV`
+// ever asks for. And -- the trap this whole configuration set exists around --
+// it changes the DISPLAYED geometry only: `createProceduralFighter` below
+// always reports the final props' `horizontalEquipmentRadius`, because that
+// number is the camera's own framing input.
+// ---------------------------------------------------------------------------
+
+interface SupersededEquipmentProportions {
+  shieldRadius: number
+  shieldThickness: number
+  shieldForwardOffset: number
+  weaponLength: number
+  weaponWidth: number
+  weaponThickness: number
+  /** Fraction of `weaponLength` projected onto the forward (+Z) axis vs down (-Y); 0..1. */
+  weaponForwardBias: number
+  hasHelmet: boolean
+  hasLightArmor: boolean
+}
+
+const SUPERSEDED_STYLE_SPECS: Readonly<Record<Archetype, { equipment: SupersededEquipmentProportions; clothColor: number }>> = {
+  heavy: {
+    equipment: {
+      shieldRadius: 0.55,
+      shieldThickness: 0.08,
+      shieldForwardOffset: 0.10,
+      weaponLength: 0.55,
+      weaponWidth: 0.06,
+      weaponThickness: 0.05,
+      weaponForwardBias: 0.5,
+      hasHelmet: true,
+      hasLightArmor: false,
+    },
+    clothColor: 0xb83b34,
+  },
+  fast: {
+    equipment: {
+      shieldRadius: 0.28,
+      shieldThickness: 0.06,
+      shieldForwardOffset: 0.08,
+      weaponLength: 0.50,
+      weaponWidth: 0.05,
+      weaponThickness: 0.04,
+      weaponForwardBias: 0.5,
+      hasHelmet: false,
+      hasLightArmor: true,
+    },
+    clothColor: 0x2a6f8e,
+  },
+  technical: {
+    equipment: {
+      shieldRadius: 0.40,
+      shieldThickness: 0.07,
+      shieldForwardOffset: 0.10,
+      weaponLength: 1.30,
+      weaponWidth: 0.045,
+      weaponThickness: 0.045,
+      weaponForwardBias: 0.95,
+      hasHelmet: false,
+      hasLightArmor: false,
+    },
+    clothColor: 0x4f6b3d,
+  },
+}
+
+/**
+ * The pre-slice `buildEquipment`, restored verbatim: a cylinder shield on the
+ * off hand, a box weapon on the weapon hand (with a cone tip for `technical`
+ * alone -- the one place the old builder branched on the archetype id), a
+ * hemisphere-plus-box-crest helmet, and the same breast/back plates. The five
+ * anchor names and the joint hierarchy are unchanged by the slice, so
+ * `PoseController` drives this rig exactly as it drives the shipped one and the
+ * recorded trace is the same fight either way.
+ */
+function buildSupersededEquipment(
+  owned: Owned,
+  archetype: Archetype,
+  body: BodyProportions,
+  equipment: SupersededEquipmentProportions,
+  clothColor: number,
+  joints: ReadonlyMap<JointName, THREE.Object3D>,
+  anchors: Map<EquipmentAnchorName, THREE.Object3D>,
+): void {
+  const bronze = trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: BRONZE_COLOR, metalness: 0.7, roughness: 0.35 }))
+  const wood = trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: WOOD_COLOR, roughness: 0.8 }))
+
+  const handR = joints.get('hand.R')!
+  const handL = joints.get('hand.L')!
+  const chest = joints.get('chest')!
+  const head = joints.get('head')!
+
+  const weaponHand = new THREE.Group()
+  weaponHand.name = 'weaponHand'
+  handR.add(weaponHand)
+  anchors.set('weaponHand', weaponHand)
+
+  const forwardZ = equipment.weaponLength * equipment.weaponForwardBias
+  const downY = -equipment.weaponLength * (1 - equipment.weaponForwardBias)
+  const tipLocal: readonly [number, number, number] = [0, downY, forwardZ]
+
+  const weaponGeometry = trackedGeometry(owned, new THREE.BoxGeometry(equipment.weaponWidth, equipment.weaponLength, equipment.weaponThickness))
+  const weaponMesh = new THREE.Mesh(weaponGeometry, bronze)
+  weaponMesh.position.set(tipLocal[0] / 2, tipLocal[1] / 2, tipLocal[2] / 2)
+  weaponMesh.userData.slot = 'weapon'
+  weaponHand.add(weaponMesh)
+
+  const weaponTip = new THREE.Group()
+  weaponTip.name = 'weaponTip'
+  weaponTip.position.set(...tipLocal)
+  weaponHand.add(weaponTip)
+  anchors.set('weaponTip', weaponTip)
+
+  if (archetype === 'technical') {
+    const tipGeometry = trackedGeometry(owned, new THREE.ConeGeometry(equipment.weaponThickness * 1.6, 0.12, 8))
+    const tipMesh = new THREE.Mesh(tipGeometry, bronze)
+    tipMesh.userData.slot = 'weapon'
+    weaponTip.add(tipMesh)
+  }
+
+  const offHand = new THREE.Group()
+  offHand.name = 'offHand'
+  handL.add(offHand)
+  anchors.set('offHand', offHand)
+
+  const shieldCenter = new THREE.Group()
+  shieldCenter.name = 'shieldCenter'
+  shieldCenter.position.set(0, 0, equipment.shieldForwardOffset)
+  offHand.add(shieldCenter)
+  anchors.set('shieldCenter', shieldCenter)
+
+  const shieldGeometry = trackedGeometry(
+    owned,
+    new THREE.CylinderGeometry(equipment.shieldRadius, equipment.shieldRadius, equipment.shieldThickness, 20),
+  )
+  const shieldMesh = new THREE.Mesh(shieldGeometry, bronze)
+  shieldMesh.rotation.x = Math.PI / 2
+  shieldMesh.userData.slot = 'shield'
+  shieldCenter.add(shieldMesh)
+
+  const hitCenter = new THREE.Group()
+  hitCenter.name = 'hitCenter'
+  hitCenter.position.set(0, body.chestHeight * 0.5, body.torsoDepth * 0.5)
+  chest.add(hitCenter)
+  anchors.set('hitCenter', hitCenter)
+
+  const plateGeometry = trackedGeometry(owned, new THREE.BoxGeometry(body.torsoWidth * 0.72, body.chestHeight * 0.62, body.torsoDepth * 0.32))
+  const lightenedHouseColor = new THREE.Color(clothColor).lerp(new THREE.Color(0xffffff), 0.35)
+  const plate = new THREE.Mesh(plateGeometry, trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: lightenedHouseColor, metalness: 0.35, roughness: 0.45 })))
+  plate.position.set(0, body.chestHeight * 0.5, body.torsoDepth * 0.5)
+  plate.userData.slot = 'breastplate'
+  chest.add(plate)
+
+  const backplateGeometry = trackedGeometry(owned, new THREE.BoxGeometry(body.torsoWidth * 0.72, body.chestHeight * 0.62, body.torsoDepth * 0.32))
+  const darkenedHouseColor = new THREE.Color(clothColor).lerp(new THREE.Color(0x000000), 0.35)
+  const backplate = new THREE.Mesh(backplateGeometry, trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: darkenedHouseColor, metalness: 0.35, roughness: 0.45 })))
+  backplate.position.set(0, body.chestHeight * 0.5, -body.torsoDepth * 0.5)
+  backplate.userData.slot = 'backplate'
+  chest.add(backplate)
+
+  if (equipment.hasHelmet) {
+    const domeGeometry = trackedGeometry(owned, new THREE.SphereGeometry(body.headRadius * 1.15, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2))
+    const dome = new THREE.Mesh(domeGeometry, bronze)
+    dome.userData.slot = 'helmet'
+    head.add(dome)
+    const crestGeometry = trackedGeometry(owned, new THREE.BoxGeometry(0.08, 0.32, body.headRadius * 1.6))
+    const crest = new THREE.Mesh(crestGeometry, wood)
+    crest.position.set(0, body.headRadius * 1.4, 0)
+    crest.userData.slot = 'crest'
+    head.add(crest)
+  }
+
+  if (equipment.hasLightArmor) {
+    const strapGeometry = trackedGeometry(owned, new THREE.BoxGeometry(body.torsoWidth * 0.7, body.chestHeight * 0.35, body.torsoDepth * 0.5))
+    const strap = new THREE.Mesh(strapGeometry, bronze)
+    strap.position.set(0, body.chestHeight * 0.55, 0)
+    strap.userData.slot = 'armor'
+    chest.add(strap)
+  }
+}
+
 /**
  * The rig's real ground-plane reach in the rest pose: the farthest any built
  * mesh's own world-space `Box3` corner gets from the rig's vertical axis.
@@ -1090,14 +1296,36 @@ function computeHorizontalEquipmentRadius(root: THREE.Group): number {
   return radius
 }
 
-export function createProceduralFighter(options: ProceduralFighterOptions): ProceduralFighter {
-  const spec = STYLE_SPECS[options.archetype]
+interface BuiltRig {
+  root: THREE.Group
+  joints: Map<JointName, THREE.Object3D>
+  anchors: Map<EquipmentAnchorName, THREE.Object3D>
+  owned: Owned
+}
+
+/**
+ * Builds the drawn rig for `archetype`. `silhouettes` picks which KIT is
+ * drawn -- the shipped murmillo/retiarius/hoplomachus props, or the superseded
+ * ones above -- and nothing else: the skeleton, the joint names, the anchor
+ * names and the body proportions are the same either way, which is what lets
+ * `PoseController` and the recorded trace be identical across the review
+ * configurations.
+ *
+ * Deliberately does NOT compute the framing radius. That is
+ * `createProceduralFighter`'s job below, and keeping the two apart is the
+ * point: the radius is not a property of what is drawn, it is the camera's
+ * input, and the two must be allowed to disagree.
+ */
+function buildRig(archetype: Archetype, silhouettes: boolean): BuiltRig {
+  const spec = STYLE_SPECS[archetype]
   const body = spec.body
+  const superseded = SUPERSEDED_STYLE_SPECS[archetype]
+  const clothColor = silhouettes ? spec.clothColor : superseded.clothColor
   const outlineMaterial = new THREE.MeshBasicMaterial({ color: OUTLINE_COLOR, side: THREE.BackSide })
   const owned: Owned = { geometries: [], materials: [outlineMaterial], outlineMaterial }
 
   const skin = trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: SKIN_COLOR, roughness: 0.9 }))
-  const cloth = trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: spec.clothColor, roughness: 0.85 }))
+  const cloth = trackedMaterial(owned, new THREE.MeshStandardMaterial({ color: clothColor, roughness: 0.85 }))
 
   const joints = new Map<JointName, THREE.Object3D>()
 
@@ -1148,9 +1376,60 @@ export function createProceduralFighter(options: ProceduralFighterOptions): Proc
   buildLeg(owned, joints, 'R', pelvis, -body.hipWidth, body, cloth)
 
   const anchors = new Map<EquipmentAnchorName, THREE.Object3D>()
-  buildEquipment(owned, spec, joints, anchors, root)
+  if (silhouettes) buildEquipment(owned, spec, joints, anchors, root)
+  else buildSupersededEquipment(owned, archetype, body, superseded.equipment, superseded.clothColor, joints, anchors)
 
-  const horizontalEquipmentRadius = computeHorizontalEquipmentRadius(root)
+  return { root, joints, anchors, owned }
+}
+
+/**
+ * The framing radius of the FINAL props, per archetype: 0.7102 (murmillo),
+ * 1.1465 (retiarius), 1.3511 (hoplomachus).
+ *
+ * Measured off a throwaway final-kit rig rather than written down as three
+ * literals, so it cannot drift from `STYLE_SPECS` the way a copied number
+ * would -- and memoised, because building the rig is the expensive part and
+ * the answer depends on nothing but the archetype. Only ever called on the
+ * review-only `silhouettes: false` path; the shipped path measures the rig it
+ * just built and never allocates a second one.
+ */
+const FINAL_PROPS_FRAMING_RADII = new Map<Archetype, number>()
+
+function finalPropsFramingRadius(archetype: Archetype): number {
+  const cached = FINAL_PROPS_FRAMING_RADII.get(archetype)
+  if (cached !== undefined) return cached
+  const rig = buildRig(archetype, true)
+  const radius = computeHorizontalEquipmentRadius(rig.root)
+  for (const geometry of rig.owned.geometries) geometry.dispose()
+  for (const material of rig.owned.materials) material.dispose()
+  rig.root.clear()
+  FINAL_PROPS_FRAMING_RADII.set(archetype, radius)
+  return radius
+}
+
+export function createProceduralFighter(options: ProceduralFighterOptions): ProceduralFighter {
+  const mode = effectiveLegibilityMode(options.legibility)
+  const { root, joints, anchors, owned } = buildRig(options.archetype, mode.silhouettes)
+
+  // THE ONE THAT MAKES `camera-only` HONEST.
+  //
+  // `horizontalEquipmentRadius` is not a description of what is drawn -- it is
+  // the camera's own framing input (`ArenaView` -> `ArenaCamera`). If it
+  // followed the `silhouettes` flag, then `camera-only` (silhouettes off,
+  // shipped mapping on) would feed the shipped mapping the OLD radii, i.e. run
+  // a camera that has never shipped and never will, and the confusion matrix
+  // could not attribute anything to the camera change. The design spec calls
+  // this out by name: it is why the review material is five runtime
+  // configurations rather than clips from two commits.
+  //
+  // So the framing radius always comes from the final props, and it is stored
+  // separately from the geometry that was actually built above. Under
+  // `silhouettes: true` the two coincide by construction (the rig just built IS
+  // the final one); under `silhouettes: false` they deliberately disagree, and
+  // `legibilityMode.test.ts` asserts exactly that disagreement.
+  const horizontalEquipmentRadius = mode.silhouettes
+    ? computeHorizontalEquipmentRadius(root)
+    : finalPropsFramingRadius(options.archetype)
 
   let disposed = false
 
