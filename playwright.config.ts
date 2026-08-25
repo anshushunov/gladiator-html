@@ -41,11 +41,10 @@ export default defineConfig({
       // Both bounds below were measured on this suite rather than guessed,
       // at the default `threshold` above:
       //
-      //   - a baseline swapped for a different frame of the same bout
-      //     (`heavy-cleave` standing in for `combat-safe-frame`): 9.0% of
-      //     the frame differs -- this is the smallest real regression the
-      //     bar has to catch, since two ticks of one bout look far more
-      //     alike than any accidental change would;
+      //   - the widest same-bout frame swap available -- opening separation
+      //     against a clinch (`heavy-cleave` standing in for
+      //     `combat-safe-frame`): 9.0% of the frame differs (an independent
+      //     re-measurement by a reviewer got 8.0% for the same pair);
       //   - the same frame captured on two different machines running the
       //     same OS and the same Chromium: up to 2.5%. Chromium's software
       //     rasterizer picks SIMD paths from the host CPU, so identical 3D
@@ -54,8 +53,38 @@ export default defineConfig({
       //     the font/AA half of this, not the WebGL half, and no capture
       //     machine can be pinned for every future runner.
       //
-      // 4% sits between them with room on both sides, and is the right bar
-      // for the WebGL captures this config's `threshold` note is about.
+      // 4% was picked to sit between those two on the theory that the 9.0%
+      // pair was the smallest real regression the bar had to catch. That
+      // theory was wrong, and counterexamples existed in the tree when it was
+      // written: 9.0% is the WIDEST frame swap available in this suite, not
+      // the tightest, so the bar was calibrated on it backwards. All figures
+      // below are this same comparator at this same `threshold: 0.2`, as a
+      // ratio of a 1280x820 frame:
+      //
+      //   - against the *old* baselines, same-bout frame swaps the 4% bar
+      //     passed: `fast-burst` vs `heavy-cleave` 1.85%, `technical-parry`
+      //     vs `heavy-cleave` 1.44% -- literally two ticks of one bout;
+      //   - against the baselines committed 2026-08-23 it is worse:
+      //     `technical-parry` vs `heavy-cleave` 1.64%, `fast-burst` vs
+      //     `heavy-cleave` 2.80%, `technical-parry` vs `fast-burst` 3.60%,
+      //     and even `heavy-cleave` vs `combat-safe-frame` -- the same wide
+      //     opening-vs-clinch pairing as the 9.0% figure above -- has fallen
+      //     to 4.71%, barely over;
+      //   - and this was not hypothetical: four baselines that were stale by
+      //     a full slice of behaviour change (new silhouettes, new
+      //     equipment, a re-framed camera) measured only 2.06-3.48%
+      //     new-vs-old and passed this gate untouched -- `heavy-cleave`
+      //     3.48% (36,547 px), `technical-parry` 2.73%, `fast-burst` 2.56%,
+      //     `combat-outcomes` 2.06%. See the README's baseline-review note
+      //     and `task-10-report.md`.
+      //
+      // So no bar in the 2.5-4% band can separate an accidental regression
+      // from an ordinary frame of the same bout for these arena captures --
+      // a per-pixel ratio is not the right instrument here. The correct fix
+      // is a structural comparison (the arena debug snapshot already exposes
+      // projected per-fighter bounds for exactly this purpose), not a
+      // re-tuned ratio, and building that is deliberately left as its own
+      // slice: this comment records that as a known gap, not a missed one.
       //
       // The two DOM-only captures do override it, deliberately and much
       // tighter: `planning.png` (`smoke.spec.ts`) and `season-board.png`
