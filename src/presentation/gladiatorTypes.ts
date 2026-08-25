@@ -66,7 +66,8 @@ export const SHIPPED_TYPE_VOCABULARY: TypeVocabulary = Object.freeze({
  * approximation of it. Deleted from the views when it was superseded and
  * reintroduced here on purpose, in one clearly-marked place, reachable only
  * through `typeVocabularyFor({ labels: false, ... })` -- which only
- * `?legibility=` under `import.meta.env.DEV` ever asks for.
+ * `?legibility=` under `import.meta.env.DEV` ever asks for, and whose
+ * superseded branch `vite build` folds away outright (see that function).
  *
  * These three strings are exactly the mechanics ids that
  * `tests/legibility.spec.ts`'s "no phase names a mechanics id" test forbids on
@@ -86,7 +87,16 @@ export const SUPERSEDED_TYPE_VOCABULARY: TypeVocabulary = Object.freeze({
 })
 
 export function typeVocabularyFor(mode: LegibilityMode): TypeVocabulary {
-  // `effectiveLegibilityMode` is what drops `SUPERSEDED_TYPE_VOCABULARY` out of
-  // a production bundle entirely rather than merely leaving it unreachable.
+  // `import.meta.env.DEV` NAMED HERE, not merely relied on inside
+  // `effectiveLegibilityMode`. Both forms make the superseded branch
+  // unreachable in production, but only this one makes it *absent*: the
+  // function-call form returns a value the bundler cannot fold, so the ternary
+  // below survived minification and `Heavy`/`Fast`/`Technical` shipped as inert
+  // strings in the player's download (measured on the emitted bundle, not
+  // assumed). `vite build` replaces this identifier with the literal `false`,
+  // so the whole conditional collapses to its shipped side and
+  // `SUPERSEDED_TYPE_VOCABULARY` is tree-shaken out. Same technique
+  // `main.ts` uses for `window.__GLADIATOR_TEST__`.
+  if (!import.meta.env.DEV) return SHIPPED_TYPE_VOCABULARY
   return effectiveLegibilityMode(mode).labels ? SHIPPED_TYPE_VOCABULARY : SUPERSEDED_TYPE_VOCABULARY
 }

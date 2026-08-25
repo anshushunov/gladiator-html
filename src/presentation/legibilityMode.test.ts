@@ -402,4 +402,53 @@ describe('the legibility mode reaches all three owners', () => {
       expect(sources[path], `${path} must mark its superseded block review-only`).toMatch(/[Rr]eview-only/)
     }
   })
+
+  // Final-review fix #2. What this test can and cannot do, stated plainly
+  // because the comments it replaces overstated exactly this:
+  //
+  //   IT CHECKS a source SHAPE -- that each of the three owners names
+  //   `import.meta.env.DEV` itself at the branch that selects between shipped
+  //   and superseded. That is the property `vite build` needs in order to fold
+  //   the branch (it replaces the identifier with the literal `false`) and
+  //   tree-shake the superseded side away.
+  //
+  //   IT DOES NOT CHECK THE EMITTED BUNDLE. Nothing in `npm test` does. The
+  //   bundle check is `npm run build` followed by grepping
+  //   `dist/assets/index-*.js` for `Heavy`, `Fast` and `Technical`, and it is a
+  //   manual step. Before this fix that grep returned 3/2/2 hits while two
+  //   tracked comments asserted the bundle had been checked and was clean.
+  //
+  // A source scan is used rather than a value assertion because there is no
+  // value to assert: both spellings behave identically at runtime in a dev
+  // build, and in a production build the superseded branch is unreachable
+  // either way. The difference is only visible to the bundler.
+  it('gates every superseded branch on import.meta.env.DEV so the bundler can fold it', () => {
+    const sources = presentationSources()
+    const gated = [
+      ['./gladiatorTypes.ts', /import\.meta\.env\.DEV[\s\S]{0,200}SUPERSEDED_TYPE_VOCABULARY/],
+      ['./ArenaCamera.ts', /import\.meta\.env\.DEV[\s\S]{0,200}supersededExtentToDistance/],
+      ['./ProceduralFighter.ts', /import\.meta\.env\.DEV[\s\S]{0,200}SUPERSEDED_STYLE_SPECS/],
+    ] as const
+    for (const [path, pattern] of gated) {
+      expect(
+        code(sources[path]),
+        `${path} must name import.meta.env.DEV at the branch that selects the superseded side, `
+          + 'otherwise the branch survives minification and the superseded data ships',
+      ).toMatch(pattern)
+    }
+    // And the superseded data must never be READ outside such a branch.
+    // `buildRig` used to do exactly that -- `const superseded =
+    // SUPERSEDED_STYLE_SPECS[archetype]` hoisted above its own conditional,
+    // with only the *use* of it gated -- which pins the whole table into the
+    // bundle however the branch below is written. Every subscript of it must
+    // now sit on the folded side of `drawSuperseded`.
+    const rig = code(sources['./ProceduralFighter.ts'])
+    for (const line of rig.split('\n')) {
+      if (!/SUPERSEDED_STYLE_SPECS\s*\[/.test(line)) continue
+      expect(
+        line,
+        'a SUPERSEDED_STYLE_SPECS lookup outside a `drawSuperseded` branch keeps the table in the production bundle',
+      ).toMatch(/drawSuperseded/)
+    }
+  })
 })

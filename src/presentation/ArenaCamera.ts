@@ -341,8 +341,13 @@ export function arenaCameraOptionsFor(
   maxDistance: number,
 ): ArenaCameraOptions {
   const effective = effectiveLegibilityMode(legibility)
+  // Same `import.meta.env.DEV &&` shape as the constructor's mapping choice,
+  // and for the same reason -- the near clamp and the mapping ship together, so
+  // if one folds away in production the other must fold with it or the two
+  // could in principle disagree.
+  const supersededCamera = import.meta.env.DEV && !effective.camera
   return {
-    minDistance: effective.camera ? shippedMinDistance : SUPERSEDED_MIN_DISTANCE,
+    minDistance: supersededCamera ? SUPERSEDED_MIN_DISTANCE : shippedMinDistance,
     maxDistance,
     legibility: effective,
   }
@@ -635,8 +640,16 @@ export class ArenaCamera {
     this.minDistance = options.minDistance
     this.maxDistance = options.maxDistance
     const legibility = effectiveLegibilityMode(options.legibility)
-    this.activeMapping = legibility.camera ? 'shipped' : 'superseded'
-    this.mapExtentToDistance = legibility.camera ? extentToDistance : supersededExtentToDistance
+    // `import.meta.env.DEV &&` in front of the runtime flag, not the flag
+    // alone: `effectiveLegibilityMode` already forces the shipped mode in
+    // production, but it does so by RETURNING a value, which the bundler
+    // cannot fold -- so the superseded mapping stayed in the emitted bundle as
+    // unreachable code. Naming `import.meta.env.DEV` here lets `vite build`
+    // replace it with `false`, collapse both expressions, and tree-shake
+    // `supersededExtentToDistance` and its three constants away entirely.
+    const supersededCamera = import.meta.env.DEV && !legibility.camera
+    this.activeMapping = supersededCamera ? 'superseded' : 'shipped'
+    this.mapExtentToDistance = supersededCamera ? supersededExtentToDistance : extentToDistance
     const initialDistance = clamp((options.minDistance + options.maxDistance) / 2, options.minDistance, options.maxDistance)
     this.lookTargetReferenceX = 0
     this.lookTargetReferenceZ = 0

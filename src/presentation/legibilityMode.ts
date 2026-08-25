@@ -28,10 +28,22 @@
 // and `?audioDebug` -- so a player cannot reach any of these configurations
 // from a URL. And every one of the three owners funnels its mode through
 // `effectiveLegibilityMode` below, which is `import.meta.env.DEV`-gated in
-// turn, so in a production build the superseded label map, mapping and kit
-// specs are not merely unreachable, they are dead-code-eliminated out of the
-// bundle. Verified by building and grepping the emitted bundle (see the task
-// report), the same way `ArenaView`'s dev-only test surface is.
+// turn, so no production code path can select a superseded configuration.
+//
+// ABSENCE, not merely unreachability, needs one thing more, and it was missing
+// until the final whole-branch review found it. `effectiveLegibilityMode`
+// returns a value; a `mode.labels ? shipped : superseded` ternary downstream is
+// therefore a branch on a runtime-derived boolean, which no bundler can fold --
+// so the superseded label map really did ship, as inert strings, in the
+// player's download (`Heavy` x3, `Fast` x2, `Technical` x2 in
+// `dist/assets/index-*.js`). Each of the three owners now names
+// `import.meta.env.DEV` at its own branch, which `vite build` replaces with the
+// literal `false` so the conditional collapses and the superseded side is
+// tree-shaken away. `legibilityMode.test.ts`'s "the superseded branches are
+// gated so the bundler can fold them" test pins that shape in source; the
+// bundle itself is checked by `npm run build` followed by grepping
+// `dist/assets/index-*.js` for `Heavy`/`Fast`/`Technical`, which is a manual
+// step, not an automated one -- see that test's own comment.
 //
 // This module is deliberately free of every other concern: the label copy
 // lives in `gladiatorTypes.ts`, the mapping in `ArenaCamera.ts`, the prop
@@ -112,16 +124,18 @@ export function isLegibilityConfigurationName(value: string): value is Legibilit
  * build, and the shipped mode unconditionally in a production one.
  *
  * Every one of the three owners funnels through this, and that is what makes
- * "dev-only" structural rather than a convention. `vite build` replaces
- * `import.meta.env.DEV` with `false`, so the `mode.labels ? ... : ...` branches
- * downstream collapse to their shipped side and the superseded label map,
- * mapping and kit specs are dead-code-eliminated out of the bundle
- * *implementation included* -- the same technique, and the same verification
- * (build, then grep the emitted bundle), that `ArenaView.renderActiveBattleAtAlpha`
- * uses for the dev-only test surface. Without it the review-only data survives
- * as inert-but-present strings in a player's download: harmless, but "not
- * reachable in production" is a much weaker claim than "not present in
- * production", and only the second is checkable.
+ * "dev-only" structural rather than a convention: there is one place that
+ * decides, not three.
+ *
+ * It is NOT, on its own, what removes the superseded data from the bundle. A
+ * call to this function is opaque to the bundler, so a `mode.labels ? ... :
+ * ...` written against its result stays in the emitted code with both sides
+ * intact. Elimination needs `import.meta.env.DEV` named at each branch as well,
+ * which is what `typeVocabularyFor`, `ArenaCamera`'s constructor /
+ * `arenaCameraOptionsFor` and `ProceduralFighter.buildRig` now do -- see the
+ * module header. This function's job is that a production build cannot SELECT a
+ * superseded configuration; theirs is that a production build does not CARRY
+ * one.
  */
 export function effectiveLegibilityMode(mode: LegibilityMode | undefined): LegibilityMode {
   if (!import.meta.env.DEV) return SHIPPED_LEGIBILITY_MODE

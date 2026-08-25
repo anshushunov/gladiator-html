@@ -1319,8 +1319,16 @@ interface BuiltRig {
 function buildRig(archetype: Archetype, silhouettes: boolean): BuiltRig {
   const spec = STYLE_SPECS[archetype]
   const body = spec.body
-  const superseded = SUPERSEDED_STYLE_SPECS[archetype]
-  const clothColor = silhouettes ? spec.clothColor : superseded.clothColor
+  // `import.meta.env.DEV &&`, and the lookup INSIDE the conditional rather than
+  // above it. The previous shape read `SUPERSEDED_STYLE_SPECS[archetype]`
+  // unconditionally and only branched on its use, which pins the whole table
+  // into the emitted bundle no matter what the flag says; and `silhouettes`
+  // alone is a runtime-derived boolean the bundler cannot fold. With
+  // `import.meta.env.DEV` replaced by `false` at build time, both expressions
+  // below collapse to their shipped side and `SUPERSEDED_STYLE_SPECS` /
+  // `buildSupersededEquipment` are tree-shaken out of a player's download.
+  const drawSuperseded = import.meta.env.DEV && !silhouettes
+  const clothColor = drawSuperseded ? SUPERSEDED_STYLE_SPECS[archetype].clothColor : spec.clothColor
   const outlineMaterial = new THREE.MeshBasicMaterial({ color: OUTLINE_COLOR, side: THREE.BackSide })
   const owned: Owned = { geometries: [], materials: [outlineMaterial], outlineMaterial }
 
@@ -1376,8 +1384,12 @@ function buildRig(archetype: Archetype, silhouettes: boolean): BuiltRig {
   buildLeg(owned, joints, 'R', pelvis, -body.hipWidth, body, cloth)
 
   const anchors = new Map<EquipmentAnchorName, THREE.Object3D>()
-  if (silhouettes) buildEquipment(owned, spec, joints, anchors, root)
-  else buildSupersededEquipment(owned, archetype, body, superseded.equipment, superseded.clothColor, joints, anchors)
+  // Both `SUPERSEDED_STYLE_SPECS` lookups sit textually inside a
+  // `drawSuperseded` expression rather than being hoisted into a local above
+  // this branch: hoisting is what made the table unconditionally live before,
+  // and `legibilityMode.test.ts` enforces the placement per line.
+  if (drawSuperseded) buildSupersededEquipment(owned, archetype, body, SUPERSEDED_STYLE_SPECS[archetype].equipment, SUPERSEDED_STYLE_SPECS[archetype].clothColor, joints, anchors)
+  else buildEquipment(owned, spec, joints, anchors, root)
 
   return { root, joints, anchors, owned }
 }
