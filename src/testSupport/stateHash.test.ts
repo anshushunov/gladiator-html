@@ -91,8 +91,23 @@ it('pins a rolling per-tick hash of all nine pairings', () => {
 // byte-identical -- and a direct write attempt after `sync()` must throw,
 // which is what proves the freeze actually took (not just that this
 // particular render pass happened not to touch anything).
+//
+// The freeze is `import.meta.env.DEV`-gated in `ArenaView.sync()` (final-review
+// fix #1 -- see its comment for why it must not reach a player's runtime), so
+// this test's first assertion is that the gate is OPEN in this runner. Vitest
+// sets `import.meta.env.DEV` true, but if that ever changed, every expectation
+// below would still pass while proving nothing at all: `canonicalJson` would
+// simply keep matching because this render pass happens not to write, and the
+// `toThrow(TypeError)` would be the only failure -- reported as "the renderer
+// mutates state", which is the opposite of what went wrong. Asserting the gate
+// first turns that into one unmistakable failure.
 describe('ArenaView never mutates a frozen render frame', () => {
   it('leaves the battle states byte-identical across sync and a dev replay', async () => {
+    expect(
+      import.meta.env.DEV,
+      'this proof only means anything where ArenaView.sync() actually freezes, i.e. a DEV build',
+    ).toBe(true)
+
     class FakeResizeObserver {
       observe(): void {}
       unobserve(): void {}

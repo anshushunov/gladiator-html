@@ -25,10 +25,12 @@ import { normalizeVec2, TICKS_PER_SECOND, type Vec2 } from '../simulation/moveme
  * The runtime's per-render-frame payload (owned here, the consumer, per the
  * brief's interface note; `main.ts` only ever constructs one of these). See
  * that module's own comment for `previous`/`current`'s aliasing contract --
- * neither is ever cloned, and this module must never mutate either. `sync()`
- * enforces that: it `deepFreeze`s `previous`/`current`/`events` before this
- * module ever reads them, so "must never mutate" is a thrown `TypeError`
- * away from being caught, not just a convention.
+ * neither is ever cloned, and this module must never mutate either. In a dev
+ * or test build `sync()` enforces that: it `deepFreeze`s
+ * `previous`/`current`/`events` before this module ever reads them, so "must
+ * never mutate" is a thrown `TypeError` away from being caught, not just a
+ * convention. A production build does not freeze -- see `sync()`'s own comment
+ * for why the freeze must not reach a player's runtime.
  */
 export interface BattleRenderFrame {
   previous: BattleState
@@ -303,13 +305,18 @@ const deepFreezeSeen = new WeakSet<object>()
 
 /**
  * Recursively `Object.freeze`s `value` and every nested object/array
- * reachable from it. Used by `sync()` (below) to freeze exactly
- * `BattleRenderFrame`'s `previous`/`current`/`events` before this module
- * ever reads them -- proving this renderer, which reads simulation state
- * deeply every frame (pose sampling, contact targeting, camera framing),
- * never accidentally writes back into it. Deliberately never applied to
- * `this.rigs`, the scene or the camera -- those are legitimately mutated
- * every frame, and freezing them would break the render loop.
+ * reachable from it. Used by `sync()` (below), **in dev and test builds
+ * only**, to freeze exactly `BattleRenderFrame`'s `previous`/`current`/
+ * `events` before this module ever reads them -- proving this renderer, which
+ * reads simulation state deeply every frame (pose sampling, contact
+ * targeting, camera framing), never accidentally writes back into it.
+ * Deliberately never applied to `this.rigs`, the scene or the camera -- those
+ * are legitimately mutated every frame, and freezing them would break the
+ * render loop.
+ *
+ * "Everything reachable" is meant literally, and it is why the call sites are
+ * gated: a `BattleState` reaches simulation-owned module singletons by
+ * reference rather than by copy (see `sync()`).
  */
 function deepFreeze<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value
@@ -719,9 +726,38 @@ export class ArenaView {
     // early return -- so the invariant holds even on a session where no
     // WebGL context exists to render into at all, not only on the normal
     // path `stateHash.test.ts`'s freeze proof actually exercises.
-    deepFreeze(frame.previous)
-    deepFreeze(frame.current)
-    deepFreeze(frame.events)
+    //
+    // DEV AND TEST BUILDS ONLY, as the design spec specifies. `vite build`
+    // replaces `import.meta.env.DEV` with `false`, so this block is
+    // dead-code-eliminated from a player's bundle. Two independent reasons,
+    // and the first is the load-bearing one:
+    //
+    //  - REACH. `deepFreeze` recurses everything reachable, and a
+    //    `BattleState` reaches simulation-owned module singletons BY
+    //    REFERENCE, not by copy: `encounter.combatStyles` *is* the
+    //    `COMBAT_STYLES` catalog object (`simulation/encounter.ts`), and every
+    //    combatant's `definition` *is* the module-level `FighterDefinition`
+    //    from `content/mvpSeries.ts`/`content/season.ts` -- `createBattle`
+    //    clones neither. Ungated, this presentation-only module would impose
+    //    permanent runtime immutability, in the shipped client, on exactly the
+    //    content modules this slice's own allowlist forbids it to edit.
+    //    Nothing mutates them today, so nothing observable changes -- but a
+    //    later slice that does (progression, injuries, equipment: all named as
+    //    future work in the design spec's non-goals) would throw a `TypeError`
+    //    inside the live render loop, and `main.ts` latches an unrecoverable
+    //    render error into `presentationDisabled`: a silently blank arena.
+    //  - COST. It is an O(events) walk on every production frame, for a check
+    //    that can only ever tell a developer something.
+    //
+    // The proof this gate could hollow out is `stateHash.test.ts`'s freeze
+    // test; it runs under Vitest, where `import.meta.env.DEV` is `true`, and
+    // asserts that outright before touching `sync()` so it cannot quietly
+    // start testing nothing.
+    if (import.meta.env.DEV) {
+      deepFreeze(frame.previous)
+      deepFreeze(frame.current)
+      deepFreeze(frame.events)
+    }
     this.applyFrame(frame, {
       advanceCameraTime: options?.advanceCameraTime ?? true,
       cameraDeltaSeconds: options?.cameraDeltaSeconds,
