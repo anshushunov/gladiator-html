@@ -11,6 +11,22 @@ export default defineConfig({
   // green on the machine that captured it -- `{platform}` gives each OS its
   // own, and `npm run test:e2e:update` on that OS is what authors it.
   snapshotPathTemplate: '{testDir}/__screenshots__/{platform}/{arg}{ext}',
+  // A committed `test.only` silently reduces the whole suite to that one test
+  // and still exits 0 -- the same failure mode as `updateSnapshots` above and
+  // as the rejected project split below: a harness that quietly does not run.
+  // Playwright's own default is `false`, and the usual recipe is
+  // `!!process.env.CI`; unconditional `true` on purpose, because this repo's
+  // gate is `npm run check` on a developer machine at least as often as it is
+  // GitHub Actions, and a protection that only exists on the runner does not
+  // protect the run that actually decides whether work is finished. Focusing
+  // on one test stays available through `-g` and through a file path argument,
+  // neither of which can be committed by accident.
+  forbidOnly: true,
+  // Explicit, and equal to Playwright's default: a retry would let a flaky
+  // screenshot or a flaky trace pass on the second attempt, and this suite's
+  // whole value is that its measurements are deterministic. `workers: 1`
+  // below removes the one source of flakiness that was ever observed here.
+  retries: 0,
   // A test run must never author a baseline. Playwright's own default
   // (`missing`) still writes any absent snapshot straight into
   // `tests/__screenshots__/` on a plain `npm run test:e2e` -- the run reports
