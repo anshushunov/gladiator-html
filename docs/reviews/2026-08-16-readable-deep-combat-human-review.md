@@ -179,8 +179,30 @@ Do question 1 first, and completely, before showing anyone a labelled clip.
 ## Blinded silhouette stills (the confusion matrix)
 
 ```bash
-npm run review:stills            # add --config=<name> for the other four
+npm run review:stills                              # -> .../blinded-stills/everything/
+npm run review:stills -- --config=camera-only      # the comparison set
 ```
+
+**Record two configurations here, not five** — `everything` and `camera-only`.
+The other three cannot contribute anything, for two different reasons, both
+measured rather than assumed:
+
+- `labels-only` vs `baseline` produce **byte-identical images**. These stills
+  carry no text at all (HUD hidden, canvas-only crop), so the naming change is
+  invisible here by construction.
+- `baseline` and `silhouettes-only` **cannot be recorded**. Both run the
+  superseded camera, which frames from 11 world units instead of 8.81, so
+  everything is ~20% smaller and the two fighters sit closer together in
+  pixels — and a still is only usable if the opponent falls entirely outside
+  the fixed 280×320 crop window. Measured: 12 usable stills out of 48 for
+  `baseline`, 23 for `silhouettes-only`, with whole type/side groups at zero.
+  Widening the window makes it worse; scaling the window with the framing
+  distance would normalise away the very difference being attributed.
+
+`camera-only` and `everything` run the **same** camera and differ only in the
+kits, so the pair isolates the silhouette change exactly. Both fill all 48.
+The labels and the camera are attributed from the clips instead, where text is
+on screen and absolute scale is preserved.
 
 Writes to `docs/reviews/clips/blinded-stills/<config>/`:
 
@@ -238,24 +260,42 @@ test.
 
 ### Known limitation of this material, recorded before anyone judges it
 
-**Every still is a profile, and that is a property of the game, not of the
-recorder.** The arena camera yaws to keep the fighters' own axis across the
-frame, and a gladiator always faces his opponent (a disengaging fighter never
-turns his back — the design spec's own constraint). Facing your opponent while
-your opponent is across the frame means being seen from the side, always.
-Measured over 918 clean candidate frames across all nine pairings at seed
-20260815: every home fighter's presented facing fell between 60° and 120°, and
-every away fighter's between 240° and 300°, with nothing outside those two
-bands at all.
+**Every still is a profile: a front or back view is unreachable in a
+single-fighter still at the shipped framing.** Two separate things make that
+so, and only the first is a property of the game:
+
+1. The arena camera yaws to keep the fighters' own axis across the frame, and a
+   gladiator always faces his opponent (a disengaging fighter never turns his
+   back — the design spec's own constraint). Facing your opponent while your
+   opponent is across the frame means being seen from the side. Profile is
+   therefore the overwhelming majority case by construction.
+2. The recorder's own crop filter removes what is left. A fighter presents his
+   front or back exactly when the pair axis points at the camera — which is
+   when the two fighters overlap on screen. At roughly 80 px per world unit and
+   ~145 px of body height, clearing the fixed 280×320 crop window needs about
+   5 world units of depth between them, which a pair fighting 2.5 apart never
+   reaches. Those frames exist; they are just not usable for a one-fighter
+   still.
+
+The sweep's numbers cannot separate the two causes, and should not be read as
+if they could. Over 918 clean candidate frames across all nine pairings at seed
+20260815, every home fighter's presented facing fell between 60° and 120° and
+every away fighter's between 240° and 300°, with nothing outside — but that
+population is measured **after** the crop filter, so it is equally consistent
+with "the game never produces those facings" and with "the filter removed
+them". `src/presentation/ArenaCamera.ts`'s own header (1.5% of ticks beyond 30°
+of framing error) says the second is at least partly true.
 
 So the "four yaw angles" are four quartiles of each fighter's own deviation
-from pure profile — a spread of tens of degrees, not a front/side/back sweep,
-because a front or back view is unreachable in play. That is the right material
-(it is what a player will actually see) but it narrows what the confusion
-matrix can claim: it measures whether the three types are separable **in
-profile at the shipped framing**, and nothing wider. The per-still deviation in
-degrees is in the answer key if a later analysis wants to check whether
-accuracy varies with it.
+from pure profile — a spread of tens of degrees, not a front/side/back sweep.
+That is the right material (it is what a player will actually see in a fight)
+but it narrows what the confusion matrix can claim: it measures whether the
+three types are separable **in profile at the shipped framing**, and nothing
+wider. In particular it does **not** establish anything about how the types
+read from the front or the back; if that question matters, it needs different
+material than a bout can produce. The per-still deviation in degrees is in the
+answer key (`profile_deviation_degrees`) if a later analysis wants to check
+whether accuracy varies with it.
 
 ## Rubric for "a plausible winner explanation" — written before viewing
 
@@ -342,8 +382,11 @@ that reviewer's clips.)*
 
 ## Blinded silhouette confusion matrix
 
-*(Every cell intentionally empty. One block per reviewer per configuration.
-"True" is the row, "answered" is the column; 16 stills per row.)*
+*(Every cell intentionally empty. One block per reviewer per configuration —
+and the only two configurations recorded as stills are `everything` and
+`camera-only`. "True" is the row, "answered" is the column; 16 stills per row.
+The pass bar is judged on `everything`; `camera-only` exists to attribute the
+difference to the kits.)*
 
 | Reviewer alias | Configuration | True type | Answered Murmillo | Answered Retiarius | Answered Hoplomachus | Row accuracy | >= 70%? |
 |---|---|---|---|---|---|---|---|
@@ -365,13 +408,31 @@ that reviewer's clips.)*
 five-configuration exercise is for: it is what says which of the three changes
 moved the number.)*
 
-| Configuration | Overall accuracy | Delta vs `baseline` |
-|---|---|---|
-| `baseline` | | — |
-| `labels-only` | | |
-| `camera-only` | | |
-| `silhouettes-only` | | |
-| `everything` | | |
+**The stills attribute one of the three changes, not three** — see "Record two
+configurations here, not five" above for why the other two are unmeasurable in
+this exercise (no text in a still; no absolute scale in a crop, and the wider
+camera cannot yield clean single-fighter crops at all).
+
+| Configuration | Overall accuracy | Delta | What the delta attributes |
+|---|---|---|---|
+| `camera-only` (superseded kits, shipped camera) | | — | — |
+| `everything` (final kits, shipped camera) | | | **the silhouette change, alone** |
+
+Same camera in both rows, so the delta is the kits and nothing else. This is
+the number the slice's silhouette work lives or dies by, and it is the one the
+five-configuration design exists to make readable.
+
+**Labels and camera are attributed from the clips**, not from this table. Use
+the style-identification and winner-explanation results below, recorded per
+configuration:
+
+| Configuration | Types identified after one clip each | Winner explanation plausible (of 3) | What it attributes |
+|---|---|---|---|
+| `baseline` | | | — |
+| `labels-only` | | | the naming change |
+| `camera-only` | | | the framing change |
+| `silhouettes-only` | | | the kits |
+| `everything` | | | all three, plus interactions |
 
 ### Colour-vision and greyscale variants (not scored, recorded separately)
 

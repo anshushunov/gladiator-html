@@ -3,9 +3,31 @@
 // acceptance #2, "each type is identifiable from its silhouette alone at the
 // shipped framing", which that spec says must be *measured, not asserted*.
 //
-//   npm run review:stills                       # the whole set
-//   npm run review:stills -- --seed=99           # a different series seed
-//   npm run review:stills -- --config=baseline   # the same set in another review configuration
+//   npm run review:stills                          # the whole set (`everything`)
+//   npm run review:stills -- --config=camera-only  # the one comparison stills can make
+//   npm run review:stills -- --seed=99             # a different series seed
+//
+// ONLY TWO OF THE FIVE REVIEW CONFIGURATIONS ARE WORTH RECORDING AS STILLS,
+// and it is worth knowing why before reaching for the other three.
+//
+//   - `labels-only` vs `baseline`: byte-identical images. These stills carry no
+//     text at all -- the HUD is hidden and the crop is canvas-only -- so the
+//     naming change is invisible here by construction. Measure it with clips.
+//   - `camera-only`/`everything` vs the two `camera: false` configurations:
+//     not recordable. The superseded mapping frames from 11 world units instead
+//     of `FLAT_DISTANCE`'s 8.81, so everything on screen is ~20% smaller and the
+//     two fighters sit closer together IN PIXELS -- and `cropIsClean` below needs
+//     the opponent entirely outside a fixed 280x320 pixel window. Measured: at
+//     the superseded camera the sweep yields 12 usable stills out of 48 for
+//     `baseline` and 23 for `silhouettes-only`, with whole (type, side) groups
+//     at zero. Widening the window makes it worse, and scaling the window with
+//     the framing distance would normalise away the very difference the
+//     comparison is supposed to show. Measure the camera with clips too.
+//
+// So the stills exercise measures the SILHOUETTE change, cleanly, by comparing
+// `camera-only` (superseded kits, shipped camera) against `everything` (final
+// kits, shipped camera) -- the same camera in both, so the only difference is
+// the one being attributed. Both fill all 48.
 //
 // WHAT IT PRODUCES
 //
@@ -95,16 +117,35 @@ const SIDES: readonly Side[] = ['home', 'away']
  * silhouette" depends on which way the man is turned ON SCREEN.
  *
  * THE FOUR ANGLES ARE NOT front/side/back/side, AND THAT IS A FINDING, NOT A
- * CONVENIENCE. A full front-to-back sweep is structurally unreachable in play,
- * for a reason that is a deliberate feature of the shipped camera: the arena
- * camera yaws to keep the pair's own axis across the frame (the 2026-08-19
- * legibility slice, measured at 1.5% of ticks beyond 30 degrees of framing
- * error), and a gladiator always faces his opponent -- a disengaging fighter
- * never turns his back, by the design spec's own constraint. Facing the
- * opponent plus the opponent being across the frame equals profile, always.
- * Measured over 918 clean candidate frames across all nine pairings at seed
- * 20260815: EVERY home fighter's facing fell in 60-120 degrees and EVERY away
- * fighter's in 240-300, with nothing at all outside those two bands.
+ * CONVENIENCE -- but state the finding at the width the evidence supports, not
+ * wider. The defensible claim is: **a front or back view is unreachable in a
+ * SINGLE-FIGHTER still at the shipped framing.** Two things make it so, and
+ * only the first is a property of the game:
+ *
+ *   1. The arena camera yaws to keep the pair's own axis across the frame (the
+ *      2026-08-19 legibility slice), and a gladiator always faces his opponent
+ *      -- a disengaging fighter never turns his back, by the design spec's own
+ *      constraint. Facing your opponent while your opponent is across the frame
+ *      means being seen from the side. So profile is the overwhelming majority
+ *      case by construction.
+ *   2. `cropIsClean` below then removes what is left. A fighter presents his
+ *      front or back exactly when the pair axis points at the camera -- which
+ *      is when the two fighters overlap on screen. At roughly 80 px per world
+ *      unit and ~145 px of body height, separating them by a clear 320 px band
+ *      needs about 5 world units of depth between them, which a pair fighting
+ *      2.5 apart never reaches. Those frames exist; they are simply not usable
+ *      for a one-fighter still.
+ *
+ * The sweep's own numbers cannot tell the two apart, and it would be wrong to
+ * read them as if they could: the 918 clean candidates measured across all nine
+ * pairings at seed 20260815 fell in 60-120 degrees for every home fighter and
+ * 240-300 for every away fighter, with nothing outside -- but that population is
+ * post-filter, so it is equally consistent with "the game never produces those
+ * facings" and with "the filter removed them". `ArenaCamera.ts`'s own header
+ * (1.5% of ticks beyond 30 degrees of framing error) says the second is at
+ * least partly true. The practical conclusion is unchanged either way, which is
+ * why this is a note about how far the result generalises rather than a reason
+ * to change the material.
  *
  * So the four angles are four QUARTILES of the deviation from pure profile,
  * cut from the sweep's own measured distribution rather than from fixed
@@ -637,29 +678,59 @@ function selectStills(
 
   for (const archetype of ARCHETYPES) {
     for (const side of SIDES) {
+      const groupPool = candidates.filter((c) => c.archetype === archetype && c.side === side)
+      const picked: Candidate[] = []
+
       for (const yawBin of YAW_BINS) {
-        const pool = candidates.filter((c) => c.archetype === archetype && c.side === side && c.yawBin === yawBin)
+        const pool = groupPool.filter((c) => c.yawBin === yawBin)
         // Spread the two picks across the pool rather than taking neighbours:
-        // two ticks 12 apart are nearly the same pose, and eight near-identical
-        // stills would flatter the confusion matrix.
+        // two ticks a few frames apart are nearly the same pose, and eight
+        // near-identical stills would flatter the confusion matrix.
         const spread = shuffled(pool, random)
-        const picked: Candidate[] = []
+        const fromThisBin: Candidate[] = []
         for (const candidate of spread) {
-          if (picked.length >= STILLS_PER_BIN) break
-          const tooClose = picked.some((other) => other.lineupIndex === candidate.lineupIndex && other.slot === candidate.slot && Math.abs(other.tick - candidate.tick) < 180)
+          if (fromThisBin.length >= STILLS_PER_BIN) break
+          const tooClose = fromThisBin.some((other) => other.lineupIndex === candidate.lineupIndex && other.slot === candidate.slot && Math.abs(other.tick - candidate.tick) < 180)
           if (tooClose) continue
-          picked.push(candidate)
+          fromThisBin.push(candidate)
         }
         // Second pass without the spacing rule, if the bin is thin.
         for (const candidate of spread) {
-          if (picked.length >= STILLS_PER_BIN) break
+          if (fromThisBin.length >= STILLS_PER_BIN) break
+          if (!fromThisBin.includes(candidate)) fromThisBin.push(candidate)
+        }
+        if (fromThisBin.length < STILLS_PER_BIN) {
+          shortfalls.push(`${archetype}/${side}/${yawBin}: ${fromThisBin.length} of ${STILLS_PER_BIN} (pool ${pool.length})`)
+        }
+        picked.push(...fromThisBin)
+      }
+
+      // BALANCE BEATS BIN COVERAGE. If a yaw bin came up thin, top the group
+      // back up to its full eight from anywhere else in the same (type, side)
+      // pool rather than shipping a short group.
+      //
+      // The per-type bar is `>= 70% correct for each of the three types`, and
+      // that is only comparable across types if each type contributes the same
+      // number of stills; a 15/16/16 split makes one row's percentage rest on a
+      // different denominator from the others, and the reviewer README's claim
+      // that the set is evenly divided stops being true. The yaw bins are a
+      // device for spreading the eight stills out, not a quantity anything is
+      // scored against -- the answer key records each still's actual
+      // `profile_deviation_degrees`, which is the column an analysis should use.
+      // So when the two cannot both be satisfied, balance wins.
+      if (picked.length < STILLS_PER_TYPE_PER_SIDE) {
+        for (const candidate of shuffled(groupPool, random)) {
+          if (picked.length >= STILLS_PER_TYPE_PER_SIDE) break
           if (!picked.includes(candidate)) picked.push(candidate)
         }
-        if (picked.length < STILLS_PER_BIN) {
-          shortfalls.push(`${archetype}/${side}/${yawBin}: ${picked.length} of ${STILLS_PER_BIN} (pool ${pool.length})`)
-        }
-        chosen.push(...picked)
+        shortfalls.push(
+          picked.length < STILLS_PER_TYPE_PER_SIDE
+            ? `${archetype}/${side}: ONLY ${picked.length} of ${STILLS_PER_TYPE_PER_SIDE} -- the set is NOT balanced (pool ${groupPool.length})`
+            : `${archetype}/${side}: topped up to ${STILLS_PER_TYPE_PER_SIDE} from neighbouring yaw bins (pool ${groupPool.length})`,
+        )
       }
+
+      chosen.push(...picked)
     }
   }
 
@@ -797,8 +868,21 @@ async function captureStills(
 // Output
 // ---------------------------------------------------------------------------
 
+/**
+ * The ONE document the reviewer reads. It opens by telling them not to read
+ * anything else, so anything it gets wrong cannot be corrected elsewhere --
+ * which is why it states the profile-only limitation itself rather than
+ * deferring to the gate document, and why it gives no per-type counts.
+ *
+ * It deliberately does NOT say how many stills each type contributes. The set
+ * is balanced (16/16/16), and a reviewer who knows that can balance their own
+ * answers and gain accuracy without seeing anything -- which would inflate the
+ * confusion matrix the whole exercise exists to measure. Nor does it use the
+ * internal archetype ids: `heavy`/`fast`/`technical` are the vocabulary this
+ * slice removed from every player-facing surface, and a reviewer is a player
+ * for this purpose.
+ */
 function renderReviewerReadme(config: ConfigName, seed: number, selections: readonly Selection[]): string {
-  const perType = ARCHETYPES.map((archetype) => `${archetype}: ${selections.filter((s) => s.archetype === archetype).length}`).join(', ')
   return `# Blinded silhouette stills -- \`${config}\` (seed ${seed})
 
 **Do not read anything else in \`docs/reviews/\` before you finish this.** The
@@ -823,23 +907,45 @@ framing distance. No HUD, no labels, no names. The types appear in a shuffled
 order and the two sides are shuffled together with them, so neither the file
 number nor the run of answers tells you anything.
 
-## The set
+## The set, and what it can and cannot show you
 
-${selections.length} stills: ${STILLS_PER_TYPE_PER_SIDE} per type per side, two at each of four
-yaw angles (facing the camera, both profiles, back to the camera). Counts by
-type: ${perType}.
+${selections.length} stills, evenly divided between the three types and between the two
+sides. (No per-type count is given on purpose: knowing it would let you balance
+your answers and score better than you can actually see.)
+
+**Every still is a side-on view.** Not one of them shows a fighter from the
+front or from the back. That is not an oversight in how these were chosen: the
+arena camera turns to keep the two fighters across the frame, and a gladiator
+always faces his opponent -- so on screen he is nearly always in profile, and on
+the rare frames where he is not, the two fighters overlap too much to crop one
+of them out on his own.
+
+So the yaw dimension in this set is narrow. Each type is shown at four slightly
+different turns -- quartiles of how far off pure profile that fighter was ever
+seen, a spread of tens of degrees, not a quarter turn. The intent is only that
+you are not judging eight identical poses; it is **not** a test of whether the
+types read from every angle, because at the shipped camera there is no every
+angle. Read your result as: *can these three be told apart in profile, at the
+distance the game actually plays at.*
+
+Pose varies much more than yaw does -- the fighters are caught mid-attack,
+guarding, giving ground -- and that is the real variety in the set.
 
 ## The pass bar (set before anyone looked at these)
 
 - **>= 80% correct overall**, and
 - **>= 70% correct for each of the three types.**
 
-Both bars were fixed when this material was recorded, and are recorded here so
+Both bars were fixed when this material was recorded, and are written here so
 they cannot move afterwards. If the result misses either bar, that is a finding
-about the fighters, not about the bar -- the design spec's own instruction for
-the known worst case (telling the retiarius' trident from the hoplomachus'
-spear) is to reach for the net and the missing helmet, or to re-open the type
-choice, and explicitly **not** to weaken this test.
+about the fighters, not about the bar: the design spec's response to a failure
+is to change the fighters or to re-open the type choice, and explicitly **not**
+to weaken this test.
+
+(What the design spec expects to be hardest, and what to do about it, is
+deliberately **not** written here -- naming it would tell you what to look for
+and inflate your score. It is in the gate document, which the person scoring
+your sheet reads and you do not.)
 `
 }
 
