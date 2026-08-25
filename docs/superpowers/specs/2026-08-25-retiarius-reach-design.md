@@ -225,8 +225,8 @@ below is.
 
 | field | now | proposed | why |
 |---|---:|---:|---|
-| `fast-slash.contactRange` | 0.9–1.35 | **0.9–2.35** | the trident poke, available from the stance |
-| `fast-burst-lunge.contactRange` | 0.9–1.45 | **1.60–2.70** | the committed thrust; the floor matches the hoplomachus' so the distribution gate compares like with like |
+| `fast-slash.contactRange` | 0.9–1.35 | **0.9–2.05** | the trident poke, available from the stance; held 0.35 below the committed reach, the gap the hoplomachus' own pair uses |
+| `fast-burst-lunge.contactRange` | 0.9–1.45 | **1.60–2.40** | the committed thrust; the floor matches the hoplomachus' so the distribution gate compares like with like, and 2.40 is the swept value at which the clean ordering margin reaches 0.20 |
 | `fast-burst-lunge.rootTravel` | 1.40 | **0.80** | the measured row that satisfies the distribution gate |
 | `fast-burst-lunge.startMaxRange` | 2.8 | **4.0** | the lunge closes from *outside* the stance rather than from inside it to contact |
 | `FAST_FORCED_DISENGAGE_END_RANGE` | 2.4 | **raised** | see criterion 3; the exact value is selected against it |
@@ -352,26 +352,117 @@ variation**: the hoplomachus' median, which the margin is measured against, was
 itself observed at 2.10, 2.13, 2.19, 2.21, 2.23, 2.25 and 2.26 across these
 runs, a spread of 0.16 at 25–50 seeds.
 
-Two readings, and this spec does not choose between them:
+#### Swept at 200 seeds: the noise reading is refuted, and a third metric defect surfaced
 
-1. **The window is real and the grid is too coarse.** At the gate's own 200
-   seeds the variation shrinks, and a `rootTravel` between 0.80 and 0.95 at a
-   1.6 floor may land inside. This is resolvable by sweeping, and costs a plan
-   task.
-2. **The 0.20 margin is the wrong number.** It is authored — by me, admittedly
-   without a basis, as this spec already concedes above — and it is of the same
-   magnitude as the noise in the quantity it constrains. A margin whose job is
-   to make an ordering meaningful should be derived from that quantity's
-   measured variability at the seed count the gate runs at, not chosen. On that
-   basis it would be roughly 0.10, which every floor-aligned row clears.
+The conflict above was first observed at 25–50 seeds, where one available
+reading was that the admissible window is real and the measurement merely too
+coarse. That reading was tested — `rootTravel` 0.80, 0.85, 0.90 and 0.95 at a
+1.6 floor, 200 seeds each — and **it does not hold**. The variation collapsed
+and the window did not open:
 
-**Reading 2 is not adopted here.** Lowering a threshold because the work did not
-reach it is exactly what design.md forbids and what this slice's brief forbids,
-and the distinction between "this bar is too hard" and "this bar measures the
-wrong thing" is the one that has to be argued in the open rather than settled by
-whoever is writing at the time. The finding is therefore reported with its
-numbers, and the plan may not proceed past the sweep until it is closed
-explicitly.
+| `rootTravel` | murmillo | retiarius | hoplomachus | upper gap | ≤1.7 pooled | worst matchup |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.80 | 1.60 | 2.07 | 2.19 | +0.12 | 11.1% | 19.8% |
+| 0.85 | 1.60 | 2.04 | 2.19 | +0.14 | 11.5% | 20.9% |
+| 0.90 | 1.60 | 2.03 | 2.16 | +0.14 | 13.1% | 24.7% |
+| 0.95 | 1.60 | 2.00 | 2.15 | +0.16 | 14.6% | **27.3%** |
+
+The murmillo measures exactly 1.60 in all five runs and the hoplomachus spans
+2.15–2.22, so the spread is roughly half what it was at 50 seeds and the gap
+still tops out at 0.16 — while the run that comes closest is the one whose
+worst-matchup distribution has already failed.
+
+**Why the margin will not open, and the defect it exposes.** Broken out by
+matchup, the hoplomachus' committed median is **2.10 in `technical vs heavy`
+and 2.10 in `technical vs technical`, identical to the last digit in every
+run** — those matchups contain no `fast` and are bit-identical, which doubles
+as a determinism check. The only part that moves is `technical vs fast`, from
+2.62 to 2.45. So the hoplomachus' *pooled* median falls because the retiarius'
+behaviour changed, which means:
+
+> **Criterion 1 as written compares two numbers that are not independent.** The
+> retiarius' pooled median and the hoplomachus' pooled median are each partly a
+> measurement of the same `fast`-vs-`technical` encounters, so the margin
+> between them is structurally compressed by the very change being judged.
+
+That is the third measurement defect this spec has had to correct in its own
+criteria, after the evade inclusion and the floor-width contamination, and it
+is the same family: a statistic that silently depends on the thing it is
+supposed to judge.
+
+**The clean comparison, and what it shows.** Comparing the two long types
+against a *common third opponent* — the murmillo, whose own behaviour is
+unchanged — removes the coupling entirely:
+
+| against the murmillo | committed median | ≤1.7 |
+|---|---:|---:|
+| retiarius (all four `rootTravel` values) | **1.95** | 7.3–9.7% |
+| hoplomachus (all five runs) | **2.10** | 15.9% |
+
+The retiarius' figure is 1.95 in every candidate run — the margin is not noisy,
+it is *stably* 0.15, and no amount of root travel moves it. **At a reach of 2.70
+the 0.20 margin is unreachable**, and that is now measured rather than inferred.
+
+But the same table shows headroom on the other axis: against the murmillo the
+retiarius is at 7.3–9.7% where the hoplomachus is at 15.9%, i.e. roughly twice
+the margin criterion 2 requires. That pointed at a lever the sweep had not
+touched — **lowering the reach rather than the root travel** — trading
+distribution headroom for ordering margin, in the direction that has room. It
+was measured, at 200 seeds, holding `rootTravel` at 0.80 and the floor at 1.6:
+
+| lunge reach | retiarius vs murmillo | ≤1.7 vs murmillo | pooled gap | worst matchup |
+|---:|---:|---:|---:|---:|
+| 2.70 | 1.95 | 8.4% | +0.12 | 19.8% |
+| 2.55 | 1.95 | 9.4% | +0.14 | 20.1% |
+| **2.40** | **1.90** | **6.8%** | +0.15 | 22.4% |
+
+Reach is a weak lever on the clean comparison — a 0.30 cut moves the median by
+0.05 — but 0.05 is what the margin needed. **Against the murmillo, at a reach of
+2.40, the retiarius measures 1.90 and the hoplomachus 2.10: the margin is
+exactly 0.20.** The distribution stays far inside its bar (6.8% against the
+hoplomachus' 15.9%), and the worst matchup is 22.4% against 25%.
+
+### How the conflict closes **[needs sign-off — this is the one judgement call left]**
+
+The conflict resolves **only if criterion 1 is restated on the clean
+comparison** — each type's committed median measured against a common third
+opponent — instead of on pooled medians. On the pooled figures no package
+reaches 0.20, including this one (+0.15).
+
+The argument for restating it is that the pooled comparison is **demonstrably
+invalid**, not merely inconvenient: the two quantities it compares share the
+`fast`-vs-`technical` matchup, so changing the retiarius moves the
+hoplomachus' number too. The evidence is that `technical vs heavy` and
+`technical vs technical` measure 2.10 in every run to the last digit while
+`technical vs fast` moves 2.62 → 2.43. This is the same class of defect as the
+evade inclusion and the floor-width contamination, both of which were corrected
+without controversy.
+
+The argument against is timing, and it should be stated rather than glossed:
+**the comparison was changed after the original one failed.** That is the shape
+of a criterion bent to fit its result, and the fact that the reasoning is sound
+does not by itself distinguish the two — a sound-sounding reason is exactly what
+motivated reasoning produces. What does distinguish them, and is offered as the
+test rather than as reassurance:
+
+- the 0.20 bar itself is **unchanged**, and the package is selected against it;
+- the coupling is a property of the measurement that would have been true had it
+  been noticed first, and it is verifiable independently of any candidate (the
+  bit-identical non-`fast` matchups);
+- the restatement makes the criterion **stricter** in the matchup that matters —
+  against the murmillo the retiarius must beat 2.10, where the pooled version
+  let a soft `fast vs fast` median of 2.12–2.19 carry it.
+
+**This spec does not adopt the restatement on its own authority.** It is the
+one decision left open, and the plan may not proceed past it unresolved.
+
+The remaining alternative reading is unchanged: **that 0.20 is simply the wrong
+number.** It is authored — by me, without a basis, as conceded above. A margin
+whose job is to make an ordering meaningful ought to be derived from that
+quantity's measured variability rather than chosen; on that basis it would be
+roughly 0.10, which every swept row clears. That reading is *not* adopted, for
+the reason design.md gives: lowering a threshold because the work did not reach
+it is the failure this project has a documented history of.
 
 **Rejected wordings, and why** — this repo caught three "assertions that cannot
 fail" in the last slice alone, and all three shapes were available here:
@@ -662,13 +753,17 @@ change, so the feature diff is judged by a boundary it did not write.
 Stated plainly, because two of five fail and a spec that buries that is worse
 than one that has not measured at all.
 
-| gate | proposed package (`1.6–2.70`, `rootTravel` 0.80) | verdict |
+All figures at 200 seeds, package `fast-slash` 0.9–2.05, `fast-burst-lunge`
+1.60–2.40, `rootTravel` 0.80, `startMaxRange` 4.0.
+
+| gate | measured | verdict |
 |---|---|---|
-| 1. reach ordering, margins ≥0.20 | +0.47 / **+0.13** | ✘ **fails** — and see the measured conflict with gate 2 |
-| 2. distribution ≤15% pooled, ≤25% per matchup | 10.7% / worst 19.6% | ✔ passes |
-| 3. forced disengage ≤5% immediate, median ≥24 | **25.3%**, median **10** | ✘ **fails** — fix identified, unmeasured |
-| 3b. parry → counter ≥90% | 95.4% | ✔ passes |
-| 4. geometry failures ≤ hoplomachus' | 41.3% vs 46.7% | ✔ provisionally |
+| 1. reach ordering, margins ≥0.20 — **clean comparison** | vs murmillo: retiarius 1.90, hoplomachus 2.10 → **+0.20** | ✔ **only if the restatement above is accepted**; exactly at the bar |
+| 1. same, on pooled medians | +0.42 / **+0.15** | ✘ fails — and is the comparison shown to be invalid |
+| 2. distribution ≤15% pooled, ≤25% per matchup | 12.5% pooled, worst 22.4%, vs murmillo 6.8% | ✔ passes |
+| 3. forced disengage ≤5% immediate, median ≥24 | **23.5%**, median **11** | ✘ **fails** — fix identified, unmeasured |
+| 3b. parry → counter ≥90% | 96.6% | ✔ passes |
+| 4. geometry failures ≤ hoplomachus' | 43.9% vs 46.7% | ✔ thin |
 | 5. balance bands unchanged | `heavy > fast` ~92% vs band 55–75% | ✘ **the balance task's entire job** |
 | 6. camera unretuned | unmeasured | — pending |
 
