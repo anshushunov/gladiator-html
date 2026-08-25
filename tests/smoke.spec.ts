@@ -41,6 +41,14 @@ async function finishActiveBout(page: import('@playwright/test').Page) {
 
 async function startSeededFirstBout(page: import('@playwright/test').Page) {
   await page.goto('/?seed=20260815&snapshot')
+  // `page.goto` resolves on `load`, which does not guarantee the app has
+  // installed `window.__GLADIATOR_TEST__`: `main.ts` assigns it inside an
+  // `import.meta.env.DEV` block at the end of its own module evaluation, and
+  // under a loaded machine the next line has been observed running first and
+  // failing with `TypeError: Cannot read properties of undefined (reading
+  // 'startNextSeries')`. A timeout cannot fix a `TypeError`; waiting for the
+  // surface can.
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
@@ -951,5 +959,39 @@ test('a production build ignores ?snapshot and never starts a real session pause
 
     const canvas = page.locator('canvas')
     await expect.poll(async () => Number(await canvas.getAttribute('data-last-event-id'))).toBeGreaterThan(0)
+
+    // Same guarantee for the 2026-08-23 readable-gladiator-types slice's
+    // review toggle (`src/presentation/legibilityMode.ts`). `?legibility=` is
+    // read in exactly one place, inside `main.ts`'s `import.meta.env.DEV`
+    // guard, and every one of the three owners funnels its mode through
+    // `effectiveLegibilityMode`, which is `import.meta.env.DEV`-gated in turn
+    // -- so a production build must resolve the shipped configuration however
+    // the URL is spelled.
+    //
+    // `baseline` is the strongest probe of the three flags at once: it turns
+    // ALL of them off, and the labels are the only one of the three with a
+    // string a test can see without WebGL. A production build that honoured it
+    // would put `Heavy`/`Fast`/`Technical` back on the planning screen -- the
+    // exact vocabulary `tests/legibility.spec.ts` forbids on every player-
+    // facing surface. Until this assertion existed the dev-only guarantee
+    // rested on grepping the emitted bundle by hand, which pins nothing
+    // against regression.
+    //
+    // Folded into this test rather than added as its own so the suite's
+    // pass/fail count does not move, and because it needs the same production
+    // preview server, which is expensive to start.
+    await page.goto(`${baseUrl}/?seed=20260815&legibility=baseline`)
+    await page.getByTestId('start-series').click()
+    await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
+    const planningText = await page.locator('body').innerText()
+    expect(planningText, 'a production build must name gladiators by type whatever ?legibility= says').toMatch(
+      /Murmillo|Retiarius|Hoplomachus/i,
+    )
+    for (const mechanicsId of ['Heavy', 'Fast', 'Technical']) {
+      expect(
+        planningText,
+        `a production build must not restore the superseded "${mechanicsId}" label via ?legibility=`,
+      ).not.toMatch(new RegExp(`\\b${mechanicsId}\\b`, 'i'))
+    }
   })
 })

@@ -16,20 +16,26 @@ passing as of this commit -- but passing those does not satisfy this gate.
 Only a completed version of this document, filled in by actual reviewers, can
 close Step 5.
 
-What *is* prepared: `npm run review:clips` records the whole material set from
-a fixed seed in one command (see below), so the two reviewers watch identical
-bouts and neither has to assemble anything by hand.
+What *is* prepared: `npm run review:clips` and `npm run review:stills` record
+the whole material set from a fixed seed (see below), so the two reviewers
+watch identical bouts and judge identical stills, and neither has to assemble
+anything by hand. As of the 2026-08-23 readable-gladiator-types slice that
+material comes in **five configurations** behind dev-only runtime toggles, so
+that a pass or a failure can be attributed to one of the slice's three changes
+rather than to all of them at once — see "The five configurations" below.
 
 ## Producing the material
 
 ```bash
-npm run review:clips
+npm run review:clips                            # -> docs/reviews/clips/everything/
+npm run review:clips -- --config=baseline       # ...and the other four
+npm run review:stills                           # -> docs/reviews/clips/blinded-stills/
 ```
 
-Records everything below into `docs/reviews/clips/` (gitignored -- it is review
-material, not an artifact) from a fixed seed, and writes a `README.md` there
-listing every clip with its pairing, its pre-roll offset, and the event trace
-behind it:
+Records everything below into `docs/reviews/clips/<configuration>/` (gitignored
+-- it is review material, not an artifact) from a fixed seed, and writes a
+`README.md` there listing every clip with its pairing, its pre-roll offset, and
+the event trace behind it:
 
 - the nine `×1` pairing bouts, one video each;
 - three of them repeated with the HP cards and battle feed hidden (one per home
@@ -51,7 +57,61 @@ Reproducing an exact moment by hand uses the same two parameters the e2e suite
 uses: `?seed=<n>` fixes the series (the same seed always produces the same
 three bouts), and `?snapshot` starts the runtime **paused** so nothing advances
 until `__GLADIATOR_TEST__.advanceTicks(n)` is called. See
-`docs/reviews/clips/README.md` for the console recipe.
+`docs/reviews/clips/<configuration>/README.md` for the console recipe.
+
+## The five configurations, and the question each one answers
+
+*(Added by the 2026-08-23 readable-gladiator-types slice. This section is the
+reason the gate can be re-run at all: without it a second failure would say
+nothing about which change failed.)*
+
+That slice changed three things at once — the names on screen, the camera's
+extent→distance mapping, and the fighters' equipment — and all three aim at the
+same question. A single pass or a single failure would therefore be
+unattributable. So **one frozen trace is recorded five ways**, behind
+dev-only runtime toggles (`src/presentation/legibilityMode.ts`, reachable only
+via `?legibility=<name>` under `import.meta.env.DEV`; a production build
+resolves the shipped configuration whatever the URL says):
+
+| `--config=` | labels | camera | silhouettes | the question it answers |
+|---|---|---|---|---|
+| `baseline` | — | — | — | what the failed 2026-08-23 pass actually saw |
+| `labels-only` | ✔ | — | — | how much of any gain is just having a name to check against |
+| `camera-only` | — | ✔ | — | how much is just seeing the fighters bigger |
+| `silhouettes-only` | — | — | ✔ | how much is the kits, with no name and no extra pixels |
+| `everything` | ✔ | ✔ | ✔ | what ships |
+
+Nothing about the recording changes between them: same seed, same lineups, same
+bouts, same event traces — none of the five touches simulation, and the
+allowlist gate (`npm run check:allowlist`) proves it.
+
+**The one subtlety that makes `camera-only` honest.** A fighter's
+`horizontalEquipmentRadius` is derived from his equipment and is the *camera's*
+own framing input. If turning the silhouettes off also reverted that radius,
+then `camera-only` would be running the shipped mapping over the old radii —
+a camera that has never shipped — and the comparison would be worthless. So the
+framing radius **always** comes from the final props in all five
+configurations; only the drawn geometry follows the flag. Asserted per
+configuration in `src/presentation/legibilityMode.test.ts`.
+
+The first draft of the design spec proposed recording from two *commits*
+instead. That is the same trap, and it is why this is a runtime toggle.
+
+### What to record, and in what order
+
+The full five-configuration set is thirteen clips five times over and runs
+about an hour of real time. Unless there is a reason to want all of it, record
+the three HUD-hidden pairings per configuration — those are the clips this gate
+is scored on:
+
+```bash
+for c in baseline labels-only camera-only silhouettes-only everything; do
+  for n in 1 4 7; do npm run review:clips -- --config=$c --only=$n; done
+done
+```
+
+Show the configurations to a reviewer in a **randomised order**, not in the
+table's order, and do not tell them which is which.
 
 ## What reviewers need to watch
 
@@ -94,7 +154,178 @@ Per design.md's "Human review gate" section:
 
 At least **two** reviewers who did not implement the combat watch three
 representative `×1` clips with HP cards/feed hidden; at least **one**
-reviewer begins without being taught the style rules.
+reviewer begins without being taught the style rules. Neither may be the person
+who implemented the slice, and the person who scores the blinded stills below
+must not be that person either.
+
+## The two questions are run separately, with the HUD in different states
+
+*(2026-08-23 readable-gladiator-types slice. Running them together is how the
+2026-08-23 informal pass ended up unable to separate "I recognised the type"
+from "I read the type off the card".)*
+
+1. **The silhouette question — HUD and type labels HIDDEN.** Answered from the
+   blinded stills below, not from the clips. Nothing in the material names a
+   type; the sides are randomised; the answer key is in a different directory.
+   Scored as a confusion matrix against a pre-committed bar.
+2. **The winner-explanation question — HUD and type labels RESTORED.** Answered
+   from the ordinary `×1` clips with the HP cards and feed visible. Explaining
+   *why* someone won legitimately needs to know who is who and how much health
+   they had; hiding the HUD for this question would test memory, not
+   legibility.
+
+Do question 1 first, and completely, before showing anyone a labelled clip.
+
+## Blinded silhouette stills (the confusion matrix)
+
+```bash
+npm run review:stills                              # -> .../blinded-stills/everything/
+npm run review:stills -- --config=camera-only      # the comparison set
+```
+
+**Record two configurations here, not five** — `everything` and `camera-only`.
+The other three cannot contribute anything, for two different reasons, both
+measured rather than assumed:
+
+- `labels-only` vs `baseline` produce **byte-identical images**. These stills
+  carry no text at all (HUD hidden, canvas-only crop), so the naming change is
+  invisible here by construction.
+- `baseline` and `silhouettes-only` **cannot be recorded**. Both run the
+  superseded camera, which frames from 11 world units instead of 8.81, so
+  everything is ~20% smaller and the two fighters sit closer together in
+  pixels — and a still is only usable if the opponent falls entirely outside
+  the fixed 280×320 crop window. Measured: 12 usable stills out of 48 for
+  `baseline`, 23 for `silhouettes-only`, with whole type/side groups at zero.
+  Widening the window makes it worse; scaling the window with the framing
+  distance would normalise away the very difference being attributed.
+
+`camera-only` and `everything` run the **same** camera and differ only in the
+kits, so the pair isolates the silhouette change exactly. Both fill all 48.
+The labels and the camera are attributed from the clips instead, where text is
+on screen and absolute scale is preserved.
+
+Writes to `docs/reviews/clips/blinded-stills/<config>/`:
+
+- **48 stills**: 8 per type per side (Murmillo / Retiarius / Hoplomachus ×
+  home / away), two at each of four yaw angles, each cropped from a real bout
+  at the shipped framing distance with the HUD and every DOM label hidden;
+- each in **five renderings** — `monochrome/` (the scored set: hue removed,
+  exposure lifted and contrast pushed, so only shape and value survive),
+  `greyscale/`, and the three colour-vision simulations `protanopia/`,
+  `deuteranopia/`, `tritanopia/`;
+- a `README.md` with the reviewer instructions and the pass bar, and a blank
+  `scoring-sheet.csv`.
+
+**The answer key is not in that directory.** It is written to
+`docs/reviews/clips/blinded-stills-answer-key/<config>/`, a sibling of
+`blinded-stills/`, not a child. Give a reviewer the stills directory and there
+is nothing in it — no file, no filename, no ordering — that tells them what
+they are looking at: every image is `still-NN.png` and `NN` runs in a seeded
+shuffle of the whole set, which randomises the two sides along with the three
+types. Whoever hands the material out keeps the key and scores the sheet
+afterwards; per the design spec, that person is not the implementer.
+
+Every still is a **single** fighter: the recorder only keeps frames where the
+fixed 280×320 crop window contains no part of the opponent, and the window is
+the same size for every still so its dimensions cannot leak the kit's extent.
+
+### Pass bar — pre-committed, and not adjustable afterwards
+
+```text
+type accuracy = correct type identifications / stills judged
+pass = >= 80% correct overall AND >= 70% correct for each of the three types
+```
+
+Both numbers were fixed before any still was looked at, and are written into
+the stills' own `README.md` at recording time so they travel with the material.
+If a result misses either bar that is a finding about the fighters, not about
+the bar. The design spec already names the next step for the known worst case
+(Retiarius' trident versus Hoplomachus' spear): reach for the net and the
+missing helmet, or re-open the type choice — explicitly **not** weaken the
+test.
+
+### Confusion-matrix procedure
+
+1. Each reviewer fills in `scoring-sheet.csv` in file order, one of `Murmillo`,
+   `Retiarius`, `Hoplomachus` per still. No blanks — guessing is data.
+2. No going back to change an earlier answer after seeing a later still.
+3. The scorer joins the sheet to `answer-key.csv` on the `still` column and
+   tabulates a 3×3 matrix: rows = the true type, columns = the answer.
+4. Overall accuracy is the trace divided by 48. Per-type accuracy is each row's
+   diagonal divided by that row's total (16).
+5. Record both the matrix and the two accuracies in the table below, per
+   reviewer, per configuration.
+6. The off-diagonal cells are the actionable part: which pair is confused, and
+   in which direction.
+
+### Known limitation of this material, recorded before anyone judges it
+
+**Every still is a profile: a front or back view is unreachable in a
+single-fighter still at the shipped framing.** Two separate things make that
+so, and only the first is a property of the game:
+
+1. The arena camera yaws to keep the fighters' own axis across the frame, and a
+   gladiator always faces his opponent (a disengaging fighter never turns his
+   back — the design spec's own constraint). Facing your opponent while your
+   opponent is across the frame means being seen from the side. Profile is
+   therefore the overwhelming majority case by construction.
+2. The recorder's own crop filter removes what is left. A fighter presents his
+   front or back exactly when the pair axis points at the camera — which is
+   when the two fighters overlap on screen. At roughly 80 px per world unit and
+   ~145 px of body height, clearing the fixed 280×320 crop window needs about
+   5 world units of depth between them, which a pair fighting 2.5 apart never
+   reaches. Those frames exist; they are just not usable for a one-fighter
+   still.
+
+The sweep's numbers cannot separate the two causes, and should not be read as
+if they could. Over 918 clean candidate frames across all nine pairings at seed
+20260815, every home fighter's presented facing fell between 60° and 120° and
+every away fighter's between 240° and 300°, with nothing outside — but that
+population is measured **after** the crop filter, so it is equally consistent
+with "the game never produces those facings" and with "the filter removed
+them". `src/presentation/ArenaCamera.ts`'s own header (1.5% of ticks beyond 30°
+of framing error) says the second is at least partly true.
+
+So the "four yaw angles" are four quartiles of each fighter's own deviation
+from pure profile — a spread of tens of degrees, not a front/side/back sweep.
+That is the right material (it is what a player will actually see in a fight)
+but it narrows what the confusion matrix can claim: it measures whether the
+three types are separable **in profile at the shipped framing**, and nothing
+wider. In particular it does **not** establish anything about how the types
+read from the front or the back; if that question matters, it needs different
+material than a bout can produce. The per-still deviation in degrees is in the
+answer key (`profile_deviation_degrees`) if a later analysis wants to check
+whether accuracy varies with it.
+
+## Rubric for "a plausible winner explanation" — written before viewing
+
+*(2026-08-23 readable-gladiator-types slice, per the design spec: "the rubric
+for 'plausible explanation' is written before viewing, and answers are coded by
+someone other than the implementer". Nothing below may be edited after the
+first clip is watched.)*
+
+After each of the three representative clips the reviewer answers, in their own
+words and in one or two sentences: **"Why did that one win?"** The scorer codes
+the answer **plausible** if it satisfies *both*:
+
+- **(a) It names a cause the trace supports.** At least one of: a damage or HP
+  advantage that the feed/HP cards actually showed; a reach or spacing
+  advantage the fighters actually had; a repeated exchange that actually went
+  one way; a stagger, a missed attack, or a declined defence that actually
+  happened; a bout that actually ran to the time limit rather than to a defeat.
+- **(b) It does not assert anything the trace contradicts.** Naming the wrong
+  winner, an attack type nobody used, an outcome that did not occur, or a rule
+  the game does not have all make it implausible regardless of (a).
+
+Coded **implausible** if it satisfies neither, or if it is a non-answer
+("dunno", "the red one just seemed better" with nothing behind it). Coded
+**implausible** but recorded separately if it is *correct by the counter
+triangle alone* ("Murmillo beats Retiarius") with no on-screen event cited:
+that is reading the rules card, not the fight.
+
+The scorer checks (a) and (b) against `traces/<clip>.json`, which is the
+complete event log of exactly that bout. The reviewer writes their answer down
+**before** the trace is opened.
 
 ## Exchange-labelling method
 
@@ -148,6 +379,69 @@ that reviewer's clips.)*
 |---|---|---|---|---|
 | | | | | |
 | | | | | |
+
+## Blinded silhouette confusion matrix
+
+*(Every cell intentionally empty. One block per reviewer per configuration —
+and the only two configurations recorded as stills are `everything` and
+`camera-only`. "True" is the row, "answered" is the column; 16 stills per row.
+The pass bar is judged on `everything`; `camera-only` exists to attribute the
+difference to the kits.)*
+
+| Reviewer alias | Configuration | True type | Answered Murmillo | Answered Retiarius | Answered Hoplomachus | Row accuracy | >= 70%? |
+|---|---|---|---|---|---|---|---|
+| | | Murmillo | | | | | |
+| | | Retiarius | | | | | |
+| | | Hoplomachus | | | | | |
+| | | Murmillo | | | | | |
+| | | Retiarius | | | | | |
+| | | Hoplomachus | | | | | |
+
+| Reviewer alias | Configuration | Stills judged | Correct | Overall accuracy | >= 80%? |
+|---|---|---|---|---|---|
+| | | | | | |
+| | | | | | |
+
+### Attribution across the five configurations
+
+*(Filled in once the matrices above exist. This is the table the whole
+five-configuration exercise is for: it is what says which of the three changes
+moved the number.)*
+
+**The stills attribute one of the three changes, not three** — see "Record two
+configurations here, not five" above for why the other two are unmeasurable in
+this exercise (no text in a still; no absolute scale in a crop, and the wider
+camera cannot yield clean single-fighter crops at all).
+
+| Configuration | Overall accuracy | Delta | What the delta attributes |
+|---|---|---|---|
+| `camera-only` (superseded kits, shipped camera) | | — | — |
+| `everything` (final kits, shipped camera) | | | **the silhouette change, alone** |
+
+Same camera in both rows, so the delta is the kits and nothing else. This is
+the number the slice's silhouette work lives or dies by, and it is the one the
+five-configuration design exists to make readable.
+
+**Labels and camera are attributed from the clips**, not from this table. Use
+the style-identification and winner-explanation results below, recorded per
+configuration:
+
+| Configuration | Types identified after one clip each | Winner explanation plausible (of 3) | What it attributes |
+|---|---|---|---|
+| `baseline` | | | — |
+| `labels-only` | | | the naming change |
+| `camera-only` | | | the framing change |
+| `silhouettes-only` | | | the kits |
+| `everything` | | | all three, plus interactions |
+
+### Colour-vision and greyscale variants (not scored, recorded separately)
+
+| Reviewer alias | Variant | Any type harder to pick out than in monochrome? | Notes |
+|---|---|---|---|
+| | `greyscale` | | |
+| | `protanopia` | | |
+| | `deuteranopia` | | |
+| | `tritanopia` | | |
 
 ## Style identification (one clip each, all three styles)
 
@@ -212,11 +506,17 @@ for the industry material gathered alongside this pass.
 ## Overall gate result
 
 **Not yet run** as a formal two-reviewer pass; one informal single-reviewer
-pass on 2026-08-23 returned a negative result (above). Per the pass calculation
-above, this gate passes only when
-every reviewer's exchange accuracy is `>= 75%`, all three styles were
-identified after one clip each, and a plausible winner explanation was given
-for all three representative clips. None of that has been evaluated yet --
+pass on 2026-08-23 returned a negative result (above). Per the pass
+calculations above, this gate passes only when
+
+- every reviewer's exchange accuracy is `>= 75%`,
+- the blinded silhouette confusion matrix is `>= 80%` overall **and** `>= 70%`
+  for each of the three types, in the `everything` configuration,
+- all three types were identified after one clip each, and
+- a plausible winner explanation (by the rubric above, coded by someone other
+  than the implementer) was given for all three representative clips.
+
+None of that has been evaluated yet --
 this section will be filled in with the actual computed result, and the
 anonymized counts/failure notes above, once real reviewers complete the
 process described in design.md's "Human review gate" section.

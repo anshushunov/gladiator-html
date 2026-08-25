@@ -10,10 +10,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # `scripts/check-allowlist.sh` diffs against the merge base, and
+          # `git merge-base` needs both branches' history. The default
+          # checkout is a depth-1 clone of the merge commit alone, where
+          # `merge-base` simply fails.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
+      # The slice allowlist, enforced -- the design spec's "CI asserts the
+      # allowlist: a diff touching those paths fails the slice". Before this it
+      # was a script nothing ran: `npm run check` is `test && build && test:e2e`
+      # and `check:allowlist` sat beside it, unreferenced by any job. First
+      # step in the job on purpose, because it is the cheapest one and because
+      # a diff that has escaped the slice should not be reported as a test
+      # failure ten minutes later.
+      #
+      # `github.event.pull_request.base.sha` rather than `origin/main`: on a
+      # pull request that is exactly the base the diff is proposed against, and
+      # it stays correct for a PR targeting something other than `main`. On a
+      # push to `main` there is no merge base to speak of (the branch has
+      # already landed), so the step is skipped rather than made to compare
+      # against itself.
+      - name: allowlist
+        if: github.event_name == 'pull_request'
+        run: bash scripts/check-allowlist.sh "${{ github.event.pull_request.base.sha }}"
+
       - run: npm ci
       - run: npm test
       - run: npm run build

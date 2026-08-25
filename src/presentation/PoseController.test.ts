@@ -593,6 +593,68 @@ describe('PoseController weapon-arm IK', () => {
     fighter.dispose()
   })
 
+  // The solver is *gated*, not merely clamped: outside the cosmetic reach cap
+  // it returns `{}` and the authored pose wins untouched. That cap is derived
+  // from the rig's own authored shoulder-to-`weaponTip` reach, so anything
+  // that moves the weapon tip -- `weaponLength`, `weaponForwardBias`, the
+  // authored thrust pose, an arm bone length -- moves the boundary and
+  // re-animates every strike that crosses it, in both directions: strikes
+  // that used to keep their authored arm now bend toward the target, and
+  // `|elbow -> tip|` changes the elbow angle of the ones that already bent.
+  // Task 3 moved it once (the tip anchor now sits at the weapon's real point
+  // rather than at 0.707 of its length) and nothing failed, which is why this
+  // test exists: the bracket below is deliberately tight, and a change that
+  // shifts the boundary is meant to fail here and be re-ratified on purpose.
+  //
+  // Frozen for the shipped `technical` (Hoplomachus) rig mid-thrust, as the
+  // straight-ahead contact-target distance at which the gate flips. Measured
+  // black-box by bisecting on "did the arm move?", so this pins observable
+  // behaviour and mirrors no internal constant.
+  const IK_ENGAGES_AT_DISTANCE = 1.55
+  const IK_SKIPS_AT_DISTANCE = 1.59
+
+  it('gates the weapon-arm IK at a frozen reach boundary rather than easing across it', () => {
+    const controller = new PoseController()
+    const fighter = createProceduralFighter({ archetype: 'technical' })
+    const current = baseFighterState('technical', { action: contactAction('technical-thrust', 20), position: { x: 0, z: 0 }, facing: { x: 0, z: 1 } })
+
+    const withoutIk = controller.apply(makeInput({ current, currentTick: 21, alpha: 0 }), fighter)
+    const authoredArm = JSON.stringify([withoutIk.pose['upperArm.R'], withoutIk.pose['forearm.R']])
+
+    // Engaged == the solve returned something: the weapon arm no longer holds
+    // exactly the authored rotations. A skipped solve returns `{}`, so the
+    // authored pose survives byte-identical.
+    const ikEngagesAt = (distance: number): boolean => {
+      const sample = controller.apply(
+        makeInput({ current, currentTick: 21, alpha: 0, reaction: { contactTarget: { x: 0, z: distance } } }),
+        fighter,
+      )
+      return JSON.stringify([sample.pose['upperArm.R'], sample.pose['forearm.R']]) !== authoredArm
+    }
+
+    // The two frozen distances straddle the gate.
+    expect(ikEngagesAt(IK_ENGAGES_AT_DISTANCE), `IK should still engage at ${IK_ENGAGES_AT_DISTANCE}`).toBe(true)
+    expect(ikEngagesAt(IK_SKIPS_AT_DISTANCE), `IK should already be skipped at ${IK_SKIPS_AT_DISTANCE}`).toBe(false)
+
+    // And the real boundary is between them, not merely somewhere outside the
+    // pair -- bisected so that a boundary that drifts anywhere out of this
+    // 0.04-unit window fails with the number it drifted to.
+    let engaged = 0.5
+    let skipped = 6
+    expect(ikEngagesAt(engaged)).toBe(true)
+    expect(ikEngagesAt(skipped)).toBe(false)
+    for (let i = 0; i < 40; i += 1) {
+      const middle = (engaged + skipped) / 2
+      if (ikEngagesAt(middle)) engaged = middle
+      else skipped = middle
+    }
+    const boundary = (engaged + skipped) / 2
+    expect(boundary, 'weapon-arm IK reach boundary moved').toBeGreaterThan(IK_ENGAGES_AT_DISTANCE)
+    expect(boundary, 'weapon-arm IK reach boundary moved').toBeLessThan(IK_SKIPS_AT_DISTANCE)
+
+    fighter.dispose()
+  })
+
   it('never moves the root and never touches bone lengths (only upperArm.R/forearm.R rotate)', () => {
     const controller = new PoseController()
     const fighter = createProceduralFighter({ archetype: 'technical' })

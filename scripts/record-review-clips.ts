@@ -5,9 +5,24 @@
 // behind every clip so a reviewer can compare their own labels against what
 // actually happened.
 //
-//   npm run review:clips                 # everything, into docs/reviews/clips/
-//   npm run review:clips -- --only=3     # just clip 3, while iterating
-//   npm run review:clips -- --seed=99    # a different series seed
+//   npm run review:clips                              # into docs/reviews/clips/everything/
+//   npm run review:clips -- --config=baseline         # one of the five review configurations
+//   npm run review:clips -- --only=3                  # just clip 3, while iterating
+//   npm run review:clips -- --seed=99                 # a different series seed
+//
+// THE FIVE CONFIGURATIONS. The 2026-08-23 readable-gladiator-types slice
+// changed names, camera and props at once, so a single pass or failure at the
+// gate would not say which change did the work. `--config=<name>` records the
+// SAME frozen trace under one of the five runtime configurations in
+// `src/presentation/legibilityMode.ts` -- `baseline`, `labels-only`,
+// `camera-only`, `silhouettes-only`, `everything` -- into its own
+// `docs/reviews/clips/<config>/` subtree, by appending `?legibility=<name>` to
+// the URL. Nothing else about the recording changes: same seed, same lineups,
+// same bouts, same event traces, because none of the five touches simulation.
+// The full five-configuration set is thirteen clips five times over and takes
+// roughly an hour of real time; see the gate document for the recommended
+// subset (`--only=1`, `--only=4`, `--only=7` -- the three HUD-hidden pairings)
+// when a full pass is not needed.
 //
 // This script only *records*. It makes no judgement, fills in no cell of the
 // review document, and cannot: design.md's gate requires two humans who did
@@ -89,18 +104,48 @@ const HIDE_HUD_CSS = `
   [data-testid="active-home"], [data-testid="active-away"], [data-testid="battle-feed"] { visibility: hidden !important; }
 `
 
+/** The five review configurations, mirrored from
+ * `src/presentation/legibilityMode.ts`. Duplicated rather than imported
+ * because `scripts/` is outside the tsconfig program and this file must run
+ * under `vite-node` without pulling the browser module graph in; the list is
+ * validated against the running app instead -- `openSeries` asserts the app
+ * actually resolved the configuration it was asked for, so a name that drifted
+ * out of sync fails loudly rather than silently recording the shipped build
+ * five times over. */
+const CONFIG_NAMES = ['baseline', 'labels-only', 'camera-only', 'silhouettes-only', 'everything'] as const
+type ConfigName = (typeof CONFIG_NAMES)[number]
+
+/** What each name is supposed to switch on, checked against the running app in
+ * `openSeries` below. */
+const EXPECTED_MODES: Readonly<Record<ConfigName, { labels: boolean; camera: boolean; silhouettes: boolean }>> = {
+  baseline: { labels: false, camera: false, silhouettes: false },
+  'labels-only': { labels: true, camera: false, silhouettes: false },
+  'camera-only': { labels: false, camera: true, silhouettes: false },
+  'silhouettes-only': { labels: false, camera: false, silhouettes: true },
+  everything: { labels: true, camera: true, silhouettes: true },
+}
+
 interface Args {
   seed: number
   outDir: string
+  config: ConfigName
   only?: number
 }
 
 function parseArgs(argv: readonly string[]): Args {
   const get = (name: string) => argv.find((arg) => arg.startsWith(`--${name}=`))?.split('=')[1]
   const only = get('only')
+  const requested = get('config') ?? 'everything'
+  if (!(CONFIG_NAMES as readonly string[]).includes(requested)) {
+    throw new Error(`--config must be one of ${CONFIG_NAMES.join(', ')} (got ${requested})`)
+  }
+  const config = requested as ConfigName
   return {
     seed: Number(get('seed') ?? 20260815),
-    outDir: resolve(get('out') ?? 'docs/reviews/clips'),
+    // Per configuration, so five recordings coexist and a reviewer can put two
+    // of them side by side. `--out` still overrides the root.
+    outDir: resolve(get('out') ?? 'docs/reviews/clips', config),
+    config,
     only: only === undefined ? undefined : Number(only),
   }
 }
@@ -110,6 +155,7 @@ function parseArgs(argv: readonly string[]): Args {
 // declaration: `scripts/` is outside the tsconfig program (no `@types/node`
 // here), and a second global merge would clash with the real one anyway.
 interface TestApi {
+  getLegibilityMode: () => { labels: boolean; camera: boolean; silhouettes: boolean }
   getActiveSeriesState: () => { phase: string; activeBoutIndex: number | null; activeBattle?: { events: readonly unknown[]; encounter: { tick: number } } } | null
   startNextSeries: () => { ok: boolean; reason?: string }
   assign: (fighterId: string, slot: number) => void
@@ -118,10 +164,31 @@ interface TestApi {
   startNextBout: () => void
 }
 
-async function openSeries(context: BrowserContext, seed: number, lineup: readonly [string, string, string], hideHud: boolean): Promise<Page> {
+async function openSeries(
+  context: BrowserContext,
+  seed: number,
+  config: ConfigName,
+  lineup: readonly [string, string, string],
+  hideHud: boolean,
+): Promise<Page> {
   const page = await context.newPage()
-  await page.goto(`http://127.0.0.1:${PORT}/?seed=${seed}`)
+  await page.goto(`http://127.0.0.1:${PORT}/?seed=${seed}&legibility=${config}`)
   await page.waitForFunction(() => Boolean((window as unknown as { __GLADIATOR_TEST__?: unknown }).__GLADIATOR_TEST__))
+
+  // Assert, do not assume. `?legibility=` falls back to the shipped mode
+  // silently for an unknown name (a mistyped review URL should still show the
+  // reviewer the game), which is right for a human and wrong for a recorder:
+  // it would produce five identically-shipped clip sets that look like five
+  // configurations. This is the check that makes that impossible.
+  const resolved = await page.evaluate(() => (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__.getLegibilityMode())
+  const expected = EXPECTED_MODES[config]
+  if (resolved.labels !== expected.labels || resolved.camera !== expected.camera || resolved.silhouettes !== expected.silhouettes) {
+    throw new Error(
+      `The app resolved ${JSON.stringify(resolved)} for --config=${config}, expected ${JSON.stringify(expected)}. ` +
+        'The configuration table here has drifted from src/presentation/legibilityMode.ts.',
+    )
+  }
+
   if (hideHud) await page.addStyleTag({ content: HIDE_HUD_CSS })
   // Task 8 removed the season auto-advance bridge entirely: the app now boots
   // straight onto the season board (`season.phase === 'season-board'`,
@@ -207,9 +274,9 @@ async function main(): Promise<void> {
       await recordSeries(browser, args, videoDir, traceDir, clips)
     }
 
-    await writeFile(resolve(args.outDir, 'manifest.json'), JSON.stringify({ seed: args.seed, viewport: VIEWPORT, clips }, null, 2), 'utf8')
+    await writeFile(resolve(args.outDir, 'manifest.json'), JSON.stringify({ seed: args.seed, configuration: args.config, viewport: VIEWPORT, clips }, null, 2), 'utf8')
     await writeFile(resolve(args.outDir, 'README.md'), renderReadme(args, clips), 'utf8')
-    console.log(`\n${clips.length} clips in ${args.outDir}`)
+    console.log(`\n${clips.length} clips (${args.config}) in ${args.outDir}`)
   } finally {
     await browser.close()
     await server.close()
@@ -229,7 +296,7 @@ async function recordPairing(
 ): Promise<void> {
   const context = await browser.newContext({ viewport: VIEWPORT, recordVideo: { dir: videoDir, size: VIEWPORT } })
   const startedAt = Date.now()
-  const page = await openSeries(context, args.seed, pairing.lineup, hideHud)
+  const page = await openSeries(context, args.seed, args.config, pairing.lineup, hideHud)
   await skipToSlot(page, pairing.slot)
   const preRollMs = Date.now() - startedAt
   const bout = await playBout(page, 1)
@@ -252,7 +319,7 @@ async function recordSeries(
   clips: ClipRecord[],
 ): Promise<void> {
   const context = await browser.newContext({ viewport: VIEWPORT, recordVideo: { dir: videoDir, size: VIEWPORT } })
-  const page = await openSeries(context, args.seed, LINEUPS[0], false)
+  const page = await openSeries(context, args.seed, args.config, LINEUPS[0], false)
   const events: unknown[] = []
   let ticks = 0
   for (let slot = 0; slot < 3; slot += 1) {
@@ -298,7 +365,13 @@ function renderReadme(args: Args, clips: readonly ClipRecord[]): string {
     .map((clip) => `| ${clip.file} | ${clip.label} | x${clip.speed} | ${clip.reviewStartsAtSeconds}s | ${clip.ticks} | ${clip.events} | ${clip.trace} |`)
     .join('\n')
 
-  return `# Human review clips (seed ${args.seed})
+  return `# Human review clips -- ${args.config} (seed ${args.seed})
+
+Recorded with `+'`'+`?legibility=${args.config}`+'`'+`, one of the five review
+configurations in src/presentation/legibilityMode.ts. The other four live in
+sibling directories under docs/reviews/clips/. Every configuration records the
+SAME bouts from the same seed -- none of the five touches simulation -- so two
+configurations differ only in what the reviewer can see.
 
 Generated by \`npm run review:clips\`. Regenerating with the same seed produces
 the same bouts -- the simulation is deterministic, so two reviewers watching

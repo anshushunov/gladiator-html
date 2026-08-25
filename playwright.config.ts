@@ -11,6 +11,22 @@ export default defineConfig({
   // green on the machine that captured it -- `{platform}` gives each OS its
   // own, and `npm run test:e2e:update` on that OS is what authors it.
   snapshotPathTemplate: '{testDir}/__screenshots__/{platform}/{arg}{ext}',
+  // A committed `test.only` silently reduces the whole suite to that one test
+  // and still exits 0 -- the same failure mode as `updateSnapshots` above and
+  // as the rejected project split below: a harness that quietly does not run.
+  // Playwright's own default is `false`, and the usual recipe is
+  // `!!process.env.CI`; unconditional `true` on purpose, because this repo's
+  // gate is `npm run check` on a developer machine at least as often as it is
+  // GitHub Actions, and a protection that only exists on the runner does not
+  // protect the run that actually decides whether work is finished. Focusing
+  // on one test stays available through `-g` and through a file path argument,
+  // neither of which can be committed by accident.
+  forbidOnly: true,
+  // Explicit, and equal to Playwright's default: a retry would let a flaky
+  // screenshot or a flaky trace pass on the second attempt, and this suite's
+  // whole value is that its measurements are deterministic. `workers: 1`
+  // below removes the one source of flakiness that was ever observed here.
+  retries: 0,
   // A test run must never author a baseline. Playwright's own default
   // (`missing`) still writes any absent snapshot straight into
   // `tests/__screenshots__/` on a plain `npm run test:e2e` -- the run reports
@@ -41,11 +57,10 @@ export default defineConfig({
       // Both bounds below were measured on this suite rather than guessed,
       // at the default `threshold` above:
       //
-      //   - a baseline swapped for a different frame of the same bout
-      //     (`heavy-cleave` standing in for `combat-safe-frame`): 9.0% of
-      //     the frame differs -- this is the smallest real regression the
-      //     bar has to catch, since two ticks of one bout look far more
-      //     alike than any accidental change would;
+      //   - the widest same-bout frame swap available -- opening separation
+      //     against a clinch (`heavy-cleave` standing in for
+      //     `combat-safe-frame`): 9.0% of the frame differs (an independent
+      //     re-measurement by a reviewer got 8.0% for the same pair);
       //   - the same frame captured on two different machines running the
       //     same OS and the same Chromium: up to 2.5%. Chromium's software
       //     rasterizer picks SIMD paths from the host CPU, so identical 3D
@@ -54,8 +69,38 @@ export default defineConfig({
       //     the font/AA half of this, not the WebGL half, and no capture
       //     machine can be pinned for every future runner.
       //
-      // 4% sits between them with room on both sides, and is the right bar
-      // for the WebGL captures this config's `threshold` note is about.
+      // 4% was picked to sit between those two on the theory that the 9.0%
+      // pair was the smallest real regression the bar had to catch. That
+      // theory was wrong, and counterexamples existed in the tree when it was
+      // written: 9.0% is the WIDEST frame swap available in this suite, not
+      // the tightest, so the bar was calibrated on it backwards. All figures
+      // below are this same comparator at this same `threshold: 0.2`, as a
+      // ratio of a 1280x820 frame:
+      //
+      //   - against the *old* baselines, same-bout frame swaps the 4% bar
+      //     passed: `fast-burst` vs `heavy-cleave` 1.85%, `technical-parry`
+      //     vs `heavy-cleave` 1.44% -- literally two ticks of one bout;
+      //   - against the baselines committed 2026-08-23 it is worse:
+      //     `technical-parry` vs `heavy-cleave` 1.64%, `fast-burst` vs
+      //     `heavy-cleave` 2.80%, `technical-parry` vs `fast-burst` 3.60%,
+      //     and even `heavy-cleave` vs `combat-safe-frame` -- the same wide
+      //     opening-vs-clinch pairing as the 9.0% figure above -- has fallen
+      //     to 4.71%, barely over;
+      //   - and this was not hypothetical: four baselines that were stale by
+      //     a full slice of behaviour change (new silhouettes, new
+      //     equipment, a re-framed camera) measured only 2.06-3.48%
+      //     new-vs-old and passed this gate untouched -- `heavy-cleave`
+      //     3.48% (36,547 px), `technical-parry` 2.73%, `fast-burst` 2.56%,
+      //     `combat-outcomes` 2.06%. See the README's baseline-review note
+      //     and `task-10-report.md`.
+      //
+      // So no bar in the 2.5-4% band can separate an accidental regression
+      // from an ordinary frame of the same bout for these arena captures --
+      // a per-pixel ratio is not the right instrument here. The correct fix
+      // is a structural comparison (the arena debug snapshot already exposes
+      // projected per-fighter bounds for exactly this purpose), not a
+      // re-tuned ratio, and building that is deliberately left as its own
+      // slice: this comment records that as a known gap, not a missed one.
       //
       // The two DOM-only captures do override it, deliberately and much
       // tighter: `planning.png` (`smoke.spec.ts`) and `season-board.png`
@@ -68,6 +113,36 @@ export default defineConfig({
       maxDiffPixelRatio: 0.04,
     },
   },
+  // One worker, deliberately, and measured rather than assumed.
+  //
+  // `tests/legibility.spec.ts` (the slice's legibility acceptance harness)
+  // drives 45 full bouts, each stepping and rendering 1200-2700 ticks through
+  // Chromium's software rasterizer -- which is itself multi-threaded, so that
+  // one worker saturates every core for 11-13 minutes. Run concurrently, the
+  // other five spec files then blow Playwright's default 30 s per-test timeout
+  // while nothing has regressed, and `npm run check` (a bare `playwright test`)
+  // becomes a coin flip. Measured on a 16-core machine, same commit:
+  //
+  //   default workers  ->  3 deliberate failures + 7 spurious timeouts, 14.6 min
+  //   default workers  ->  3 deliberate failures + 2 spurious timeouts, 13.4 min
+  //   workers: 1       ->  3 deliberate failures, nothing else,         12.5 min
+  //
+  // So serialising is both cleaner AND faster on the gate path: the heavy file
+  // dominates the wall clock either way, and the five fast files cost ~1 min of
+  // it. The price is paid by single-file runs of the fast specs, which lose
+  // their own parallelism (~1 min -> ~3 min); `--workers=8` on the command line
+  // overrides this for that case, and cannot make the full run flaky because
+  // the full run is what this setting is for.
+  //
+  // A two-project split (`legibility` with `dependencies: ['chromium']`) was
+  // tried first and REJECTED on evidence: Playwright skips a dependent project
+  // when its dependency has any failure, and this suite deliberately carries
+  // three stale screenshot baselines until Task 10 regenerates them, so the
+  // whole 47-test acceptance set reported `1 did not run` instead of running.
+  // A harness that silently does not run is the exact defect it exists to
+  // catch. (Dependency projects also ignore `--grep`, so every `-g` run of one
+  // legibility test would first replay the entire fast suite.)
+  workers: 1,
   projects: [
     {
       name: 'chromium',

@@ -232,9 +232,12 @@ test('names the order each recorded bout was fought under on the season summary'
   await expect(bouts.nth(1)).toContainText('Order: Standard.')
   await expect(bouts.nth(2)).toContainText('Order: Guarded.')
   // Row identity, so the three assertions above cannot be read off the wrong
-  // bouts if the summary is ever reordered.
-  await expect(bouts.nth(0)).toContainText('Brutus vs Drusus')
-  await expect(bouts.nth(2)).toContainText('Nerva vs Magnus')
+  // bouts if the summary is ever reordered. Includes each fighter's type
+  // (`Name (Type)`, added to the season summary in Task 2's fix round) so
+  // this still matches the literal rendered text rather than a substring
+  // the rename made stale.
+  await expect(bouts.nth(0)).toContainText('Brutus (Murmillo) vs Drusus (Retiarius)')
+  await expect(bouts.nth(2)).toContainText('Nerva (Hoplomachus) vs Magnus (Murmillo)')
 })
 
 test('keeps a gladiator driven to broken off the roster, says why on the planning screen, and still lets the player confirm the short lineup', async ({ page }) => {
@@ -372,6 +375,59 @@ test('forfeits a slot when fewer than three gladiators are fit to fight, and the
   await expect(bouts).toHaveCount(9)
   await expect(bouts.filter({ hasText: 'forfeited' })).toHaveCount(1)
   await expect(bouts.filter({ hasText: 'forfeited' })).toContainText('Magnus')
+})
+
+test('the between-bouts screen names the forfeited slot\'s opponent by gladiator type', async ({ page }) => {
+  // Final-review fix #5. The between-bouts interstitial is the one phase that
+  // renders no fighter card at all, so its two text lines carry the whole of
+  // its type vocabulary (design spec acceptance #1: "every fighter is named by
+  // type"). Its forfeit branch named neither man nor type -- it read "Bout II:
+  // forfeited, no fighter available." -- while the series summary and the
+  // season summary both named the opponent and his type for the same
+  // `BoutOutcome`.
+  //
+  // Reaching that branch needs a forfeit that is NOT the last slot, which is
+  // why `tests/season.spec.ts`'s existing forfeit test does not cover it:
+  // `series.ts`'s `advancePastForfeits` walks forward from the bout that just
+  // ended, so a trailing forfeit takes the series straight to `summary` and is
+  // only ever seen on a summary screen. With slots 0 and 2 filled and slot 1
+  // left empty, bout 0 finishing records the forfeit for slot 1 and STOPS in
+  // `between-bouts` with that forfeit as the latest result -- exactly the state
+  // a real player sits in, looking at the button that starts bout 2.
+  await page.goto('/?seed=20260815&snapshot')
+  await breakTheThreeVeterans(page)
+
+  await page.evaluate(() => {
+    const test = (window as unknown as { __GLADIATOR_TEST__: TestApi }).__GLADIATOR_TEST__
+    test.startNextSeries()
+    // `requiredAssignmentCount` is `min(3, fightable)` = 2 here, so this is a
+    // complete lineup -- with the gap in the MIDDLE rather than at the end.
+    test.assign('vitus', 0)
+    test.assign('sura', 2)
+    test.confirm()
+    test.advanceTicks(20_000)
+  })
+
+  const series = await getActiveSeriesState(page)
+  expect(series!.phase).toBe('between-bouts')
+  expect(series!.results.map(formatOutcome)).toEqual([
+    'vitus vs drusus: away',
+    'forfeit vs cassius (slot 1)',
+  ])
+
+  // Cassius is challenge 3's slot-1 opponent and a Hoplomachus. Both halves
+  // asserted: the man, and his type.
+  const resultLine = page.getByTestId('bout-result-summary')
+  await expect(resultLine).toContainText('forfeited')
+  await expect(resultLine).toContainText('Cassius')
+  await expect(resultLine).toContainText(/Murmillo|Retiarius|Hoplomachus/)
+
+  // And the phase's other line still names both fighters of the bout that is
+  // actually coming next, so the fix did not trade one typeless line for
+  // another.
+  const nextLine = page.getByTestId('next-matchup')
+  await expect(nextLine).toContainText('Sura')
+  await expect(nextLine).toContainText('Magnus')
 })
 
 test('matches the stable season-board snapshot', async ({ page }) => {
