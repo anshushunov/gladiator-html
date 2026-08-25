@@ -217,9 +217,19 @@ describe('ArenaCamera', () => {
   })
 
   // Task 6. The defect these replace: `clamp(8.5 + 0.8 x extent, 11, 18)` put a
-  // close-quarters exchange at 11 world units, which measured 50-90 px of body
-  // on a 518 px canvas. The band is now framed at one flat distance, chosen by
-  // sweeping 7,189 candidates against 46,647 recorded ticks.
+  // close-quarters exchange at 11 world units, which `scripts/measure-framing.ts`
+  // measured at 93-111 px of BODY height (equipment excluded) on the 518 px
+  // canvas, worst case 68. The band is now framed at one flat distance, chosen
+  // by sweeping 7,189 candidates against 46,647 recorded ticks.
+  //
+  // Not to be confused with the "50-90 px" figure quoted elsewhere for the same
+  // defect: that is the 2026-08-19 human eyeball estimate of the WHOLE
+  // silhouette, equipment included, off full 1280x820 viewport screenshots
+  // (`docs/reviews/2026-08-16-readable-deep-combat-human-review.md`, s3). Two
+  // different quantities measured two different ways, both pointing at the same
+  // defect; `README.md`'s camera section reconciles them. This comment used to
+  // attach the eyeball range to the instrumented quantity, which made the two
+  // look like contradictory measurements of one thing.
   describe('piecewise framing distance', () => {
     it('is flat across the tactical band', () => {
       for (const extent of [BAND_LOW, (BAND_LOW + BAND_HIGH) / 2, BAND_HIGH]) {

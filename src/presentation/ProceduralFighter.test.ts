@@ -511,13 +511,29 @@ describe('equipment kinds', () => {
 })
 
 describe('type silhouettes', () => {
-  it('separates the three by horizontal equipment reach', () => {
+  // All THREE pairs, not the two that pass. The plan wrote only the two
+  // comparisons against the murmillo, and the reason that matters is that the
+  // omitted pair is the one the implementation itself calls this slice's main
+  // legibility risk (see `STYLE_SPECS`'s comment: trident vs spear is one thin
+  // line at ship size). Asserting two thirds of a separation claim under the
+  // title "separates the three" is how a known shortfall stops being visible.
+  it('separates murmillo from both polearm types by horizontal equipment reach, and records that the two polearm types are NOT separated by it', () => {
     const reach = (a: Archetype): number => {
       const f = createProceduralFighter({ archetype: a }); const v = f.horizontalEquipmentRadius; f.dispose(); return v
     }
     const [murmillo, retiarius, hoplomachus] = [reach('heavy'), reach('fast'), reach('technical')]
     expect(Math.abs(hoplomachus - murmillo)).toBeGreaterThan(0.3)
     expect(Math.abs(retiarius - murmillo)).toBeGreaterThan(0.3)
+    // THE SLICE'S RECORDED STANDING RISK, asserted rather than omitted.
+    // 1.3511 - 1.1465 = 0.2046: the retiarius and the hoplomachus are the one
+    // pair reach does NOT tell apart, and they are separated instead by the
+    // net, the bare head and the galerus (design spec, and confirmed by eye on
+    // the recorded stills). Written as `toBeLessThan(0.3)` on purpose, against
+    // the same threshold as the two assertions above, so that this is a claim
+    // the suite makes and not a gap in what it checks: if a later slice ever
+    // does pull these two apart by reach, this line fails and the risk gets
+    // re-read rather than silently surviving in a comment.
+    expect(Math.abs(hoplomachus - retiarius)).toBeLessThan(0.3)
   })
   it('gives the retiarius a net and no helmet', () => {
     const f = createProceduralFighter({ archetype: 'fast' })
