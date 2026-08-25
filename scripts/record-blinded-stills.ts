@@ -869,20 +869,54 @@ async function captureStills(
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether the set really is `STILLS_PER_TYPE_PER_SIDE` stills in every one of
+ * the six (type, side) groups.
+ *
+ * Measured off the finished selection rather than inferred from `shortfalls`,
+ * which mixes the benign case (a thin yaw bin topped up from its neighbours --
+ * the group is still full) with the real one (a group that could not be
+ * filled at all). The reviewer README's balance claim is about group SIZES, so
+ * this counts group sizes.
+ */
+function isEvenlyDivided(selections: readonly Selection[]): boolean {
+  for (const archetype of ARCHETYPES) {
+    for (const side of SIDES) {
+      const count = selections.filter((s) => s.archetype === archetype && s.side === side).length
+      if (count !== STILLS_PER_TYPE_PER_SIDE) return false
+    }
+  }
+  return true
+}
+
+/**
  * The ONE document the reviewer reads. It opens by telling them not to read
  * anything else, so anything it gets wrong cannot be corrected elsewhere --
  * which is why it states the profile-only limitation itself rather than
  * deferring to the gate document, and why it gives no per-type counts.
  *
- * It deliberately does NOT say how many stills each type contributes. The set
- * is balanced (16/16/16), and a reviewer who knows that can balance their own
- * answers and gain accuracy without seeing anything -- which would inflate the
- * confusion matrix the whole exercise exists to measure. Nor does it use the
- * internal archetype ids: `heavy`/`fast`/`technical` are the vocabulary this
- * slice removed from every player-facing surface, and a reviewer is a player
- * for this purpose.
+ * It deliberately does NOT say how many stills each type contributes. When the
+ * set is balanced, a reviewer who knows that can balance their own answers and
+ * gain accuracy without seeing anything -- which would inflate the confusion
+ * matrix the whole exercise exists to measure. Nor does it use the internal
+ * archetype ids: `heavy`/`fast`/`technical` are the vocabulary this slice
+ * removed from every player-facing surface, and a reviewer is a player for this
+ * purpose.
+ *
+ * `balanced` is a PARAMETER, and that is the point of it. `selectStills`
+ * detects an unbalanced set into `shortfalls`, and the code there states the
+ * consequence exactly ("a 15/16/16 split makes one row's percentage rest on a
+ * different denominator") -- but that finding only ever reached `console.warn`
+ * and `answer-key.json`, the one file the reviewer must never open, while this
+ * document asserted "evenly divided" unconditionally. Since the pass bar is
+ * `>= 70% correct for each of the three types`, the denominators are precisely
+ * what an unbalanced set moves. Latent at 48/48, and it has to be right BEFORE
+ * the human gate runs, not after.
+ *
+ * The unbalanced wording still gives no counts: it says the set is not evenly
+ * divided and stops, so the reviewer cannot back out a per-type number and
+ * balance their answers on it.
  */
-function renderReviewerReadme(config: ConfigName, seed: number, selections: readonly Selection[]): string {
+function renderReviewerReadme(config: ConfigName, seed: number, selections: readonly Selection[], balanced: boolean): string {
   return `# Blinded silhouette stills -- \`${config}\` (seed ${seed})
 
 **Do not read anything else in \`docs/reviews/\` before you finish this.** The
@@ -909,9 +943,11 @@ number nor the run of answers tells you anything.
 
 ## The set, and what it can and cannot show you
 
-${selections.length} stills, evenly divided between the three types and between the two
-sides. (No per-type count is given on purpose: knowing it would let you balance
-your answers and score better than you can actually see.)
+${selections.length} stills, ${balanced
+    ? 'evenly divided between the three types and between the two\nsides'
+    : '**not** evenly divided between the three types and the two sides --\nsome groups came up short of what the recorder asked for'}. (No per-type count is
+given on purpose: knowing it would let you balance your answers and score better
+than you can actually see.)
 
 **Every still is a side-on view.** Not one of them shows a fighter from the
 front or from the back. That is not an oversight in how these were chosen: the
@@ -1035,7 +1071,18 @@ async function main(): Promise<void> {
     // photographed, not the sweep's pre-settle estimate.
     const finalSelections = selections.map((selection) => ({ ...selection, ...(captured.get(selection.stillId) ?? {}) }))
 
-    await writeFile(resolve(stillsDir, 'README.md'), renderReviewerReadme(args.config, args.seed, finalSelections), 'utf8')
+    const balanced = isEvenlyDivided(finalSelections)
+    if (!balanced) {
+      // Louder than the yaw-bin warning above, and a different fact: a thin bin
+      // still yields a full group, whereas this moves the denominators the
+      // `>= 70% per type` bar is read against. The reviewer README says so too
+      // (without the counts); this line is for whoever scores the sheet.
+      console.warn(
+        `\nWARNING: the set is NOT evenly divided -- at least one (type, side) group is short of ${STILLS_PER_TYPE_PER_SIDE}.`
+          + '\n  The per-type pass bar is a percentage, so its denominators differ between rows. See `shortfalls` in answer-key.json.',
+      )
+    }
+    await writeFile(resolve(stillsDir, 'README.md'), renderReviewerReadme(args.config, args.seed, finalSelections, balanced), 'utf8')
     await writeFile(resolve(stillsDir, 'scoring-sheet.csv'), renderScoringSheet(finalSelections), 'utf8')
     await writeFile(resolve(keyDir, 'answer-key.csv'), renderAnswerKey(args.config, args.seed, finalSelections), 'utf8')
     await writeFile(
@@ -1048,6 +1095,10 @@ async function main(): Promise<void> {
           yawBins: YAW_BINS,
           yawBinEdgesDegreesOffProfileByGroup: edges,
           variants: VARIANTS,
+          // The same fact the reviewer README now derives rather than asserts,
+          // recorded for whoever scores the sheet: if this is `false`, the
+          // per-type percentages do not share a denominator.
+          evenlyDivided: balanced,
           shortfalls,
           stills: finalSelections,
         },

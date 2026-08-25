@@ -267,6 +267,22 @@ interface BoutTrace {
   archetypes: [Archetype, Archetype]
   names: [string, string]
   samples: RawSample[]
+  /**
+   * `true` when the bout ended on its own inside the tick cap, `false` when the
+   * loop ran out of ticks with the fight still going.
+   *
+   * Not cosmetic: every statistic downstream -- the band populations, the
+   * percentile the body floor is read at, the safe-area extremes, and through
+   * `--record` the whole candidate sweep -- is computed over whatever ticks
+   * this trace happens to contain. A bout cut off at the cap silently
+   * contributes a truncated, systematically early slice of a fight (the
+   * fighters are still further apart, so the framing is wider and the
+   * silhouettes smaller) and nothing downstream can tell that from a real
+   * short bout. `tests/legibility.spec.ts` already asserts the same flag on
+   * its own traces; this script, which is the artifact that CHOSE the shipped
+   * camera constants, had no equivalent.
+   */
+  completed: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -370,6 +386,7 @@ async function traceBout(page: Page, dtSeconds: number, maxTicks: number): Promi
       const names = ids.map((id) => battle.encounter.combatants[id].definition.name)
 
       const samples: RawSample[] = []
+      let completed = false
       let previousTick = test.getRenderDebugState().currentTick
       for (let step = 0; step < cap; step += 1) {
         test.stepBattleAndCamera(1, dt)
@@ -378,7 +395,12 @@ async function traceBout(page: Page, dtSeconds: number, maxTicks: number): Promi
         // The bout is over the moment a step no longer advances the tick:
         // `advanceSeriesTicks` returns its input untouched once the phase
         // leaves `fighting`, so this is the same boundary the runtime sees.
-        if (!snapshot || tick === null || tick === previousTick) break
+        // Reaching it is what `completed` records; falling out of the `for`
+        // instead means the cap truncated a live fight.
+        if (!snapshot || tick === null || tick === previousTick) {
+          completed = true
+          break
+        }
         previousTick = tick
 
         const [home, away] = ids
@@ -400,7 +422,7 @@ async function traceBout(page: Page, dtSeconds: number, maxTicks: number): Promi
           screenSeparationPx: Math.hypot(dxScreen, dyScreen),
         })
       }
-      return { archetypes: archetypes as [Archetype, Archetype], names: names as [string, string], samples }
+      return { archetypes: archetypes as [Archetype, Archetype], names: names as [string, string], samples, completed }
     },
     { dt: dtSeconds, cap: maxTicks },
   )
@@ -751,7 +773,15 @@ function analyse(
     }
     const margin = insetMarginPx(sample.fullBoundsPx, trace.canvas)
     minInsetMargin = Math.min(minInsetMargin, margin)
-    if (margin < 0) safeViolationTicks += 1
+    // NON-FINITE COUNTS AS A VIOLATION, everywhere in this file, matching what
+    // `tests/legibility.spec.ts` already does (commit 4c4c898 fixed the same
+    // defect there and this script never got it). `NaN < 0` is `false`, so a
+    // degenerate frame -- an unprojectable bound, a zero-size canvas, a missing
+    // snapshot field -- used to vanish out of the count instead of failing it,
+    // and a fully degenerate trace printed "0 violation ticks" on zero
+    // measurement. `minInsetMargin` above is `Math.min`, which does propagate
+    // `NaN`, so the two halves of the same row disagreed about the same tick.
+    if (!Number.isFinite(margin) || margin < 0) safeViolationTicks += 1
     const { headroom, horizontal, vertical, edge, fighter } = safeAreaHeadroom(sample.fullBoundsPx, trace.canvas)
     const required = sample.distance / headroom
     safeDistanceFloor = Math.max(safeDistanceFloor, required)
@@ -1423,6 +1453,8 @@ function sweep(file: RecordingFile, grid: { flat: number[]; ease: number[] }): C
       let minInsetPx = Infinity
       let insetLabel = ''
       let safeSlack = Infinity
+      let nonFiniteMargins = 0
+      let nonFiniteLabel = ''
       const perPairing: { label: string; values: number[] }[] = []
 
       for (const { trace, extents, boxes, headroom } of prepared) {
@@ -1433,7 +1465,20 @@ function sweep(file: RecordingFile, grid: { flat: number[]; ease: number[] }): C
           const m = sample.distance / distances[i]
           safeSlack = Math.min(safeSlack, headroom[i] / m - 1)
           const margin = insetMarginPx(boxes[i], trace.canvas, m)
-          if (margin < minInsetPx) {
+          // Counted, not skipped. `NaN < minInsetPx` is false, so before this
+          // a candidate whose replayed margins were ALL non-finite left
+          // `minInsetPx` at `Infinity`, sailed through the `minInsetPx < 0`
+          // rejection below and could be selected on zero safe-area
+          // measurement. `safeSlack` three lines up already used `Math.min`,
+          // which propagates `NaN`, and the `bodyAtP` gate below already
+          // handles its own empty-population case correctly -- so the pattern
+          // was known here and applied to only one of the two gates.
+          if (!Number.isFinite(margin)) {
+            nonFiniteMargins += 1
+            if (nonFiniteLabel === '') {
+              nonFiniteLabel = `${trace.viewport.width}x${trace.viewport.height} ${trace.label} tick ${sample.tick} (extent ${fixed(sample.extent)}, replay distance ${fixed(distances[i], 3)})`
+            }
+          } else if (margin < minInsetPx) {
             minInsetPx = margin
             insetLabel = `${trace.viewport.width}x${trace.viewport.height} ${trace.label} tick ${sample.tick} (extent ${fixed(sample.extent)}, replay distance ${fixed(distances[i], 3)})`
           }
@@ -1444,7 +1489,9 @@ function sweep(file: RecordingFile, grid: { flat: number[]; ease: number[] }): C
         }
         if (trace.viewport.width === 1280) perPairing.push({ label: trace.label, values: inBand.sort((a, b) => a - b) })
       }
-      if (minInsetPx < 0) rejection = `safe area, tightest margin ${fixed(minInsetPx, 1)} px at ${insetLabel}`
+      // Non-finite first: an unmeasurable frame is not a passing one.
+      if (nonFiniteMargins > 0) rejection = `safe area, ${nonFiniteMargins} non-finite margin(s), first at ${nonFiniteLabel}`
+      else if (minInsetPx < 0) rejection = `safe area, tightest margin ${fixed(minInsetPx, 1)} px at ${insetLabel}`
 
       // `Infinity` would let an empty population pass the floor by vacuity, so
       // a pairing with no in-band ticks is `NaN` and fails the `>=` below.
@@ -1569,6 +1616,8 @@ function printReplayFidelity(file: RecordingFile): void {
 function printAmendedVerdict(file: RecordingFile): void {
   console.log('\n=== Amended criteria, measured directly on the recorded frames (no replay) ===')
   let violations = 0
+  let nonFinite = 0
+  let measured = 0
   let worstViolation = ''
   let minMargin = Infinity
   let minMarginLabel = ''
@@ -1582,6 +1631,20 @@ function printAmendedVerdict(file: RecordingFile): void {
       // beside the pixel figure because the floor margin below is a percentage,
       // and the two are only comparable in these units.
       minSlack = Math.min(minSlack, safeAreaHeadroom(boxes, trace.canvas).headroom - 1)
+      // A non-finite margin is a violation and is counted separately, never
+      // skipped -- this is the verdict that produced the "0 violations /
+      // 5.61 px" line quoted verbatim in `ArenaCamera.ts`, and before this fix
+      // a fully degenerate trace printed exactly that shape of clean pass on
+      // zero measurement: `NaN < 0` is false so it never counted, and
+      // `NaN < minMargin` is false so `minMargin` stayed `Infinity` and
+      // `fixed()` rendered it as `--`.
+      if (!Number.isFinite(margin)) {
+        nonFinite += 1
+        violations += 1
+        if (worstViolation === '') worstViolation = `${trace.viewport.width}x${trace.viewport.height} ${trace.label} tick ${sample.tick} (non-finite margin: ${String(margin)})`
+        continue
+      }
+      measured += 1
       if (margin < minMargin) {
         minMargin = margin
         minMarginLabel = `${trace.viewport.width}x${trace.viewport.height} ${trace.label} tick ${sample.tick}`
@@ -1594,9 +1657,12 @@ function printAmendedVerdict(file: RecordingFile): void {
   }
   console.log(
     `  [1] safe area (polearms exempt, everything else inside the 5% inset), ALL ticks, ALL viewports: ` +
-      `${violations} violation tick${violations === 1 ? '' : 's'}; tightest margin ${fixed(minMargin, 1)} px at ${minMarginLabel}`,
+      `${violations} violation tick${violations === 1 ? '' : 's'}` +
+      `${nonFinite > 0 ? ` (${nonFinite} of them non-finite)` : ''}; ` +
+      `tightest margin ${fixed(minMargin, 1)} px at ${minMarginLabel || '(nothing measured)'}, over ${measured} finite tick${measured === 1 ? '' : 's'}`,
   )
   console.log(`      = ${fixed(minSlack * 100, 2)}% of relative distance slack (the camera could come this much closer before the first crop)`)
+  if (measured === 0) console.log('      NOTHING WAS MEASURED: every tick produced a non-finite margin, so the line above is not a pass.')
   if (violations > 0) console.log(`      first violation: ${worstViolation}`)
 
   const percent = Math.round(FROZEN_BODY_FLOOR_PERCENTILE * 100)
@@ -1948,6 +2014,19 @@ async function main(): Promise<void> {
           await skipToSlot(page, pairing.slot)
           const trace = await traceBout(page, CAMERA_DELTA_SECONDS, args.maxTicks)
           const label = `${String(pairing.index).padStart(2, '0')} ${TYPE_NAME[trace.archetypes[0]]} vs ${TYPE_NAME[trace.archetypes[1]]}`
+          if (!trace.completed) {
+            // Fatal on a full run, and loud but survivable on a deliberately
+            // truncated one (`--max-ticks=<n>`, the quick-look mode). At the
+            // default cap this can only mean the bout outlived
+            // `MAX_BOUT_TICKS`, i.e. the simulation's own time limit did not
+            // fire -- at which point every figure this script would go on to
+            // print is computed over a slice of a fight rather than a fight,
+            // and the sweep that reads a `--record` of it would inherit that
+            // silently. Refusing beats printing a clean-looking table.
+            const message = `${key} ${label}: bout TRUNCATED at the ${args.maxTicks}-tick cap (${trace.samples.length} ticks recorded), it had not finished`
+            if (args.maxTicks >= MAX_BOUT_TICKS) throw new Error(message)
+            console.warn(`  WARNING: ${message} -- statistics below cover a partial bout`)
+          }
           reports.push(analyse(label, viewport, trace, rig))
           if (args.record) recorded.push(toRecordedTrace(label, viewport, trace, radii))
         } finally {
