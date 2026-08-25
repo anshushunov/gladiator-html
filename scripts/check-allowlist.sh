@@ -18,41 +18,51 @@
 # around that would have to admit nearly the whole tree, which is theatre --
 # a gate that forbids nothing reads as a gate that passed.
 #
-# So the shape flips to a DENYLIST, and it protects the opposite thing. This
-# slice's attribution risk is not "did behaviour change" (it must) but "was the
-# change actually behavioural, or was it quietly helped along by presentation".
-# Three paths carry that risk, and all three are forbidden:
+# So the shape flips to a DENYLIST, protecting the two risks this slice
+# actually carries. An earlier revision named only three files and was found by
+# external review to leave both holes below open; it is widened here.
 #
-#   src/style.css
-#     The arena canvas is 730x518 inside a 1280x820 page. The readable-types
-#     final review named growing it "the largest remaining lever on legibility
-#     per unit of risk". It is a real lever and it belongs to its own slice; a
-#     bout that reads better because the canvas grew would tell us nothing
-#     about whether the retiarius' reach reads.
+# GROUP 1 -- PRESENTATION SOURCE. This slice's premise is that BEHAVIOUR
+# separates the trident from the spear even while the silhouette does not (the
+# fork resolves at ~2x the shipped framing). Anything that changes what is
+# drawn, how it is posed, or how it is framed would answer the same question a
+# second way and make the two answers inseparable. That includes the camera,
+# whose constants were swept against 46,647 recorded ticks and frozen: giving
+# the retiarius real reach widens the separations it sees, and "the existing
+# flat band absorbs that with nothing retuned" is a claim worth testing rather
+# than quietly fixing. Also `src/style.css`, since growing the 730x518 arena
+# canvas is the largest remaining legibility lever and belongs to its own
+# slice -- a bout that reads better because the canvas grew would say nothing
+# about reach.
 #
-#   src/presentation/ProceduralFighter.ts
-#     Equipment and silhouette authoring. Trident and spear do not separate at
-#     the shipped framing (the fork resolves at ~2x), and this slice's premise
-#     is that BEHAVIOUR separates the pair even while the silhouette does not.
-#     Redrawing the props would answer the same question a different way and
-#     make the two answers inseparable.
+# Playwright baselines under `tests/__screenshots__/**` are deliberately NOT in
+# this group. They are outputs of the change, not levers on it, and this slice
+# is expected to regenerate them.
 #
-#   src/presentation/ArenaCamera.ts
-#     Its constants were swept against 46,647 recorded ticks and frozen. Giving
-#     the retiarius real reach widens the pair separations the camera sees, and
-#     the claim that the existing flat band absorbs that without retuning is
-#     worth testing rather than assuming. Forbidding the file turns that claim
-#     into an assertion the suite has to make -- if the camera genuinely needs
-#     to move, that is a finding to report, not a constant to nudge.
+# GROUP 2 -- ACCEPTANCE LOGIC. The first revision forbade three presentation
+# files and left the balance suites open, so an implementation could have
+# weakened the very criteria it was meant to satisfy. design.md is explicit
+# that cohort seeds, bands and metric formulas are test data that may not be
+# changed during tuning; this is that rule made enforceable. Each file below was
+# checked to contain bands and method ONLY, with no frozen literal this slice
+# must re-baseline, so forbidding it outright costs nothing.
 #
-# Everything else is open, including `src/simulation/**`, `src/content/**`,
-# `src/testSupport/**` and the frozen hash literals, all of which this slice
-# is expected to move. `.github/` and `playwright.config.ts` stay reachable for
-# the same reason the previous list admitted them: the gate has to be able to
-# maintain itself.
+# NOT YET IN GROUP 2, and named here rather than left implicit:
+# `src/simulation/encounterCapacity.test.ts` and `src/simulation/series.test.ts`
+# each mix frozen literals that MUST move (the `dbe77c5e` fixture hash; the
+# per-bout lineup hashes and the `1-2` golden score) with acceptance logic that
+# must not (the capacity suite's >=50 action instances, >=50 contact
+# resolutions, >=1000 damage, >=20 damaged combatants, and its candidate-check
+# bounds). The plan's first task splits those literals into their own fixture
+# modules, after which both files join the list below. Until then they are open.
+#
+# The gate's own file and `.github/` stay reachable, for the same reason the
+# previous list admitted them: a gate that cannot maintain itself cannot be
+# enforced at all. This re-scope lands as its own commit BEFORE the content
+# change, so the feature diff is judged by a boundary it did not write.
 set -euo pipefail
 BASE="${1:?base sha required}"
-FORBIDDEN='^(src/style\.css$|src/presentation/ProceduralFighter\.ts$|src/presentation/ArenaCamera\.ts$)'
+FORBIDDEN='^(src/presentation/|src/style\.css$|src/main\.ts$|index\.html$|src/simulation/(balance|seasonBalance|dispositionBalance)\.test\.ts$|src/testSupport/balanceCohorts\.ts$)'
 # Committed + staged + unstaged + untracked, and both sides of every rename.
 CHANGED="$( { git diff --name-status -z --find-renames "$BASE" HEAD; git diff --name-status -z --find-renames HEAD; git diff --name-status -z --find-renames --cached; } \
   | tr '\0' '\n' | grep -vE '^[A-Z][0-9]*$' | sort -u )"
