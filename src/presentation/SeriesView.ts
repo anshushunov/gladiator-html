@@ -643,8 +643,18 @@ export class SeriesView {
     // A forfeit is only reachable here because the planning screen already
     // telegraphed it in advance (`buildForfeitNotice`, above) -- this line
     // just reports which slot it was, distinctly from a fought bout's result.
+    //
+    // It names the opponent AND his type, word for word as `buildSummaryBout`
+    // and `SeasonView.buildOutcomeRow` already name the same `BoutOutcome` one
+    // and two screens later. It previously read "forfeited, no fighter
+    // available" -- naming neither man nor type, which is the design spec's
+    // acceptance #1 ("every fighter is named by type") failing on a surface a
+    // real player reaches: a short-handed series whose forfeited slot is not
+    // the last one stops in `between-bouts` with the forfeit as its latest
+    // result (`series.ts`'s `advancePastForfeits` walks forward from the bout
+    // that just finished). `tests/season.spec.ts` drives exactly that.
     const resultText = result.kind === 'forfeit'
-      ? `Bout ${BOUT_NUMERALS[result.boutIndex]}: forfeited, no fighter available.`
+      ? `Bout ${BOUT_NUMERALS[result.boutIndex]} ${RC.emDash} forfeited: no gladiator available to face ${fighterName(state.opponents, result.opponentId)} (${fighterType(this.vocabulary, state.opponents, result.opponentId)}).`
       : (() => {
           const homeName = fighterName(state.homeRoster, result.homeFighterId)
           const awayName = fighterName(state.opponents, result.opponentId)
@@ -678,6 +688,21 @@ export class SeriesView {
       const nextAwayType = this.vocabulary.names[nextOpponent.archetype]
       nextLine.textContent = `Next: ${fighterName(state.homeRoster, nextHomeId)} (${nextHomeType}) vs ${nextOpponent.name} (${nextAwayType}) ${RC.emDash} ${comparison}.`
       section.append(this.buildTemperamentBadge(state, nextBoutIndex), this.buildOrderSelector(state, nextBoutIndex))
+    } else if (nextOpponent) {
+      // Defensive, and honestly labelled as such. In `between-bouts`,
+      // `state.results.length` is by construction the index of the next slot
+      // that must actually be FOUGHT -- `advancePastForfeits` records a result
+      // for every forfeited slot it walks over before the phase is set, and
+      // only ever stops on a `kind: 'fighter'` slot -- so `nextHomeId` cannot
+      // be `null` here today, and I could not drive this branch from the dev
+      // command surface. It exists so that the guard above cannot leave an
+      // entirely empty `<p class="interstitial__next">` on screen if that
+      // invariant ever changes, which is the one way this phase could satisfy
+      // its own type-naming test while showing a player nothing: no fighter
+      // card, no name, no type. Order selector and temperament badge stay off
+      // this path deliberately -- there is no home gladiator to set an order
+      // for.
+      nextLine.textContent = `Next: bout ${BOUT_NUMERALS[nextBoutIndex]} ${RC.emDash} forfeited, no gladiator available to face ${nextOpponent.name} (${this.vocabulary.names[nextOpponent.archetype]}).`
     }
     const start = el('button', { class: 'button button--primary', type: 'button', 'data-action': 'start-next', 'data-testid': 'start-next-bout' }, 'Start next bout')
     section.append(start)

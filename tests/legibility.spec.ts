@@ -787,13 +787,73 @@ test.describe(`screen separation at ${FLOOR_VIEWPORT.width}x${FLOOR_VIEWPORT.hei
  */
 const MECHANICS_IDS = ['Heavy', 'Fast', 'Technical'] as const
 
+const TYPE_NAMES_PATTERN = /Murmillo|Hoplomachus|Retiarius/i
+
+/**
+ * Every surface, per phase, that presents a gladiator to the player -- and
+ * therefore every surface acceptance #1 ("every fighter is named by type")
+ * governs. `expectPhaseNamesTypes` asserts the type name on EACH element each
+ * selector matches, not once across the page.
+ *
+ * The weaker form this replaces (one `/Murmillo|.../` match anywhere in
+ * `body.innerText`) was green-lighting partial coverage by construction: the
+ * planning screen alone renders eight type labels, so any one of them carried
+ * the whole assertion and a surface that named nobody could not be seen. It
+ * was in fact hiding two of them -- the between-bouts forfeit result line
+ * ("forfeited, no fighter available", naming neither man nor type) and the
+ * `Next:` preview's empty-paragraph path -- both found by review rather than
+ * by this test, which is what a per-page assertion buys you.
+ *
+ * Selectors, not text: each of these is the exact element the corresponding
+ * builder emits, so a phase that stops rendering one fails on the count check
+ * rather than passing because a neighbour still carries a type name.
+ */
+const TYPE_BEARING_SURFACES: Readonly<Record<string, readonly string[]>> = {
+  // Roster cards and the three challenge cards. `SeasonView.buildRosterCard` /
+  // `buildChallengeCard`.
+  'season-board': ['[data-testid="season-roster-card"]', '[data-testid="season-challenge-card"]'],
+  // Every home gladiator card (fit and unavailable alike) and every opponent
+  // slot. `SeriesView.buildFighterOption` / `buildUnavailableFighterCard` /
+  // `buildMatchupSlot`.
+  planning: ['[data-role="home-fighter"], [data-role="unavailable-fighter"]', '[data-role="opponent-slot"]'],
+  // Both live fighter cards. `SeriesView.buildFighterCard`.
+  fighting: ['[data-testid="active-home"]', '[data-testid="active-away"]'],
+  // The bout that just ended AND the one coming next -- the two lines that are
+  // the whole of this phase's vocabulary, since it shows no fighter cards.
+  'between-bouts': ['[data-testid="bout-result-summary"]', '[data-testid="next-matchup"]'],
+  // All three bout rows. `SeriesView.buildSummaryBout`.
+  'series-summary': ['[data-testid="bout-result"]'],
+  // All nine bout rows and every roster row. `SeasonView.buildOutcomeRow` and
+  // `renderSummary`'s roster block.
+  'season-summary': ['[data-testid="season-summary-bout"]', '.season-summary__roster-row'],
+}
+
 async function expectPhaseNamesTypes(page: Page, phase: string): Promise<void> {
   const text = await page.locator('body').innerText()
-  expect(text, `${phase}: should name at least one gladiator type`).toMatch(/Murmillo|Hoplomachus|Retiarius/i)
   for (const id of MECHANICS_IDS) {
     expect(text, `${phase}: should not leak the internal archetype id "${id}"`).not.toMatch(new RegExp(`\\b${id}\\b`, 'i'))
   }
-  report(`naming ${phase}: names a type, leaks no mechanics id`)
+
+  const selectors = TYPE_BEARING_SURFACES[phase]
+  expect(selectors, `${phase}: has no declared type-bearing surfaces -- add them rather than skipping the phase`).toBeDefined()
+  let surfaces = 0
+  for (const selector of selectors) {
+    const elements = page.locator(selector)
+    const count = await elements.count()
+    // Non-vacuity first: an empty locator would pass a `for` loop silently, and
+    // a renamed testid is exactly how this whole check would stop meaning
+    // anything without failing.
+    expect(count, `${phase}: expected at least one \`${selector}\` on screen`).toBeGreaterThan(0)
+    for (let index = 0; index < count; index += 1) {
+      const surface = await elements.nth(index).innerText()
+      expect(
+        surface,
+        `${phase}: \`${selector}\` #${index + 1} of ${count} presents a gladiator without naming his type -- ${JSON.stringify(surface)}`,
+      ).toMatch(TYPE_NAMES_PATTERN)
+      surfaces += 1
+    }
+  }
+  report(`naming ${phase}: ${surfaces} fighter-bearing surface(s), each naming a type; leaks no mechanics id`)
 }
 
 test('every phase names gladiators by type and no phase names a mechanics id', async ({ page }) => {
