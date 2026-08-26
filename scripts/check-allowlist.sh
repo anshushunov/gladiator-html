@@ -94,11 +94,22 @@ BASE="${1:?base sha required}"
 #
 # Screenshot baselines under `tests/__screenshots__/**` are never forbidden in
 # either phase: they are outputs of the change, not levers on it.
-FORBIDDEN='^(src/style\.css$|index\.html$|src/main\.ts$|src/presentation/(ArenaView|ArenaCamera|ProceduralFighter|PoseController|SeasonView|SeriesView|DecisionPanel|CombatAudio|gladiatorTypes|legibilityMode)\.ts$|src/presentation/poses/|src/simulation/(balance|dispositionBalance)\.test\.ts$|src/testSupport/balanceCohorts\.ts$|tests/legibility\.spec\.ts$|playwright\.config\.ts$)'
+# `src/presentation/` is matched WHOLESALE rather than by an enumeration of
+# filenames. The enumeration was reviewed and found incomplete -- it left
+# `battleFeed.ts`, `conditionTelegraph.ts`, `dispositionLabels.ts`,
+# `footstepThresholds.ts` and `formatPower.ts` writable -- and any such list
+# rots the moment a module is added. The four test files that still hold
+# movable literals are exempted below instead, which is a rule that stays true
+# as the directory grows.
+FORBIDDEN='^(src/style\.css$|index\.html$|src/main\.ts$|src/presentation/|src/simulation/(balance|dispositionBalance)\.test\.ts$|src/testSupport/balanceCohorts\.ts$|tests/legibility\.spec\.ts$|playwright\.config\.ts$)'
+# Phase-1 exemptions: presentation TEST files stay open because
+# `ArenaCamera.test.ts` holds recorded trace numbers this slice must update,
+# and splitting them out is this PR's job. Phase 2 drops this exemption.
+EXEMPT='^src/presentation/.*\.test\.ts$'
 # Committed + staged + unstaged + untracked, and both sides of every rename.
 CHANGED="$( { git diff --name-status -z --find-renames "$BASE" HEAD; git diff --name-status -z --find-renames HEAD; git diff --name-status -z --find-renames --cached; } \
   | tr '\0' '\n' | grep -vE '^[A-Z][0-9]*$' | sort -u )"
 UNTRACKED="$(git ls-files --others --exclude-standard)"
-VIOLATIONS="$(printf '%s\n%s\n' "$CHANGED" "$UNTRACKED" | grep -v '^$' | grep -E "$FORBIDDEN" || true)"
+VIOLATIONS="$(printf '%s\n%s\n' "$CHANGED" "$UNTRACKED" | grep -v '^$' | grep -E "$FORBIDDEN" | grep -vE "$EXEMPT" || true)"
 if [ -n "$VIOLATIONS" ]; then echo "Forbidden for this slice:" >&2; echo "$VIOLATIONS" >&2; exit 1; fi
 echo "allowlist ok"

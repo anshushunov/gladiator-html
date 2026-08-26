@@ -74,6 +74,7 @@ import { COMBAT_STYLES } from '../src/content/combatStyles'
 import { BASELINE_TEST_SEED } from '../src/content/mvpSeries'
 import { advanceBattleTick, createBattle, MAX_BOUT_TICKS } from '../src/simulation/battle'
 import { validateCombatStyleCatalog } from '../src/simulation/combatActions'
+import { FAST_FORCED_DISENGAGE_MAX_TICKS } from '../src/simulation/combatDecision'
 import { percentile } from '../src/testSupport/balanceCohorts'
 import type { ContactCollector, ContactOutcome, ContactRecord } from '../src/simulation/contactDiagnostics'
 import type { AttackActionId, CombatStyleCatalog } from '../src/simulation/combatActions'
@@ -86,6 +87,18 @@ const COMMITTED_ATTACK: Readonly<Record<Archetype, AttackActionId>> = {
   heavy: 'heavy-cleave',
   fast: 'fast-burst-lunge',
   technical: 'technical-driving-thrust',
+}
+
+/**
+ * Every attack a style can produce, for gate D's whole-type share. Includes
+ * `technical-parry-counter`, which is forced rather than chosen but is still
+ * the hoplomachus landing a blow at some distance, so excluding it would
+ * flatter the comparator.
+ */
+const STYLE_ATTACKS: Readonly<Record<Archetype, readonly AttackActionId[]>> = {
+  heavy: ['heavy-shield-jab', 'heavy-cleave'],
+  fast: ['fast-slash', 'fast-burst-lunge'],
+  technical: ['technical-thrust', 'technical-driving-thrust', 'technical-parry-counter'],
 }
 
 /**
@@ -154,18 +167,40 @@ function deepMerge(base: Json, patch: Json): void {
   }
 }
 
+/** Every key a patch names must already exist on the target, at every depth. */
+function requireKnownKeys(patch: Json, target: Json, path: string): void {
+  for (const [key, value] of Object.entries(patch)) {
+    if (!(key in target)) throw new Error(`overlay sets unknown field '${path}.${key}'`)
+    const existing = target[key]
+    if (value !== null && typeof value === 'object' && !Array.isArray(value) &&
+        existing !== null && typeof existing === 'object' && !Array.isArray(existing)) {
+      requireKnownKeys(value as Json, existing as Json, `${path}.${key}`)
+    }
+  }
+}
+
 function catalogFor(overlayPath: string | undefined): CombatStyleCatalog {
   const catalog = structuredClone(COMBAT_STYLES) as unknown as CombatStyleCatalog
   if (overlayPath) {
     const overlay = JSON.parse(readFileSync(overlayPath, 'utf8')) as { attacks?: Json; styles?: Json }
     const attacks = catalog.attacks as unknown as Json
     const styles = catalog.styles as unknown as Json
+    // Strict at every level, not just at the ids. `validateCombatStyleCatalog`
+    // checks the fields it knows about and ignores extras, so a typo like
+    // `rootTravl` would merge in as a new key, validate cleanly, and produce a
+    // candidate that measured exactly like the unpatched catalog -- a sweep
+    // silently reporting the baseline as a candidate result.
+    for (const key of Object.keys(overlay)) {
+      if (key !== 'attacks' && key !== 'styles') throw new Error(`overlay has unknown top-level key '${key}'; expected 'attacks' or 'styles'`)
+    }
     for (const [id, patch] of Object.entries(overlay.attacks ?? {})) {
       if (!(id in attacks)) throw new Error(`overlay patches unknown attack '${id}'`)
+      requireKnownKeys(patch as Json, attacks[id] as Json, `attacks.${id}`)
       deepMerge(attacks[id] as Json, patch as Json)
     }
     for (const [id, patch] of Object.entries(overlay.styles ?? {})) {
       if (!(id in styles)) throw new Error(`overlay patches unknown style '${id}'`)
+      requireKnownKeys(patch as Json, styles[id] as Json, `styles.${id}`)
       deepMerge(styles[id] as Json, patch as Json)
     }
   }
@@ -192,13 +227,19 @@ interface MatchupResult {
   geometryFailures: Record<string, number>
   otherOutcomes: Record<string, number>
   disengages: DisengageEpisode[]
-  /** Successful parries and the counters they converted into, keyed by the incoming action. */
+  /** Successful parries, keyed by the incoming action that was parried. */
   parries: Record<string, number>
-  counters: number
+  /**
+   * Counters, keyed by the SAME incoming action. Gate F is per incoming
+   * action, so a bare total would not do: an unchanged conversion after
+   * `heavy-cleave` can hide a collapse after the newly ranged Fast attacks,
+   * which are the only ones this slice moves.
+   */
+  countersByIncoming: Record<string, number>
 }
 
 function emptyMatchup(label: string, home: Archetype, away: Archetype): MatchupResult {
-  return { label, home, away, reached: {}, geometryFailures: {}, otherOutcomes: {}, disengages: [], parries: {}, counters: 0 }
+  return { label, home, away, reached: {}, geometryFailures: {}, otherOutcomes: {}, disengages: [], parries: {}, countersByIncoming: {} }
 }
 
 function runMatchup(catalog: CombatStyleCatalog, home: Archetype, away: Archetype, seeds: number): MatchupResult {
@@ -223,32 +264,64 @@ function runMatchup(catalog: CombatStyleCatalog, home: Archetype, away: Archetyp
     const collector: ContactCollector = { record: (entry) => records.push(entry) }
     const startSeparation = new Map<string, number>()
     const forcedSince = new Map<string, { tick: number; separation: number }>()
+    /** The last parry each defender landed, so a forced counter can be attributed to the incoming action that earned it. */
+    const lastParry = new Map<string, { actionId: string; tick: number }>()
+    let openingSeparation = separationOf(battle)
 
     while (battle.phase === 'running' && battle.encounter.tick < MAX_BOUT_TICKS) {
       const previousTick = battle.encounter.tick
-      // An action starts in phase 5, before this tick's movement, so the
-      // separation it was launched at is this tick's OPENING separation.
-      const openingSeparation = separationOf(battle)
-      battle = advanceBattleTick(battle, undefined, collector)
+      // The separation at the START of this tick. An action begins in phase 5,
+      // before movement (phase 7-8), so this is what it was launched at -- and
+      // it is also the correct end-points for the disengage window, which is
+      // why both are taken here rather than after the tick.
+      const tickOpening = openingSeparation
 
-      for (const event of battle.events) {
-        if (event.tick !== previousTick + 1) continue
-        if (event.type === 'action-started') {
-          startSeparation.set(event.actionInstanceId, openingSeparation)
-          if (event.actionId === 'technical-parry-counter') result.counters += 1
-        }
-        if (event.type === 'attack-parried') result.parries[event.actionId] = (result.parries[event.actionId] ?? 0) + 1
-      }
-
-      const endSeparation = separationOf(battle)
       for (const id of ids) {
         const combatant = battle.encounter.combatants[id]
         const forcedTick = combatant.forcedDisengageStartTick
-        if (forcedTick !== undefined && !forcedSince.has(id)) forcedSince.set(id, { tick: forcedTick, separation: endSeparation })
-        if (forcedTick === undefined && forcedSince.has(id)) {
+        // Stamped: record the separation the retreat STARTS from, measured at
+        // the opening of the tick the kernel set the field on. Taking it after
+        // the tick shifted the window by one tick's movement at both ends.
+        if (forcedTick !== undefined && !forcedSince.has(id)) forcedSince.set(id, { tick: forcedTick, separation: tickOpening })
+      }
+
+      battle = advanceBattleTick(battle, undefined, collector)
+      openingSeparation = separationOf(battle)
+
+      for (const event of battle.events) {
+        if (event.tick !== previousTick + 1) continue
+        if (event.type === 'attack-parried') {
+          result.parries[event.actionId] = (result.parries[event.actionId] ?? 0) + 1
+          lastParry.set(event.defenderId, { actionId: event.actionId, tick: event.tick })
+        }
+        if (event.type === 'action-started') {
+          startSeparation.set(event.actionInstanceId, tickOpening)
+          if (event.actionId === 'technical-parry-counter') {
+            // design.md: the forced counter begins on the NEXT tick after a
+            // successful parry. Two ticks of slack, and no attribution at all
+            // if none is found, so a mis-attributed counter cannot inflate a
+            // conversion rate.
+            const parry = lastParry.get(event.actorId)
+            if (parry && event.tick - parry.tick <= 2) {
+              result.countersByIncoming[parry.actionId] = (result.countersByIncoming[parry.actionId] ?? 0) + 1
+              lastParry.delete(event.actorId)
+            }
+          }
+        }
+      }
+
+      for (const id of ids) {
+        if (battle.encounter.combatants[id].forcedDisengageStartTick === undefined && forcedSince.has(id)) {
           const started = forcedSince.get(id) as { tick: number; separation: number }
           const ticks = battle.encounter.tick - started.tick
-          result.disengages.push({ ticks, gained: endSeparation - started.separation, exit: ticks >= 30 ? 'cap' : 'range' })
+          result.disengages.push({
+            ticks,
+            gained: openingSeparation - started.separation,
+            // Read from the exported constant, never a literal: Task 5 of the
+            // plan tunes it, and a hard-coded 30 would silently mislabel every
+            // range exit past that tick.
+            exit: ticks >= FAST_FORCED_DISENGAGE_MAX_TICKS ? 'cap' : 'range',
+          })
           forcedSince.delete(id)
         }
       }
@@ -330,13 +403,13 @@ const pooledSamples: Record<string, Sample[]> = {}
 const pooledGeometryFailures: Record<string, number> = {}
 const pooledDisengages: DisengageEpisode[] = []
 const pooledParries: Record<string, number> = {}
-let pooledCounters = 0
+const pooledCountersByIncoming: Record<string, number> = {}
 for (const m of matchups) {
   for (const [id, samples] of Object.entries(m.reached)) (pooledSamples[id] ??= []).push(...samples)
   for (const [id, n] of Object.entries(m.geometryFailures)) pooledGeometryFailures[id] = (pooledGeometryFailures[id] ?? 0) + n
   pooledDisengages.push(...m.disengages)
   for (const [id, n] of Object.entries(m.parries)) pooledParries[id] = (pooledParries[id] ?? 0) + n
-  pooledCounters += m.counters
+  for (const [id, n] of Object.entries(m.countersByIncoming)) pooledCountersByIncoming[id] = (pooledCountersByIncoming[id] ?? 0) + n
 }
 
 const fixed = (v: number, p = 2) => v.toFixed(p)
@@ -376,6 +449,22 @@ const headToHead = {
 console.log('\nHEAD TO HEAD (the ordering gate)')
 console.log(`retiarius ${fixed(headToHead.retiarius?.contactMedian ?? Number.NaN)}   hoplomachus ${fixed(headToHead.hoplomachus?.contactMedian ?? Number.NaN)}   margin ${fixed((headToHead.hoplomachus?.contactMedian ?? 0) - (headToHead.retiarius?.contactMedian ?? 0))}`)
 
+/**
+ * Gate D's statistic: over ALL of a style's reached contacts, probe and
+ * committed together, the share landing inside the murmillo's envelope.
+ */
+function wholeTypeEnvelopeShare(archetype: Archetype): number {
+  let inside = 0
+  let total = 0
+  for (const id of STYLE_ATTACKS[archetype]) {
+    for (const sample of pooledSamples[id] ?? []) {
+      total += 1
+      if (sample.contact <= ENVELOPE) inside += 1
+    }
+  }
+  return total > 0 ? inside / total : Number.NaN
+}
+
 /** The hoplomachus' geometry-failure rate over its matchups containing no `fast` -- an independent comparator. */
 function hoplomachusIndependentGeometryFailure(): number {
   let reached = 0
@@ -403,8 +492,13 @@ if (pooledDisengages.length > 0) {
   console.log('fast forced disengage: never triggered')
 }
 const totalParries = Object.values(pooledParries).reduce((t, n) => t + n, 0)
-console.log(`technical parry -> counter: ${pooledCounters}/${totalParries} = ${totalParries > 0 ? pct(pooledCounters / totalParries) : '--'}`)
-console.log(`  parries by incoming action: ${Object.entries(pooledParries).map(([id, n]) => `${id} ${n}`).join(', ') || '(none)'}`)
+const totalCounters = Object.values(pooledCountersByIncoming).reduce((t, n) => t + n, 0)
+console.log(`technical parry -> counter: ${totalCounters}/${totalParries} = ${totalParries > 0 ? pct(totalCounters / totalParries) : '--'}`)
+console.log('  by incoming action (gate F is asserted per row, not on the total):')
+for (const [incoming, parried] of Object.entries(pooledParries)) {
+  const converted = pooledCountersByIncoming[incoming] ?? 0
+  console.log(`    ${incoming.padEnd(26)} ${String(converted).padStart(5)}/${String(parried).padEnd(5)} ${pct(parried > 0 ? converted / parried : Number.NaN)}`)
+}
 console.log(`hoplomachus geometry failure, fast-free matchups only: ${pct(hoplomachusIndependentGeometryFailure())}`)
 
 // ---------------------------------------------------------------------------
@@ -423,29 +517,73 @@ if (args.gate) {
   check(lunge.contactRange.min === drivingThrust.contactRange.min,
     `floor alignment: lunge min ${lunge.contactRange.min} != driving thrust min ${drivingThrust.contactRange.min}, so the envelope shares are not comparable`)
 
-  const margin = (headToHead.hoplomachus?.contactMedian ?? Number.NaN) - (headToHead.retiarius?.contactMedian ?? Number.NaN)
-  check(margin >= 0.20, `head-to-head ordering margin ${fixed(margin)} below 0.20`)
-
+  // GATE A -- the defect detector. The man with the trident must not fight
+  // closer than the man with the short sword. Both figures come from this same
+  // run; the murmillo's is near-invariant because its behaviour is not what
+  // changed (1.08 authored, 1.09 at the proposal).
   const fastPooled = summarise(pooledSamples['fast-burst-lunge'] ?? [], pooledGeometryFailures['fast-burst-lunge'] ?? 0, ENVELOPE)
-  check((fastPooled?.insideEnvelope ?? 1) <= 0.15, `retiarius committed contacts inside the murmillo envelope ${pct(fastPooled?.insideEnvelope ?? Number.NaN)} above 15% pooled`)
-  for (const label of ['fast vs heavy', 'fast vs fast', 'fast vs technical']) {
-    const s = committedOf(label)
-    check((s?.insideEnvelope ?? 1) <= 0.25, `${label}: ${pct(s?.insideEnvelope ?? Number.NaN)} inside the murmillo envelope, above 25%`)
-  }
+  const heavyPooled = summarise(pooledSamples['heavy-cleave'] ?? [], pooledGeometryFailures['heavy-cleave'] ?? 0, ENVELOPE)
+  check((fastPooled?.contactMedian ?? 0) >= (heavyPooled?.contactMedian ?? Infinity),
+    `A: retiarius committed median ${fixed(fastPooled?.contactMedian ?? Number.NaN)} below the murmillo's ${fixed(heavyPooled?.contactMedian ?? Number.NaN)}`)
 
-  check(immediateShare <= 0.05, `forced disengages clearing within one tick ${pct(immediateShare)} above 5%`)
-  check(percentile(disengageTicks, 0.5) >= 24, `forced disengage median ${percentile(disengageTicks, 0.5)} ticks below 24`)
+  // GATE B -- the guardrail. Passes on the authored content too (+1.32); it
+  // exists so the fix cannot overshoot and take the longest reach away from
+  // the hoplomachus, which is what happened to two rejected candidates.
+  const margin = (headToHead.hoplomachus?.contactMedian ?? Number.NaN) - (headToHead.retiarius?.contactMedian ?? Number.NaN)
+  check(margin >= 0.20, `B: head-to-head ordering margin ${fixed(margin)} below 0.20`)
+
+  // GATE C -- distribution, against an INDEPENDENT comparator. `technical vs
+  // heavy` contains no `fast`, so it is bit-identical across every candidate;
+  // the hoplomachus' pooled figure would move with the retiarius and could be
+  // raised by worsening Technical, which is the coupling defect this whole
+  // criterion set had to be rebuilt to avoid.
+  const retiariusVsMurmillo = committedOf('fast vs heavy')
+  const hoplomachusVsMurmillo = committedOf('technical vs heavy')
+  check((retiariusVsMurmillo?.insideEnvelope ?? 1) <= (hoplomachusVsMurmillo?.insideEnvelope ?? 0),
+    `C: retiarius vs murmillo ${pct(retiariusVsMurmillo?.insideEnvelope ?? Number.NaN)} inside the envelope, above the hoplomachus' ${pct(hoplomachusVsMurmillo?.insideEnvelope ?? Number.NaN)}`)
+
+  // GATE D -- the WHOLE type, probe included. Gating only the committed attack
+  // would let the cheap probe carry the visual impression, and measurement
+  // confirms it can: `fast-slash` is selected more often than the lunge and
+  // lands far closer.
+  const fastWhole = wholeTypeEnvelopeShare('fast')
+  const technicalWhole = wholeTypeEnvelopeShare('technical')
+  check(fastWhole <= technicalWhole,
+    `D: retiarius total offence ${pct(fastWhole)} inside the envelope, above the hoplomachus' ${pct(technicalWhole)}`)
+
+  // GATE E -- give-ground survives, gated on ground rather than on time.
+  check(immediateShare <= 0.05, `E: forced disengages clearing within one tick ${pct(immediateShare)} above 5%`)
+  check(percentile(disengageTicks, 0.5) >= 24, `E: forced disengage median ${percentile(disengageTicks, 0.5)} ticks below 24`)
   // Duration alone is satisfiable by making the range exit unreachable, which
   // pins every episode to the 30-tick cap without proving Fast opened any
   // ground. So the ground itself is gated, at the authored baseline's own
   // measured median.
-  check(percentile(disengageGained, 0.5) >= DISENGAGE_GAIN_FLOOR, `forced disengage median separation gained ${fixed(percentile(disengageGained, 0.5))} below ${DISENGAGE_GAIN_FLOOR}`)
+  check(percentile(disengageGained, 0.5) >= DISENGAGE_GAIN_FLOOR, `E: forced disengage median separation gained ${fixed(percentile(disengageGained, 0.5))} below ${DISENGAGE_GAIN_FLOOR}`)
 
-  check(totalParries === 0 || pooledCounters / totalParries >= 0.90, `parry-to-counter conversion ${pct(pooledCounters / totalParries)} below 90%`)
+  // GATE F -- per incoming action rather than pooled, because a pooled figure
+  // lets unchanged heavy/technical parries hide a regression specifically
+  // against the newly ranged Fast attacks. Those two are the whole mechanism at
+  // risk: Technical's forced counter begins only while the attacker is still
+  // within 2.3 units, and this slice moves the retiarius outward.
+  //
+  // ASSERTED ONLY FOR THE TWO FAST ROWS, deliberately. The authored content
+  // already converts `technical-driving-thrust` at 77.8% -- Technical parrying
+  // Technical, then finding the attacker beyond 2.3 -- and a gate that fails on
+  // unchanged behaviour is not a gate, it is a pre-existing property being
+  // charged to whoever runs it next. That figure is worth someone's attention
+  // and is printed above; it is not this slice's to fix.
+  for (const incoming of ['fast-slash', 'fast-burst-lunge']) {
+    const parried = pooledParries[incoming] ?? 0
+    const converted = pooledCountersByIncoming[incoming] ?? 0
+    check(parried === 0 || converted / parried >= 0.90,
+      `F: parry-to-counter conversion after ${incoming} is ${pct(converted / parried)} (${converted}/${parried}), below 90%`)
+  }
 
+  // GATE G -- against the same independent comparator as gate C, for the same
+  // reason: the hoplomachus' pooled failure rate moves when the retiarius does.
   const fastGeometry = fastPooled?.geometryFailureRate ?? 1
   const comparator = hoplomachusIndependentGeometryFailure()
-  check(fastGeometry <= comparator, `retiarius committed geometry failures ${pct(fastGeometry)} above the hoplomachus' fast-free ${pct(comparator)}`)
+  check(fastGeometry <= comparator, `G: retiarius committed geometry failures ${pct(fastGeometry)} above the hoplomachus' fast-free ${pct(comparator)}`)
 
   console.log('\nGATE')
   if (failures.length === 0) {
@@ -467,7 +605,7 @@ if (args.json) {
       attacks: Object.fromEntries((Object.keys(catalog.attacks) as AttackActionId[]).map((id) => [id, summarise(m.reached[id] ?? [], m.geometryFailures[id] ?? 0, ENVELOPE) ?? null])),
       disengages: m.disengages,
       parries: m.parries,
-      counters: m.counters,
+      countersByIncoming: m.countersByIncoming,
     })),
     headToHeadMargin: (headToHead.hoplomachus?.contactMedian ?? Number.NaN) - (headToHead.retiarius?.contactMedian ?? Number.NaN),
     hoplomachusIndependentGeometryFailure: hoplomachusIndependentGeometryFailure(),

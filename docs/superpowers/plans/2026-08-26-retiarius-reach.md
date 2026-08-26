@@ -60,6 +60,15 @@
 - Consumes: `ContactCollector`, `ContactRecord`, `ContactOutcome` from `./contactDiagnostics`; `advanceBattleTick(previous, decisionCollector?, contactCollector?)` from `./battle`.
 - Produces: nothing. This task only adds tests.
 
+**These tests are white-box on purpose.** An earlier draft of this task asserted
+only that records exist, are unique, and fall in range — external review pointed
+out that all three are satisfiable while the seam is still wrong: uniqueness
+cannot detect a *dropped* intent, and an in-range separation is satisfiable by a
+badly-timed snapshot whenever the post-push distance happens to stay in range.
+The tests below assert the exact thing that was wrong twice: that the recorded
+separation is the pre-push one, demonstrated by showing it *differs* from the
+post-tick separation for a hit that carries push.
+
 - [ ] **Step 1: Write the failing tests**
 
 Create `src/simulation/contactDiagnostics.test.ts`:
@@ -107,11 +116,7 @@ describe('contact diagnostics', () => {
   })
 
   it('records a separation inside the action’s own contact range whenever the weapon reached', () => {
-    // THE TEST THAT WOULD HAVE CAUGHT THE ORIGINAL DEFECT. The harness used to
-    // sample after `advanceBattleTick`, i.e. after phase 10's pushback, and
-    // reported `heavy-cleave` contacts at 2.03 against an authored maximum of
-    // 1.8. A record taken from the phase-9 snapshot cannot do that: geometry
-    // was judged against exactly these positions.
+    // Necessary but NOT sufficient on its own -- see the next test.
     const records: ContactRecord[] = []
     for (const home of homeRoster) {
       for (const away of opponents) runBout(home, away, { record: (entry) => records.push(entry) })
@@ -123,19 +128,99 @@ describe('contact diagnostics', () => {
         const range = COMBAT_STYLES.attacks[r.actionId].contactRange
         return r.separation < range.min - 1e-6 || r.separation > range.max + 1e-6
       })
+      .map((r) => `${r.actionId} at ${r.separation.toFixed(3)}`)
     expect(violations.slice(0, 5)).toEqual([])
   })
 
+  it('records the PRE-push separation, demonstrably different from the post-tick one', () => {
+    // THE TEST THAT WOULD HAVE CAUGHT THE DEFECT THAT GOT THROUGH TWICE.
+    // Being in range is not enough: a post-push reading often stays in range
+    // and looks fine. The distinguishing fact is that push MOVES the pair, so
+    // for a hit whose action authors a non-zero `pushDistance`, the recorded
+    // separation must differ from the separation observable after that tick.
+    // If the seam were reading post-tick state the two would be identical.
+    const perTick: { tick: number; separation: number }[] = []
+    const records: ContactRecord[] = []
+    let battle = createBattle({ home: homeRoster[0], away: opponents[0], seed: BASELINE_TEST_SEED, combatStyles: COMBAT_STYLES })
+    const [homeId, awayId] = [battle.descriptor.homeId, battle.descriptor.awayId]
+    while (battle.phase === 'running' && battle.encounter.tick < MAX_BOUT_TICKS) {
+      battle = advanceBattleTick(battle, undefined, { record: (entry) => records.push(entry) })
+      const a = battle.encounter.combatants[homeId]
+      const b = battle.encounter.combatants[awayId]
+      perTick.push({ tick: battle.encounter.tick, separation: Math.hypot(a.position.x - b.position.x, a.position.z - b.position.z) })
+    }
+    const pushingHits = records.filter((r) => r.outcome === 'hit' && COMBAT_STYLES.attacks[r.actionId].pushDistance > 0)
+    expect(pushingHits.length).toBeGreaterThan(5)
+    const differing = pushingHits.filter((r) => {
+      const after = perTick.find((t) => t.tick === r.tick)
+      return after !== undefined && Math.abs(after.separation - r.separation) > 1e-6
+    })
+    // Not "all": the separation solver and the arena clamp can absorb a push
+    // when a pair is already at the floor. A clear majority is what proves the
+    // reading is taken before phase 10 rather than after it.
+    expect(differing.length).toBeGreaterThan(pushingHits.length * 0.5)
+  })
+
+  it('emits a record for every contact intent, including one whose actor was defeated first', () => {
+    // Uniqueness cannot detect a DROP. This compares the collected set against
+    // the independent ground truth of the event log: every action instance that
+    // reached its contact phase must appear exactly once.
+    const records: ContactRecord[] = []
+    const contactInstances = new Set<string>()
+    let battle = createBattle({ home: homeRoster[1], away: opponents[1], seed: BASELINE_TEST_SEED, combatStyles: COMBAT_STYLES })
+    while (battle.phase === 'running' && battle.encounter.tick < MAX_BOUT_TICKS) {
+      battle = advanceBattleTick(battle, undefined, { record: (entry) => records.push(entry) })
+      for (const id of [battle.descriptor.homeId, battle.descriptor.awayId]) {
+        const action = battle.encounter.combatants[id].action
+        if (action.type === 'active' && action.phase === 'contact' && action.definitionId in COMBAT_STYLES.attacks) {
+          contactInstances.add(action.instanceId)
+        }
+      }
+    }
+    expect(new Set(records.map((r) => r.actionInstanceId))).toEqual(contactInstances)
+  })
+
   it('classifies a blocked hit as blocked rather than as a plain hit', () => {
-    // `attack-blocked` is followed by `damage-dealt` for the same instance, so
-    // a naive scan would report the guard working as an ordinary hit.
+    // `attack-blocked` is followed by `damage-dealt` for the SAME instance, so
+    // a scan without precedence reports the guard working as an ordinary hit.
+    // Asserted against the event log rather than against a count: every
+    // instance the log says was blocked must be recorded as `blocked`.
+    const records: ContactRecord[] = []
+    const blockedInstances = new Set<string>()
+    const parriedInstances = new Set<string>()
+    for (const home of homeRoster) {
+      for (const away of opponents) {
+        let battle = createBattle({ home, away, seed: BASELINE_TEST_SEED, combatStyles: COMBAT_STYLES })
+        while (battle.phase === 'running' && battle.encounter.tick < MAX_BOUT_TICKS) {
+          const previousTick = battle.encounter.tick
+          battle = advanceBattleTick(battle, undefined, { record: (entry) => records.push(entry) })
+          for (const event of battle.events) {
+            if (event.tick !== previousTick + 1) continue
+            if (event.type === 'attack-blocked') blockedInstances.add(event.actionInstanceId)
+            if (event.type === 'attack-parried') parriedInstances.add(event.actionInstanceId)
+          }
+        }
+      }
+    }
+    expect(blockedInstances.size).toBeGreaterThan(0)
+    expect(parriedInstances.size).toBeGreaterThan(0)
+    const byInstance = new Map(records.map((r) => [r.actionInstanceId, r.outcome]))
+    for (const id of blockedInstances) expect(byInstance.get(id), id).toBe('blocked')
+    for (const id of parriedInstances) expect(byInstance.get(id), id).toBe('parried')
+  })
+
+  it('produces every outcome the type declares, so none is unreachable dead code', () => {
     const records: ContactRecord[] = []
     for (const home of homeRoster) {
       for (const away of opponents) runBout(home, away, { record: (entry) => records.push(entry) })
     }
-    expect(records.some((r) => r.outcome === 'blocked')).toBe(true)
-    expect(records.some((r) => r.outcome === 'hit')).toBe(true)
-    expect(records.some((r) => r.outcome === 'missed-geometry')).toBe(true)
+    const seen = new Set(records.map((r) => r.outcome))
+    // `actor-defeated` and `target-unavailable` are rare but reachable across
+    // nine pairings; if one never appears, either the classifier cannot emit it
+    // or the kernel path is dead, and both are worth knowing.
+    for (const outcome of ['hit', 'blocked', 'parried', 'evaded', 'missed-geometry', 'missed-accuracy']) {
+      expect(seen.has(outcome as never), outcome).toBe(true)
+    }
   })
 })
 ```
@@ -381,11 +466,21 @@ In `src/simulation/encounterCapacity.test.ts`, replace `expect(hash).toBe('dbe77
 Run: `npx vitest run src/simulation/encounterCapacity.test.ts`
 Expected: 10 passed.
 
-- [ ] **Step 3: Move the series literals**
+- [ ] **Step 3: Move the series literals — all of them**
 
-Create `src/testSupport/frozenFixtures/seriesTrace.ts` holding the per-bout hash array and the `'1-2'` score currently inline in `src/simulation/series.test.ts`. Copy the values verbatim from the current file — do not re-derive them.
+`series.test.ts` holds **five** content-dependent values, not two. Inventory them before moving anything:
 
-Note in the file header that `LINEUP_SCORE` is a **product assertion**, not a determinism artifact: design.md requires the all-counter lineup not to sweep, so this value may only change with a spec amendment, while `LINEUP_BOUT_HASHES` may be re-frozen with a reason.
+| line | value | class |
+|---|---|---|
+| ~264 | the three per-bout trace hashes | determinism |
+| 289 | `[1721, 2183, 1202]` bout durations | determinism |
+| 238 | `statsLed.score` `{home: 2, away: 1}` | product |
+| 332 | the six-lineup score set `{'1-2', '2-1'}` | product |
+| 338 | `byLineup.get('brutus/aquila/nerva')` `'1-2'` | product |
+
+Create `src/testSupport/frozenFixtures/seriesTrace.ts` exporting all five, each in a block commented with its class. Copy verbatim; do not re-derive.
+
+**Also record a conflict for Task 9 to resolve.** `series.test.ts:337` asserts `scores.has('3-0') === false` for every lineup, while design.md's golden criteria permit "at least one different lineup wins `2–1` **or `3–0`**". The test is *stricter than the spec*. If a 3–0 appears after tuning, that is not automatically a failure — but it is also not something to fix by editing whichever of the two is more convenient. Note it in the fixture header so Task 9 meets it deliberately.
 
 - [ ] **Step 4: Move the golden season literals**
 
@@ -499,10 +594,35 @@ Record for each: median gain, median duration, immediate share, exit split, and 
 
 If no combination in Step 3 satisfies gate E jointly with gates A–D, F and G, **do not lower `DISENGAGE_GAIN_FLOOR`.** Write the measured table into the spec under "Where it stands", state which gates conflict, and report. That is the outcome the spec's stopping rule anticipates.
 
-- [ ] **Step 5: Commit the constants**
+- [ ] **Step 5: Update the unit test that pins the old thresholds**
+
+`src/simulation/combatDecision.test.ts:1124-1140` hard-codes the authored values around the symbolic ones — `hasFastForcedDisengageEnded(2.41, 10) === true`, `(2.39, 10) === false`, the "2.4 units" in the test name, and a sibling test pinning 30 ticks. These are the behavioural contract for the constants you just changed, so update them **in the same commit**:
+
+```ts
+  it('Fast forced disengage ends once the range has been opened back out to its authored exit, and not before', () => {
+    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE, 10)).toBe(true)
+    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE + 0.01, 10)).toBe(true)
+    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE - 0.01, 10)).toBe(false)
+    // The range a burst-lunge actually lands at: the forcing has to survive
+    // it, or Fast never disengages at all. Read from the catalog rather than
+    // written as a literal, so a future reach change cannot make this vacuous.
+    const lunge = COMBAT_STYLES.attacks['fast-burst-lunge'].contactRange
+    expect(hasFastForcedDisengageEnded(lunge.max, 1)).toBe(false)
+    expect(hasFastForcedDisengageEnded(lunge.min, 1)).toBe(false)
+  })
+```
+
+Do the same for the 30-tick sibling, using `FAST_FORCED_DISENGAGE_MAX_TICKS`.
+
+Note what this rewrite buys: the *literal* versions would have kept passing after a reach change while asserting nothing about the new behaviour — `1.45` stays below `3.35`, so the "the forcing survives a lunge" claim would have been true by accident rather than by construction.
+
+Run: `npx vitest run src/simulation/combatDecision.test.ts`
+Expected: PASS.
+
+- [ ] **Step 6: Commit the constants**
 
 ```bash
-git add src/simulation/combatDecision.ts
+git add src/simulation/combatDecision.ts src/simulation/combatDecision.test.ts
 git commit -m "feat(simulation): retune Fast's forced disengage for the trident's reach"
 ```
 
@@ -606,9 +726,18 @@ After each accepted change, re-run **both** `balance.test.ts` and `npm run measu
 
 Present the failing distributions. Do not widen a band, change a seed range, or edit `balanceCohorts.ts`.
 
+- [ ] **Step 3a: Update the tests that pin whatever you changed**
+
+Both content files are pinned value-by-value, and their tests also assert *qualitative orderings* that must survive:
+
+- `src/content/combatStyles.test.ts` — the authored row for every action you touch (`damageMultiplier`, `recoveryTicks`), plus the orderings it pins: the probe stays quicker and cheaper than the committed attack, Heavy's cleave stays the slowest commitment, Technical keeps the longest reach.
+- `src/content/mvpSeries.test.ts` — the roster rank orders for `maxHp`, `accuracy`, `defenseChance`, `criticalChance`, and the `Heavy < Technical < Fast` turn ordering.
+
+**A rank order may not be crossed without a spec amendment.** Task 13's own calibration crossed exactly one (`power`) and had to record it as an approved deviation with the measurement that forced it; do the same or do not cross it.
+
 - [ ] **Step 4: Run both suites clean**
 
-Run: `npx vitest run src/simulation/balance.test.ts src/simulation/seasonBalance.test.ts src/simulation/dispositionBalance.test.ts`
+Run: `npx vitest run src/simulation/balance.test.ts src/simulation/seasonBalance.test.ts src/simulation/dispositionBalance.test.ts src/content/combatStyles.test.ts src/content/mvpSeries.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -622,57 +751,62 @@ The message must list every changed number with its before/after and the measure
 
 ---
 
-### Task 8: Re-baseline the determinism artifacts
+### Task 8: Reconcile every moved artifact — collect, classify, then update
+
+**One task, not two.** An earlier draft split determinism and product artifacts into consecutive tasks and required `npm test` to pass at the end of the first — which is impossible while product fixtures in the same suites are still stale. Review caught it. The order is therefore *collect everything → classify everything → verify the product criteria → update*, with a single green run at the end.
 
 **Files:**
-- Modify: `src/testSupport/frozenFixtures/capacityTrace.ts`, `seriesTrace.ts`, `cameraTraces.ts`; `src/simulation/battle.test.ts` (`dc635911`); `src/testSupport/stateHash.test.ts` (the nine digests); `tests/combat-visuals.spec.ts`, `tests/orders.spec.ts` (the Chromium-side hash and key-pose ticks)
+- Modify: `src/testSupport/frozenFixtures/*.ts`; `src/simulation/battle.test.ts` (`dc635911`); `src/testSupport/stateHash.test.ts` (the nine digests); `tests/combat-visuals.spec.ts`, `tests/orders.spec.ts`
 
-- [ ] **Step 1: Collect the new values**
+- [ ] **Step 1: Collect from BOTH runners**
 
-Run: `npm test` and record every failing literal and its actual value. Do not edit yet.
-
-- [ ] **Step 2: Sanity-check the key-pose ticks before accepting them**
-
-The key-pose ticks 253/817/958/2106 are a behavioural claim. If any moves by more than ~200 ticks, the bout restructured; find out why and write the reason down before re-freezing. A pose tick that moved because the retiarius now spends longer at range is expected; one that moved because a bout got 40% shorter needs explaining.
-
-- [ ] **Step 3: Update the literals**
-
-One commit per artifact family, each message stating why that artifact moved.
-
-- [ ] **Step 4: Verify**
-
-Run: `npm test`
-Expected: PASS.
-
----
-
-### Task 9: Check the product assertions
-
-**Files:**
-- Read/modify: `src/testSupport/frozenFixtures/goldenSeason.ts`, `seriesTrace.ts` (`LINEUP_SCORE`)
-
-- [ ] **Step 1: Run the golden scenario**
-
-Run: `npx vitest run src/simulation/seasonBalance.test.ts src/simulation/series.test.ts`
-
-- [ ] **Step 2: Check the two criteria that carry intent**
-
-design.md requires: the all-counter lineup `Brutus→Drusus`, `Aquila→Cassius`, `Nerva→Magnus` does **not** sweep 3–0, and at least one different lineup wins 2–1 or 3–0. If the outcomes moved but both still hold, update `GOLDEN_OUTCOMES`/`GOLDEN_SCORE`/`GOLDEN_DELTAS` and say so.
-
-- [ ] **Step 3: If either criterion breaks, amend the spec first**
-
-Do not update the fixture to whatever the run produced. Write the amendment — the deviation, the measurement that forced it, what it costs — into the spec, then update.
-
-- [ ] **Step 4: Commit**
+`npm test` cannot see the Playwright assertions, and the Chromium-side duel hash and the key-pose checkpoints live there. Run both, and record every failure with its actual value. **Change nothing yet.**
 
 ```bash
-git add src/testSupport/frozenFixtures
-git commit -m "test(testSupport): re-baseline the golden season at the retiarius' new reach"
+npm test 2>&1 | tee /tmp/reach/unit-failures.txt
+npx playwright test 2>&1 | tee /tmp/reach/e2e-failures.txt
 ```
+
+- [ ] **Step 2: Classify every failure into exactly one of three buckets**
+
+Write the classification down — a list, in the commit message or a scratch file. Every failure must land in exactly one bucket, and the bucket decides what you are allowed to do:
+
+| bucket | examples | permitted action |
+|---|---|---|
+| **authored content** | `combatStyles.test.ts`, `mvpSeries.test.ts` rows | already handled in Tasks 6–7; a failure here now means one was missed |
+| **determinism trace** | `dc635911`, the nine digests, `dbe77c5e`, per-bout hashes, bout durations, the Chromium hash | re-freeze, with a stated reason per family |
+| **product or semantic assertion** | golden-season outcomes/score/deltas, the six-lineup score set, `statsLed`'s score, the `3-0` prohibition, camera bounds, and **every semantic checkpoint in `combat-visuals.spec.ts`** — the named contacts, blocks, forced-disengage stamps, HP values, parry/counter events and defeat, not just the pose ticks | verify the underlying criterion still holds *before* touching the number; if it does not, amend the spec first |
+
+- [ ] **Step 3: Verify the product criteria before updating any of them**
+
+design.md's golden criteria: the all-counter lineup `Brutus→Drusus`, `Aquila→Cassius`, `Nerva→Magnus` must **not** sweep 3–0, and at least one different lineup must win 2–1 or 3–0. Check these against the *new* run directly — do not infer them from whether a fixture matches.
+
+Meet the conflict Task 3 Step 3 recorded: `series.test.ts:337` forbids any 3–0 while design.md permits one. If a 3–0 now appears, decide it explicitly and write the decision into the spec; do not silently relax the test or silently re-tune to avoid it.
+
+**`goldenSeason.ts` is authorized by the golden-season criteria only.** Do not use a passing series-lineup criterion to justify updating season outcomes or condition deltas; they are different claims about different runs.
+
+- [ ] **Step 4: Re-locate the key poses by what they are, not by how far they moved**
+
+The pose ticks 253/817/958/2106 are not arbitrary — each was chosen because a specific thing is happening at it. An earlier draft said to accept a move under ~200 ticks, which is a heuristic that can preserve determinism while quietly losing the claim: land on a tick where the fighter is in `recovery` instead of `windup` and the screenshot still renders, still hashes, and no longer shows what it was there to show.
+
+Re-locate each pose by **querying the new trace for the same condition** — same action id and same phase, or the same event — and record the query alongside the new tick. If no tick in the new trace satisfies it, that is a finding: say so rather than picking the nearest visually similar frame.
+
+- [ ] **Step 5: Update, one commit per bucket**
+
+Determinism artifacts first, then product assertions, each commit message naming why that family moved.
+
+- [ ] **Step 6: Verify both runners green**
+
+```bash
+npm test
+npx playwright test          # still WITHOUT --update-snapshots; screenshots are Task 9
+```
+
+Expected: every non-screenshot assertion passes.
 
 ---
 
-### Task 10: Camera, capacity fixtures and the visual baselines
+### Task 9: Camera, capacity fixtures and the visual baselines
 
 **Files:**
 - Modify: `src/testSupport/frozenFixtures/cameraTraces.ts`, `tests/__screenshots__/**`
@@ -715,6 +849,6 @@ The PR body states the player hypothesis, the before/after for every gate, and a
 
 ## Self-review notes
 
-- **Spec coverage.** Gates A–D and F–G are asserted by `measure:reach --gate` (Tasks 5, 6, 7). Gate E is Task 5. Gate H is Task 7. Gate I is Task 10. The two-phase CI gate is Tasks 3 and 4. The re-baseline rule's two classes are Tasks 8 (determinism) and 9 (product). The `fast-slash` second-order risks are Task 10 Step 2.
+- **Spec coverage.** Gates A–D and F–G are asserted by `measure:reach --gate` (Tasks 5, 6, 7). Gate E is Task 5. Gate H is Task 7. Gate I is Task 9. The two-phase CI gate is Tasks 3 and 4. The re-baseline rule's three buckets are Task 8. The `fast-slash` second-order risks are Task 9 Step 2.
 - **Not covered by any task, deliberately:** the human review gate. This slice's playtest is a separate session; the spec's player-facing acceptance is what it tests.
 - **Known thin margin:** gate D passes by 0.8 points, which is why Task 7 Step 2 requires re-running the reach gate after *every* accepted tuning package rather than once at the end.

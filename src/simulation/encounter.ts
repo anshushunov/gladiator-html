@@ -2127,13 +2127,21 @@ function recordContact(
   if (!collector) return
   const actor = snapshot[intent.actorId]
   const target = snapshot[intent.targetId]
+  // Throws rather than recording `NaN`. A contact intent exists only because
+  // both combatants were in the snapshot phase 9 was handed, so a missing one
+  // is a kernel invariant violation -- and `NaN` would pass a finiteness check
+  // written as two comparisons, silently poisoning a median instead of
+  // failing. Raised in external review of the acceptance instrument.
+  if (!actor || !target) {
+    throw new Error(`contact diagnostics: intent ${intent.actionInstanceId} references a combatant absent from the phase-9 snapshot`)
+  }
   collector.record({
     tick,
     actorId: intent.actorId,
     targetId: intent.targetId,
     actionId: intent.actionId,
     actionInstanceId: intent.actionInstanceId,
-    separation: actor && target ? distanceBetween(actor.position, target.position) : Number.NaN,
+    separation: distanceBetween(actor.position, target.position),
     outcome,
   })
 }
