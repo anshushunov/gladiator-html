@@ -13,14 +13,18 @@ draft left for the reviewer is now **closed** — Variant A is withdrawn.
    (`scripts/measure-reach.ts`), and re-measuring under its frozen protocol
    moved several of the first draft's numbers — in the direction that had
    flattered it.
-2. **Measured against its own frozen gates, the package this spec proposes
-   fails two of them.** Fast's forced disengage stops working, and the reach
-   ordering's margin is not met — the latter because criteria 1 and 2 are
-   anchored to the same reference type from opposite directions and are
-   measured to conflict. Both are reported with their numbers under "Where the
-   proposal stands against its own gates" rather than closed by moving a bar.
-   This spec is fit to *plan a sweep* from; it is not yet fit to implement a
-   catalog change from.
+2. **The package now passes every content gate**, but it took three rounds of
+   measurement and two decisions from the plan owner to get there, and the route
+   is documented rather than tidied away. Along the way this spec had to correct
+   **four defects in its own criteria** — an inclusion rule that counted evades
+   as contacts, a tail statistic whose window width was set by the number the
+   slice authors, an ordering comparison between two quantities that were not
+   independent, and an ordering result that turned out to be an artifact of a
+   mechanic the same change had broken. Every one of them flattered the
+   proposal. That is the pattern worth carrying to the next slice, not the
+   numbers.
+3. **Two gates remain open and both are plan work:** the counter triangle
+   (`heavy > fast` sits at ~92% against a 55–75% band) and the camera.
 
 **Date:** 2026-08-25
 
@@ -227,9 +231,9 @@ below is.
 |---|---:|---:|---|
 | `fast-slash.contactRange` | 0.9–1.35 | **0.9–2.05** | the trident poke, available from the stance; held 0.35 below the committed reach, the gap the hoplomachus' own pair uses |
 | `fast-burst-lunge.contactRange` | 0.9–1.45 | **1.60–2.40** | the committed thrust; the floor matches the hoplomachus' so the distribution gate compares like with like, and 2.40 is the swept value at which the clean ordering margin reaches 0.20 |
-| `fast-burst-lunge.rootTravel` | 1.40 | **0.80** | the measured row that satisfies the distribution gate |
+| `fast-burst-lunge.rootTravel` | 1.40 | **0.50** | the swept value that satisfies every content gate at once, geometry failures included |
 | `fast-burst-lunge.startMaxRange` | 2.8 | **4.0** | the lunge closes from *outside* the stance rather than from inside it to contact |
-| `FAST_FORCED_DISENGAGE_END_RANGE` | 2.4 | **raised** | see criterion 3; the exact value is selected against it |
+| `FAST_FORCED_DISENGAGE_END_RANGE` | 2.4 | **3.35** | derived: the authored 2.4 sits 0.95 above the authored lunge's contact max of 1.45, and the same gap above 2.40 is 3.35 |
 | `BURST_IN_MIN/MAX_RANGE` | 2.8 / 4.0 | reviewed | the locomotion setup for a lunge that now begins further out |
 
 `fast-slash.contactRange.min` stays at **0.9**, deliberately. The retiarius must
@@ -446,7 +450,20 @@ murmillo; it changes where it fights everyone else.
 The sign-off is therefore not void, but it no longer settles the question, and
 this spec does not pretend otherwise. See "Which ordering question to ask".
 
-### Which ordering question to ask **[open]**
+### Which ordering question to ask **[closed by the plan owner, 2026-08-26: head to head]**
+
+**Decision: criterion 1 is measured head to head** — when the retiarius and the
+hoplomachus fight each other, the hoplomachus' committed median must exceed the
+retiarius' by at least 0.20. The reasoning accepted was that this is the only
+matchup in which the question the criterion asks is actually contested; in the
+other two the murmillo's closing, or an average over bouts that include it,
+decides the number instead. Measured at the final package: **2.10 against 2.66,
+a margin of 0.56.**
+
+The three framings and their evidence are kept below, because the choice
+between them is the substantive design decision of this slice and a future
+reader is entitled to see what was rejected and on what numbers.
+
 
 With the disengage repaired, there are three defensible ways to ask "does the
 spear still outreach the trident", and they give three different answers on the
@@ -811,30 +828,57 @@ than one that has not measured at all.
 All figures at 200 seeds, package `fast-slash` 0.9–2.05, `fast-burst-lunge`
 1.60–2.40, `rootTravel` 0.80, `startMaxRange` 4.0.
 
-All figures at 200 seeds, package `fast-slash` 0.9–2.05, `fast-burst-lunge`
-1.60–2.40, `rootTravel` 0.80, `startMaxRange` 4.0,
-`FAST_FORCED_DISENGAGE_END_RANGE` 3.35.
+All figures at 200 seeds. Final package: `fast-slash` **0.9–2.05**,
+`fast-burst-lunge` **1.60–2.40**, `rootTravel` **0.50**, `startMaxRange`
+**4.0**, `FAST_FORCED_DISENGAGE_END_RANGE` **3.35**.
 
-| gate | measured | verdict |
-|---|---|---|
-| 1. reach ordering, margin ≥0.20 | **depends on which comparison** — pooled +0.20 ✔, common-third +0.15 ✘, head-to-head +0.61 ✔ | **open**, see "Which ordering question to ask" |
-| 2. distribution ≤15% pooled, ≤25% per matchup | 11.3% pooled, worst 18.6%, vs murmillo 8.1% | ✔ passes |
-| 3. forced disengage ≤5% immediate, median ≥24 | **3.0%**, median **30** | ✔ passes, better than the authored baseline |
-| 3b. parry → counter ≥90% | 96.3% | ✔ passes |
-| 4. geometry failures ≤ hoplomachus' | 48.3% vs 46.7% | ✘ **fails, narrowly** — first appearance; needs a sweep or a re-derived bar |
-| 5. balance bands unchanged | `heavy > fast` ~92% vs band 55–75% | ✘ **the balance task's entire job** |
-| 6. camera unretuned | unmeasured | — pending |
+| gate | bar | measured | verdict |
+|---|---|---|---|
+| 1. reach ordering, head to head | ≥0.20 | retiarius 2.10, hoplomachus **2.66** → **+0.56** | ✔ |
+| 2. distribution, pooled | ≤15% | **6.6%** | ✔ |
+| 2. distribution, worst matchup | ≤25% | **9.9%** | ✔ |
+| 3. forced disengage, cleared within one tick | ≤5% | **3.8%** | ✔ |
+| 3. forced disengage, median duration | ≥24 | **30** (the cap) | ✔ |
+| 3b. parry → counter | ≥90% | **95.7%** | ✔ |
+| 4. geometry failures | ≤ hoplomachus' 46.7% | **41.8%** | ✔ |
+| 5. balance bands unchanged | 55–75% etc. | `heavy > fast` ~92% | ✘ **the balance task's entire job** |
+| 6. camera unretuned | suites pass | unmeasured | — pending |
+
+**Every content gate passes.** The headline: the retiarius' committed attack
+moves from a contact median of **1.25 to 2.14**, and the share of its committed
+offence landing inside the murmillo's fighting distance falls from **98.3% to
+6.6%** — against the hoplomachus' own 11.9%, i.e. the retiarius ends up holding
+its distance *better* than the type it was asked to resemble, while still
+striking 0.56 shorter than it when the two meet.
+
+Two gates remain open and both are plan work rather than content work: the
+counter triangle (its own task) and the camera (measured from traces of the
+changed build).
+
+**What each swept row cost, kept for the plan's benefit.** `rootTravel` is the
+lever that trades geometry failures against everything else, and 0.50 is not
+the value the earlier drafts proposed:
+
+| `rootTravel` (floor 1.6, reach 2.40, disengage 3.35) | head-to-head margin | ≤1.7 pooled | geometry failures |
+|---:|---:|---:|---:|
+| **0.50** | **+0.56** | **6.6%** | **41.8%** ✔ |
+| 0.65 | +0.55 | 8.3% | 44.9% ✔ |
+| 0.80 | +0.61 | 11.3% | 48.3% ✘ |
 
 ## Risks
 
-- **Criterion 3 currently fails, and fails hard.** The proposed package does not
-  shorten Fast's forced disengage, it switches it off: median 10 ticks against
-  an authored 30, one in four ending immediately. The fix — moving
-  `FAST_FORCED_DISENGAGE_END_RANGE` — is identified but unmeasured, and it
-  interacts with the balance task, since a longer forced disengage is a real
-  nerf in the matchup that is already at 92%.
-- **Criteria 1 and 2 are measured to conflict.** Reported above, unresolved by
-  design. Whichever way it closes, it closes explicitly.
+- **The forced disengage is now longer, and that is a balance liability.**
+  Raising its exit range to 3.35 restores the mechanic to its 30-tick cap, which
+  means the retiarius spends materially more of each bout backing off. That is
+  the intended behaviour, but it is also a nerf in `fast vs heavy`, the matchup
+  already sitting at ~8% against a band that wants 25–45%. The balance task
+  inherits it.
+- **Criterion 1 was closed by choosing among three framings**, not by a
+  measurement settling it. The head-to-head comparison passes at +0.56, which is
+  a wide margin — but a different framing of the same question fails at +0.15,
+  and that is a fact about the game (the murmillo dictates range at its own
+  distance) rather than a measurement artifact. If the playtest reports that the
+  two polearms still do not read apart, this is the first place to look.
 - **The balance task is the expensive half.** The reach change is a handful of
   numbers; restoring a 55–75% band across five affected matchups is where the
   slice can fail, and the measured swing (36% → 96%) says the surface is steep.
