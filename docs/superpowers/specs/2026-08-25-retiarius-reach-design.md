@@ -422,7 +422,52 @@ Reach is a weak lever on the clean comparison — a 0.30 cut moves the median by
 exactly 0.20.** The distribution stays far inside its bar (6.8% against the
 hoplomachus' 15.9%), and the worst matchup is 22.4% against 25%.
 
-### How the conflict closes **[needs sign-off — this is the one judgement call left]**
+### How the conflict closes **[signed off 2026-08-26, then reopened by measurement the same day]**
+
+**The plan owner accepted restating criterion 1 on the clean comparison.** That
+decision stands as a decision. What has changed is the evidence under it, and
+the change has to be stated before anything is built on the sign-off:
+
+> **The 1.90 figure that made the clean comparison reach 0.20 was an artifact of
+> the broken forced disengage.** Once `FAST_FORCED_DISENGAGE_END_RANGE` is
+> repaired (below), the retiarius' committed median against the murmillo returns
+> to **1.95** — and it measures 1.95 at *every* reach swept: 2.25, 2.40, 2.55 and
+> 2.70, all at 200 seeds. The hoplomachus measures 2.10 against the murmillo in
+> every run. **The clean margin is therefore a structurally stable 0.15, and
+> 0.20 is unreachable on that comparison by any reach value.**
+
+The reason is worth stating because it is a fact about the game rather than
+about the measurement: **at the murmillo's fighting distance the murmillo sets
+the range.** It closes, and both long types get their committed attack off at
+whatever separation its closing allows — 1.95 for the trident, 2.10 for the
+spear. Giving the retiarius more reach does not change where it fights a
+murmillo; it changes where it fights everyone else.
+
+The sign-off is therefore not void, but it no longer settles the question, and
+this spec does not pretend otherwise. See "Which ordering question to ask".
+
+### Which ordering question to ask **[open]**
+
+With the disengage repaired, there are three defensible ways to ask "does the
+spear still outreach the trident", and they give three different answers on the
+same run. Numbers below are the proposed package at reach 2.40, 200 seeds.
+
+| comparison | what it asks | measured | vs the 0.20 bar |
+|---|---|---:|---|
+| **pooled medians** | across all its bouts, where does each type land its committed attack? | fast 2.04, technical 2.24 → **+0.20** | ✔ passes |
+| **against a common third** (the murmillo) | when both fight the same closing opponent, who strikes from further? | fast 1.95, technical 2.10 → **+0.15** | ✘ fails, stably |
+| **head to head** | when these two fight *each other*, who strikes from further? | fast 1.95, technical 2.56 → **+0.61** | ✔ passes wide |
+
+None is obviously right. The pooled one is coupled (shown above) but the
+coupling now works *against* the retiarius rather than for it, since repairing
+the disengage pushed `technical vs fast` back up from 2.43 to 2.56. The
+common-third one is clean but measures a matchup in which reach is not the
+deciding variable. The head-to-head one asks the design question most directly —
+it is the only matchup where "whose weapon is longer" is actually contested —
+but both of its numbers move when either type moves.
+
+This is the open question, and it is the last one.
+
 
 The conflict resolves **only if criterion 1 is restated on the clean
 comparison** — each type's committed median measured against a common third
@@ -453,8 +498,8 @@ test rather than as reassurance:
   against the murmillo the retiarius must beat 2.10, where the pooled version
   let a soft `fast vs fast` median of 2.12–2.19 carry it.
 
-**This spec does not adopt the restatement on its own authority.** It is the
-one decision left open, and the plan may not proceed past it unresolved.
+**The spec did not adopt the restatement on its own authority**; it was taken to
+the plan owner and signed off, as recorded above.
 
 The remaining alternative reading is unchanged: **that 0.20 is simply the wrong
 number.** It is authored — by me, without a basis, as conceded above. A margin
@@ -540,14 +585,24 @@ distances rather than the comparison.
 > percent; the 24 is 80% of the authored cap, allowing the mechanic to shorten
 > without allowing it to stop existing.
 >
-> **Reachable?** **Not at the proposed package as it stands — 25.3% against a
-> 5% bar, and a median of 10 ticks against a floor of 24.** The mechanic is
-> being switched off, not merely shortened. `FAST_FORCED_DISENGAGE_END_RANGE`
-> must move with the reach, and its value is selected against this gate; a
-> plausible starting point is the lunge's `contactRange.max` plus the authored
-> gap the current 2.4 keeps above 1.45, but that is a hypothesis and this spec
-> does not assert it. This is the second criterion the current proposal *fails*,
-> stated as such, which is the point of freezing it before implementation.
+> **Reachable? Yes — measured, and the fix is a one-constant change.** With the
+> reach raised and `FAST_FORCED_DISENGAGE_END_RANGE` left at 2.4 the gate fails
+> badly (23.5% against a 5% bar, median 11 ticks against a floor of 24): the
+> mechanic is switched off, not shortened, because the lunge now *contacts* at
+> the distance the exit test treats as "already disengaged".
+>
+> **The repaired value is `3.35`, and it is derived rather than tuned.** The
+> authored 2.4 sits 0.95 above the authored lunge's `contactRange.max` of 1.45;
+> applying the same gap to the proposed 2.40 gives 3.35. Measured at 200 seeds
+> on the first attempt: **3.0% clearing within one tick and a median of 30
+> ticks** — that is, better than the authored baseline's own 4.3%, because the
+> mechanic now runs to its 30-tick cap as it was designed to.
+>
+> This repair has a second-order effect that matters elsewhere: with the
+> retiarius backing off properly again, the hoplomachus recovers its own reach
+> against it (`technical vs fast` returns from 2.43 to 2.56). Anything measured
+> against a broken disengage — including the 1.90 figure the ordering sign-off
+> rested on — has to be re-read once it is repaired.
 
 **One reviewer finding measured false, recorded rather than dropped.** The
 review predicted that Technical's forced parry-counter would degrade, since it
@@ -756,14 +811,17 @@ than one that has not measured at all.
 All figures at 200 seeds, package `fast-slash` 0.9–2.05, `fast-burst-lunge`
 1.60–2.40, `rootTravel` 0.80, `startMaxRange` 4.0.
 
+All figures at 200 seeds, package `fast-slash` 0.9–2.05, `fast-burst-lunge`
+1.60–2.40, `rootTravel` 0.80, `startMaxRange` 4.0,
+`FAST_FORCED_DISENGAGE_END_RANGE` 3.35.
+
 | gate | measured | verdict |
 |---|---|---|
-| 1. reach ordering, margins ≥0.20 — **clean comparison** | vs murmillo: retiarius 1.90, hoplomachus 2.10 → **+0.20** | ✔ **only if the restatement above is accepted**; exactly at the bar |
-| 1. same, on pooled medians | +0.42 / **+0.15** | ✘ fails — and is the comparison shown to be invalid |
-| 2. distribution ≤15% pooled, ≤25% per matchup | 12.5% pooled, worst 22.4%, vs murmillo 6.8% | ✔ passes |
-| 3. forced disengage ≤5% immediate, median ≥24 | **23.5%**, median **11** | ✘ **fails** — fix identified, unmeasured |
-| 3b. parry → counter ≥90% | 96.6% | ✔ passes |
-| 4. geometry failures ≤ hoplomachus' | 43.9% vs 46.7% | ✔ thin |
+| 1. reach ordering, margin ≥0.20 | **depends on which comparison** — pooled +0.20 ✔, common-third +0.15 ✘, head-to-head +0.61 ✔ | **open**, see "Which ordering question to ask" |
+| 2. distribution ≤15% pooled, ≤25% per matchup | 11.3% pooled, worst 18.6%, vs murmillo 8.1% | ✔ passes |
+| 3. forced disengage ≤5% immediate, median ≥24 | **3.0%**, median **30** | ✔ passes, better than the authored baseline |
+| 3b. parry → counter ≥90% | 96.3% | ✔ passes |
+| 4. geometry failures ≤ hoplomachus' | 48.3% vs 46.7% | ✘ **fails, narrowly** — first appearance; needs a sweep or a re-derived bar |
 | 5. balance bands unchanged | `heavy > fast` ~92% vs band 55–75% | ✘ **the balance task's entire job** |
 | 6. camera unretuned | unmeasured | — pending |
 
