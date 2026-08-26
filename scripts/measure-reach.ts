@@ -1,69 +1,81 @@
-// Where each attack actually lands, and how the signature mechanics that
-// depend on distance fare.
+// Where each attack actually lands, and how the distance-dependent signature
+// mechanics fare. The retiarius-reach slice's acceptance instrument.
 //
-// This is the retiarius-reach slice's acceptance harness. It exists as
-// committed, reviewable code rather than as numbers pasted into a spec because
-// the external review's blocking finding was precisely that: a criterion whose
-// measurement is not frozen is not a criterion, since two reasonable harnesses
-// disagree about what "makes contact" means and land on different medians.
+// It is committed, reviewable code rather than numbers pasted into a spec
+// because a criterion whose measurement is not frozen is not a criterion: two
+// reasonable harnesses disagree about what "makes contact" means and land on
+// different medians. With `--gate` it asserts the slice's frozen thresholds
+// and exits non-zero, so it is an acceptance gate rather than a report.
 //
-// Everything that could be decided two ways is decided once, here, with the
-// reason:
+// ---------------------------------------------------------------------------
+// WHERE THE SEPARATION COMES FROM -- the whole reason the kernel gained
+// `contactDiagnostics.ts`.
+//
+// Separation is read from phase 9's frozen snapshot through a `ContactCollector`,
+// NOT from the state after `advanceBattleTick`. The first version of this
+// harness sampled after the tick and was wrong: phase 9 resolves contact, then
+// phase 10 applies that same attack's authored pushback plus a fresh
+// separation/arena correction, so a post-tick reading is inflated by the hit
+// being measured -- and inflated by DIFFERENT amounts per outcome, since a hit
+// pushes fully, a blocked hit at 0.30 of that, and a parry or a miss not at
+// all. External review caught it with one number: `heavy-cleave` reported a
+// contact p90 of 2.03 against a hard authored maximum of 1.8.
+//
+// The start separation has the same hazard and the same fix: an action starts
+// in phase 5, BEFORE this tick's movement, so it is read from the state at the
+// beginning of that tick rather than the end.
+// ---------------------------------------------------------------------------
+//
+// The remaining protocol decisions, each made once here:
 //
 //  * WHICH BOUTS. The equal-stat style fixture from `balance.test.ts` -- same
-//    stats for all three styles, varying only the archetype -- over
-//    `--seeds` consecutive seeds from `BASELINE_TEST_SEED`, all nine ordered
-//    matchups. Equal-stat rather than the roster, because a roster measurement
-//    would let fighter tuning move a reach number.
+//    stats for all three styles, varying only the archetype -- over `--seeds`
+//    consecutive seeds from `BASELINE_TEST_SEED`, all nine ordered matchups.
+//    Equal-stat rather than the roster, so fighter tuning cannot move a reach
+//    number.
 //
-//  * ONE SAMPLE PER ACTION INSTANCE, taken on the tick that instance occupies
-//    its `contact` phase, from the pre-resolution root separation. Actions are
-//    keyed by `ActionInstanceId`, so a long bout cannot contribute the same
-//    swing twice.
+//  * ONE SAMPLE PER ACTION INSTANCE. The kernel emits one record for every
+//    contact intent phase 9 considers, including intents it skips because
+//    their actor was defeated earlier in the same batch. The harness asserts
+//    that instance ids are unique, so nothing is double-counted or dropped.
 //
-//  * WHICH INSTANCES COUNT. Only those whose geometry actually reached the
-//    target:
-//      - EXCLUDED `attack-missed` reason `geometry` -- the weapon did not
-//        arrive;
-//      - EXCLUDED `attack-missed` reason `target-unavailable` -- there was
-//        nothing to arrive at;
-//      - EXCLUDED `attack-evaded` -- an evade succeeds exactly by leaving the
-//        attack's geometry, so it is a geometry failure under another event
-//        name. Including it was the measurement defect the review caught: the
-//        defender's authored 0.9-1.2 dash is added to the separation, which
-//        inflates the median, and inflates it MOST for the long-reaching
-//        attacks whose case this harness is arguing.
-//      - INCLUDED `attack-missed` reason `accuracy`, `attack-blocked`,
-//        `attack-parried`, `damage-dealt` -- in all four the weapon reached
-//        the opponent at that separation. Whether the swing then landed is an
-//        accuracy/defence question, not a reach one.
+//  * WHICH INSTANCES COUNT AS REACHED. `hit`, `blocked`, `parried`,
+//    `missed-accuracy` -- in all four the weapon arrived at that separation,
+//    and whether the swing landed is an accuracy or defence question rather
+//    than a reach one. `missed-geometry`, `evaded`, `target-unavailable` and
+//    `actor-defeated` do not count as reached; the first two are reported as
+//    the geometry-failure rate.
 //
-//  * PERCENTILES. `balanceCohorts.percentile` is imported rather than
-//    reimplemented, so this file cannot drift from the convention the balance
-//    suites already use (nearest-rank, `sorted[floor((n-1) * f)]`).
+//  * PERCENTILES from `balanceCohorts.percentile`, imported rather than
+//    reimplemented.
 //
 //  * WEIGHTING. Every statistic is reported per ordered matchup as well as
-//    pooled. A pooled median alone can move because one action got selected
-//    more often rather than because it started landing further out, and a
-//    pooled median can also pass while half the sample still sits at the old
-//    close distance. The per-matchup table and the explicit tail share below
-//    are what make those two failures visible.
+//    pooled, because a pooled figure can move because an action was selected
+//    more often rather than because it began landing further out, and can pass
+//    while half the sample sits at the old close distance.
 //
-// `--overlay <file.json>` patches the authored catalog before the run: a
-// partial `{ attacks?, styles? }` object, deep-merged. That is the prototyping
-// seam -- candidate numbers are measured without editing content, so a sweep
-// leaves no diff and cannot be confused with a decision.
+//  * COMPARATORS ARE CHOSEN TO BE INDEPENDENT of the change being judged.
+//    The hoplomachus' geometry-failure rate is taken from its matchups that
+//    contain no `fast` at all, because its `vs fast` component moves when the
+//    retiarius moves -- the coupling defect that invalidated an earlier version
+//    of the ordering criterion.
+//
+// `--overlay <file.json>` deep-merges a partial `{ attacks?, styles? }` into
+// the catalog before the run and validates the result, so candidate numbers are
+// measured without editing content and an invalid candidate fails loudly.
 //
 // Usage:
 //   npm run measure:reach -- --seeds 200
-//   npm run measure:reach -- --seeds 30 --overlay /tmp/candidate.json
-//   npm run measure:reach -- --seeds 30 --json /tmp/out.json
+//   npm run measure:reach -- --seeds 200 --gate
+//   npm run measure:reach -- --seeds 50 --overlay /tmp/candidate.json --json /tmp/out.json
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { COMBAT_STYLES } from '../src/content/combatStyles'
 import { BASELINE_TEST_SEED } from '../src/content/mvpSeries'
 import { advanceBattleTick, createBattle, MAX_BOUT_TICKS } from '../src/simulation/battle'
+import { validateCombatStyleCatalog } from '../src/simulation/combatActions'
 import { percentile } from '../src/testSupport/balanceCohorts'
+import type { ContactCollector, ContactOutcome, ContactRecord } from '../src/simulation/contactDiagnostics'
 import type { AttackActionId, CombatStyleCatalog } from '../src/simulation/combatActions'
 import type { Archetype, FighterDefinition } from '../src/simulation/fighters'
 
@@ -77,27 +89,35 @@ const COMMITTED_ATTACK: Readonly<Record<Archetype, AttackActionId>> = {
 }
 
 /**
- * The murmillo's authored `preferredRange.max`. The tail statistic below asks
- * how much of a type's committed offence happens inside the murmillo's own
- * fighting distance -- read from the catalog rather than written as `1.7`, so
- * a slice that moves the murmillo cannot silently move the yardstick too.
+ * The floor on how much ground Fast's forced disengage must actually open,
+ * in units, at the median.
+ *
+ * Measured off the AUTHORED content, which is the behaviour being preserved,
+ * and gated separately from duration because duration alone is satisfiable by
+ * making the range exit unreachable: every episode then pins to the 30-tick cap
+ * and the median passes without Fast having retreated at all. That failure mode
+ * was raised in external review and this is the answer to it.
+ *
+ * Set from the baseline run at 200 seeds; see the spec's criterion 3.
  */
-const MURMILLO_ENVELOPE = COMBAT_STYLES.styles.heavy.preferredRange.max
+const DISENGAGE_GAIN_FLOOR = 0.75
 
-interface Args {
-  seeds: number
-  overlay?: string
-  json?: string
-}
+/** Outcomes in which the weapon reached the target at the recorded separation. */
+const REACHED: ReadonlySet<ContactOutcome> = new Set<ContactOutcome>(['hit', 'blocked', 'parried', 'missed-accuracy'])
+/** Outcomes in which it did not, and which the geometry-failure rate is computed over. */
+const GEOMETRY_FAILURE: ReadonlySet<ContactOutcome> = new Set<ContactOutcome>(['missed-geometry', 'evaded'])
+
+interface Args { seeds: number; overlay?: string; json?: string; gate: boolean }
 
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { seeds: 200 }
+  const args: Args = { seeds: 200, gate: false }
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i]
     const value = argv[i + 1]
     if (flag === '--seeds') { args.seeds = Number(value); i += 1 }
     else if (flag === '--overlay') { args.overlay = value; i += 1 }
     else if (flag === '--json') { args.json = value; i += 1 }
+    else if (flag === '--gate') { args.gate = true }
     else if (flag.startsWith('--')) throw new Error(`unknown flag ${flag}`)
   }
   if (!Number.isInteger(args.seeds) || args.seeds < 1) throw new Error(`--seeds must be a positive integer, got ${String(args.seeds)}`)
@@ -105,141 +125,163 @@ function parseArgs(argv: readonly string[]): Args {
 }
 
 function equalStatFighter(id: string, archetype: Archetype): FighterDefinition {
-  // Copied deliberately from `balance.test.ts`'s own fixture, and deliberately
-  // NOT read from `mvpSeries.ts`: roster tuning must not be able to move a
-  // reach measurement any more than it may move a balance band.
+  // Copied deliberately from `balance.test.ts`'s fixture, and deliberately NOT
+  // read from `mvpSeries.ts`: roster tuning must not be able to move a reach
+  // measurement any more than it may move a balance band.
   return { id, name: id, school: 'Style Cohort', archetype, maxHp: 160, power: 20, accuracy: 0.88, defenseChance: 0.35, criticalChance: 0.12 }
 }
 
-type Overlay = { attacks?: Record<string, Record<string, unknown>>; styles?: Record<string, Record<string, unknown>> }
+// ---------------------------------------------------------------------------
+// Overlay
+// ---------------------------------------------------------------------------
 
-function applyOverlay(overlayPath: string | undefined): CombatStyleCatalog {
+type Json = Record<string, unknown>
+
+/**
+ * Recursive merge over plain objects, replacing leaves. `Object.assign` was
+ * wrong here and was caught in review: patching `{contactRange: {max}}` with it
+ * replaced the whole `contactRange`, silently dropping `min`.
+ */
+function deepMerge(base: Json, patch: Json): void {
+  for (const [key, value] of Object.entries(patch)) {
+    const existing = base[key]
+    if (value !== null && typeof value === 'object' && !Array.isArray(value) &&
+        existing !== null && typeof existing === 'object' && !Array.isArray(existing)) {
+      deepMerge(existing as Json, value as Json)
+    } else {
+      base[key] = value
+    }
+  }
+}
+
+function catalogFor(overlayPath: string | undefined): CombatStyleCatalog {
   const catalog = structuredClone(COMBAT_STYLES) as unknown as CombatStyleCatalog
-  if (!overlayPath) return catalog
-  const overlay = JSON.parse(readFileSync(overlayPath, 'utf8')) as Overlay
-  const attacks = catalog.attacks as unknown as Record<string, Record<string, unknown>>
-  const styles = catalog.styles as unknown as Record<string, Record<string, unknown>>
-  for (const [id, patch] of Object.entries(overlay.attacks ?? {})) {
-    if (!(id in attacks)) throw new Error(`overlay patches unknown attack '${id}'`)
-    Object.assign(attacks[id], patch)
+  if (overlayPath) {
+    const overlay = JSON.parse(readFileSync(overlayPath, 'utf8')) as { attacks?: Json; styles?: Json }
+    const attacks = catalog.attacks as unknown as Json
+    const styles = catalog.styles as unknown as Json
+    for (const [id, patch] of Object.entries(overlay.attacks ?? {})) {
+      if (!(id in attacks)) throw new Error(`overlay patches unknown attack '${id}'`)
+      deepMerge(attacks[id] as Json, patch as Json)
+    }
+    for (const [id, patch] of Object.entries(overlay.styles ?? {})) {
+      if (!(id in styles)) throw new Error(`overlay patches unknown style '${id}'`)
+      deepMerge(styles[id] as Json, patch as Json)
+    }
   }
-  for (const [id, patch] of Object.entries(overlay.styles ?? {})) {
-    if (!(id in styles)) throw new Error(`overlay patches unknown style '${id}'`)
-    Object.assign(styles[id], patch)
-  }
+  // The duel arena, so a candidate that violates a catalog invariant fails here
+  // rather than producing plausible-looking numbers.
+  validateCombatStyleCatalog(catalog, { radius: 6.5, lateralLimit: 2.5, minimumSeparation: 0.9, movementPolicy: 'ordered-pair' })
   return catalog
 }
 
-interface Sample {
-  /** Separation on the tick the instance was chosen. */
-  start: number
-  /** Separation on the tick the instance occupied `contact`. */
-  contact: number
-}
+// ---------------------------------------------------------------------------
+// Measurement
+// ---------------------------------------------------------------------------
+
+interface Sample { start: number; contact: number; outcome: ContactOutcome }
+
+/** One episode of Fast's forced disengage: how long it ran and how much ground it actually opened. */
+interface DisengageEpisode { ticks: number; gained: number; exit: 'range' | 'cap' | 'censored' }
 
 interface MatchupResult {
   label: string
-  /** Reached-the-target samples, per attack id. */
-  samples: Record<string, Sample[]>
-  /** Instances excluded because their geometry never reached, per attack id. */
+  home: Archetype
+  away: Archetype
+  reached: Record<string, Sample[]>
   geometryFailures: Record<string, number>
-  /** Ticks each fast forced-disengage lasted before clearing. */
-  forcedDisengageTicks: number[]
-  /** Forced disengages that cleared on the tick after they were set: the mechanic did not run. */
-  forcedDisengageImmediate: number
-  successfulParries: number
-  parryCounterStarts: number
+  otherOutcomes: Record<string, number>
+  disengages: DisengageEpisode[]
+  /** Successful parries and the counters they converted into, keyed by the incoming action. */
+  parries: Record<string, number>
+  counters: number
 }
 
-function emptyMatchup(label: string): MatchupResult {
-  return { label, samples: {}, geometryFailures: {}, forcedDisengageTicks: [], forcedDisengageImmediate: 0, successfulParries: 0, parryCounterStarts: 0 }
+function emptyMatchup(label: string, home: Archetype, away: Archetype): MatchupResult {
+  return { label, home, away, reached: {}, geometryFailures: {}, otherOutcomes: {}, disengages: [], parries: {}, counters: 0 }
 }
 
-function runMatchup(catalog: CombatStyleCatalog, homeStyle: Archetype, awayStyle: Archetype, seeds: number): MatchupResult {
-  const result = emptyMatchup(`${homeStyle} vs ${awayStyle}`)
+function runMatchup(catalog: CombatStyleCatalog, home: Archetype, away: Archetype, seeds: number): MatchupResult {
+  const result = emptyMatchup(`${home} vs ${away}`, home, away)
 
   for (let index = 0; index < seeds; index += 1) {
     let battle = createBattle({
-      home: equalStatFighter('home', homeStyle),
-      away: equalStatFighter('away', awayStyle),
+      home: equalStatFighter('home', home),
+      away: equalStatFighter('away', away),
       seed: BASELINE_TEST_SEED + index,
       combatStyles: catalog,
     })
     const ids = [battle.descriptor.homeId, battle.descriptor.awayId]
+    const separationOf = (state: typeof battle): number => {
+      const [a, b] = ids.map((id) => state.encounter.combatants[id])
+      const dx = a.position.x - b.position.x
+      const dz = a.position.z - b.position.z
+      return Math.sqrt(dx * dx + dz * dz)
+    }
 
+    const records: ContactRecord[] = []
+    const collector: ContactCollector = { record: (entry) => records.push(entry) }
     const startSeparation = new Map<string, number>()
-    const contactSeparation = new Map<string, number>()
-    const actionOf = new Map<string, string>()
-    const reachedTarget = new Map<string, boolean>()
-    const seenContact = new Set<string>()
-    const forcedSince = new Map<string, number>()
+    const forcedSince = new Map<string, { tick: number; separation: number }>()
 
     while (battle.phase === 'running' && battle.encounter.tick < MAX_BOUT_TICKS) {
       const previousTick = battle.encounter.tick
-      battle = advanceBattleTick(battle)
-      const [a, b] = ids.map((id) => battle.encounter.combatants[id])
-      const dx = a.position.x - b.position.x
-      const dz = a.position.z - b.position.z
-      const separation = Math.sqrt(dx * dx + dz * dz)
+      // An action starts in phase 5, before this tick's movement, so the
+      // separation it was launched at is this tick's OPENING separation.
+      const openingSeparation = separationOf(battle)
+      battle = advanceBattleTick(battle, undefined, collector)
 
       for (const event of battle.events) {
         if (event.tick !== previousTick + 1) continue
-        switch (event.type) {
-          case 'action-started':
-            startSeparation.set(event.actionInstanceId, separation)
-            actionOf.set(event.actionInstanceId, event.actionId)
-            break
-          case 'attack-missed':
-            // `accuracy` reached the target and missed; the other two never arrived.
-            reachedTarget.set(event.actionInstanceId, event.reason === 'accuracy')
-            break
-          case 'attack-evaded':
-            reachedTarget.set(event.actionInstanceId, false)
-            break
-          case 'attack-blocked':
-          case 'attack-parried':
-          case 'damage-dealt':
-            reachedTarget.set(event.actionInstanceId, true)
-            break
-          default:
-            break
+        if (event.type === 'action-started') {
+          startSeparation.set(event.actionInstanceId, openingSeparation)
+          if (event.actionId === 'technical-parry-counter') result.counters += 1
         }
-        if (event.type === 'attack-parried') result.successfulParries += 1
-        if (event.type === 'action-started' && event.actionId === 'technical-parry-counter') result.parryCounterStarts += 1
+        if (event.type === 'attack-parried') result.parries[event.actionId] = (result.parries[event.actionId] ?? 0) + 1
       }
 
-      for (const combatant of [a, b]) {
-        if (combatant.action.type === 'active' && combatant.action.phase === 'contact' && !seenContact.has(combatant.action.instanceId)) {
-          seenContact.add(combatant.action.instanceId)
-          contactSeparation.set(combatant.action.instanceId, separation)
-        }
-        // Fast's forced disengage, watched on the state field the kernel owns.
+      const endSeparation = separationOf(battle)
+      for (const id of ids) {
+        const combatant = battle.encounter.combatants[id]
         const forcedTick = combatant.forcedDisengageStartTick
-        if (forcedTick !== undefined && !forcedSince.has(combatant.id)) forcedSince.set(combatant.id, forcedTick)
-        if (forcedTick === undefined && forcedSince.has(combatant.id)) {
-          const elapsed = battle.encounter.tick - (forcedSince.get(combatant.id) as number)
-          result.forcedDisengageTicks.push(elapsed)
-          if (elapsed <= 1) result.forcedDisengageImmediate += 1
-          forcedSince.delete(combatant.id)
+        if (forcedTick !== undefined && !forcedSince.has(id)) forcedSince.set(id, { tick: forcedTick, separation: endSeparation })
+        if (forcedTick === undefined && forcedSince.has(id)) {
+          const started = forcedSince.get(id) as { tick: number; separation: number }
+          const ticks = battle.encounter.tick - started.tick
+          result.disengages.push({ ticks, gained: endSeparation - started.separation, exit: ticks >= 30 ? 'cap' : 'range' })
+          forcedSince.delete(id)
         }
       }
     }
+    // Episodes still running when the bout ended are censored, not dropped.
+    for (const [, started] of forcedSince) {
+      result.disengages.push({ ticks: battle.encounter.tick - started.tick, gained: separationOf(battle) - started.separation, exit: 'censored' })
+    }
 
-    for (const [instance, contact] of contactSeparation) {
-      const actionId = actionOf.get(instance)
-      if (actionId === undefined || !(actionId in catalog.attacks)) continue
-      if (reachedTarget.get(instance) !== true) {
-        result.geometryFailures[actionId] = (result.geometryFailures[actionId] ?? 0) + 1
-        continue
+    const seenInstances = new Set<string>()
+    for (const record of records) {
+      if (seenInstances.has(record.actionInstanceId)) {
+        throw new Error(`duplicate contact record for ${record.actionInstanceId} -- the harness would be double-counting`)
       }
-      const start = startSeparation.get(instance)
-      if (start === undefined) continue
-      ;(result.samples[actionId] ??= []).push({ start, contact })
+      seenInstances.add(record.actionInstanceId)
+      const start = startSeparation.get(record.actionInstanceId)
+      if (REACHED.has(record.outcome)) {
+        if (start === undefined) throw new Error(`reached contact ${record.actionInstanceId} has no recorded start separation`)
+        ;(result.reached[record.actionId] ??= []).push({ start, contact: record.separation, outcome: record.outcome })
+      } else if (GEOMETRY_FAILURE.has(record.outcome)) {
+        result.geometryFailures[record.actionId] = (result.geometryFailures[record.actionId] ?? 0) + 1
+      } else {
+        result.otherOutcomes[record.actionId] = (result.otherOutcomes[record.actionId] ?? 0) + 1
+      }
     }
   }
 
   return result
 }
+
+// ---------------------------------------------------------------------------
+// Summary
+// ---------------------------------------------------------------------------
 
 interface Summary {
   n: number
@@ -247,14 +289,12 @@ interface Summary {
   contactP10: number
   contactMedian: number
   contactP90: number
-  /** Share of reached contacts landing at or below the murmillo's preferred max. */
-  insideMurmilloEnvelope: number
-  /** `startMedian - contactMedian`, negative when the attack closes between decision and contact. */
-  delta: number
+  insideEnvelope: number
+  closes: number
   geometryFailureRate: number
 }
 
-function summarise(samples: readonly Sample[], geometryFailures: number): Summary | undefined {
+function summarise(samples: readonly Sample[], geometryFailures: number, envelope: number): Summary | undefined {
   if (samples.length === 0) return undefined
   const contacts = samples.map((s) => s.contact).sort((x, y) => x - y)
   const starts = samples.map((s) => s.start).sort((x, y) => x - y)
@@ -266,99 +306,171 @@ function summarise(samples: readonly Sample[], geometryFailures: number): Summar
     contactP10: percentile(contacts, 0.1),
     contactMedian,
     contactP90: percentile(contacts, 0.9),
-    insideMurmilloEnvelope: contacts.filter((d) => d <= MURMILLO_ENVELOPE).length / contacts.length,
-    delta: startMedian - contactMedian,
+    insideEnvelope: contacts.filter((d) => d <= envelope).length / contacts.length,
+    closes: startMedian - contactMedian,
     geometryFailureRate: geometryFailures / (samples.length + geometryFailures),
   }
 }
 
 const args = parseArgs(process.argv.slice(2))
-const catalog = applyOverlay(args.overlay)
+const catalog = catalogFor(args.overlay)
+
+/**
+ * The murmillo's `preferredRange.max`, read from the PATCHED catalog. Reading
+ * it from the unpatched global was a defect in an earlier version: an overlay
+ * that moved the murmillo would have been judged against the old yardstick.
+ */
+const ENVELOPE = catalog.styles.heavy.preferredRange.max
 
 const matchups: MatchupResult[] = []
-for (const homeStyle of STYLES) {
-  for (const awayStyle of STYLES) matchups.push(runMatchup(catalog, homeStyle, awayStyle, args.seeds))
+for (const home of STYLES) for (const away of STYLES) matchups.push(runMatchup(catalog, home, away, args.seeds))
+
+const byLabel = new Map(matchups.map((m) => [m.label, m]))
+const pooledSamples: Record<string, Sample[]> = {}
+const pooledGeometryFailures: Record<string, number> = {}
+const pooledDisengages: DisengageEpisode[] = []
+const pooledParries: Record<string, number> = {}
+let pooledCounters = 0
+for (const m of matchups) {
+  for (const [id, samples] of Object.entries(m.reached)) (pooledSamples[id] ??= []).push(...samples)
+  for (const [id, n] of Object.entries(m.geometryFailures)) pooledGeometryFailures[id] = (pooledGeometryFailures[id] ?? 0) + n
+  pooledDisengages.push(...m.disengages)
+  for (const [id, n] of Object.entries(m.parries)) pooledParries[id] = (pooledParries[id] ?? 0) + n
+  pooledCounters += m.counters
 }
 
-const pooled = emptyMatchup('POOLED')
-for (const matchup of matchups) {
-  for (const [id, samples] of Object.entries(matchup.samples)) (pooled.samples[id] ??= []).push(...samples)
-  for (const [id, count] of Object.entries(matchup.geometryFailures)) pooled.geometryFailures[id] = (pooled.geometryFailures[id] ?? 0) + count
-  pooled.forcedDisengageTicks.push(...matchup.forcedDisengageTicks)
-  pooled.forcedDisengageImmediate += matchup.forcedDisengageImmediate
-  pooled.successfulParries += matchup.successfulParries
-  pooled.parryCounterStarts += matchup.parryCounterStarts
+const fixed = (v: number, p = 2) => v.toFixed(p)
+const pct = (v: number) => `${(v * 100).toFixed(1)}%`
+const committedOf = (label: string) => {
+  const m = byLabel.get(label) as MatchupResult
+  const id = COMMITTED_ATTACK[m.home]
+  return summarise(m.reached[id] ?? [], m.geometryFailures[id] ?? 0, ENVELOPE)
 }
-
-const fixed = (value: number, places = 2) => value.toFixed(places)
-const pct = (value: number) => `${(value * 100).toFixed(1)}%`
 
 console.log(`\nequal-stat cohorts, ${args.seeds} seeds x 9 ordered matchups${args.overlay ? `, overlay ${args.overlay}` : ''}`)
-console.log(`murmillo envelope (heavy preferredRange.max) = ${MURMILLO_ENVELOPE}\n`)
+console.log(`murmillo envelope (heavy preferredRange.max, from the patched catalog) = ${ENVELOPE}\n`)
 
 console.log('POOLED, per attack')
-console.log(`${'action'.padEnd(26)} ${'authored'.padEnd(11)} ${'n'.padStart(6)} ${'start'.padStart(6)} ${'p10'.padStart(6)} ${'med'.padStart(6)} ${'p90'.padStart(6)} ${'delta'.padStart(7)} ${'<=env'.padStart(7)} ${'geomFail'.padStart(9)}`)
-for (const id of Object.keys(catalog.attacks)) {
-  const summary = summarise(pooled.samples[id] ?? [], pooled.geometryFailures[id] ?? 0)
-  const authored = `${catalog.attacks[id as AttackActionId].contactRange.min}-${catalog.attacks[id as AttackActionId].contactRange.max}`
-  if (!summary) { console.log(`${id.padEnd(26)} ${authored.padEnd(11)} ${'0'.padStart(6)}`); continue }
+console.log(`${'action'.padEnd(26)} ${'authored'.padEnd(11)} ${'n'.padStart(6)} ${'start'.padStart(6)} ${'p10'.padStart(6)} ${'med'.padStart(6)} ${'p90'.padStart(6)} ${'closes'.padStart(7)} ${'<=env'.padStart(7)} ${'geomFail'.padStart(9)}`)
+for (const id of Object.keys(catalog.attacks) as AttackActionId[]) {
+  const s = summarise(pooledSamples[id] ?? [], pooledGeometryFailures[id] ?? 0, ENVELOPE)
+  const authored = `${catalog.attacks[id].contactRange.min}-${catalog.attacks[id].contactRange.max}`
+  if (!s) { console.log(`${id.padEnd(26)} ${authored.padEnd(11)} ${'0'.padStart(6)}`); continue }
   console.log(
-    `${id.padEnd(26)} ${authored.padEnd(11)} ${String(summary.n).padStart(6)} ${fixed(summary.startMedian).padStart(6)} ` +
-    `${fixed(summary.contactP10).padStart(6)} ${fixed(summary.contactMedian).padStart(6)} ${fixed(summary.contactP90).padStart(6)} ` +
-    `${fixed(summary.delta).padStart(7)} ${pct(summary.insideMurmilloEnvelope).padStart(7)} ${pct(summary.geometryFailureRate).padStart(9)}`,
+    `${id.padEnd(26)} ${authored.padEnd(11)} ${String(s.n).padStart(6)} ${fixed(s.startMedian).padStart(6)} ${fixed(s.contactP10).padStart(6)} ` +
+    `${fixed(s.contactMedian).padStart(6)} ${fixed(s.contactP90).padStart(6)} ${fixed(s.closes).padStart(7)} ${pct(s.insideEnvelope).padStart(7)} ${pct(s.geometryFailureRate).padStart(9)}`,
   )
 }
 
-console.log('\nCOMMITTED attack contact median, per ordered matchup (the reach ordering is gated here, not only pooled)')
-console.log(`${'matchup'.padEnd(26)} ${'action'.padEnd(26)} ${'n'.padStart(5)} ${'med'.padStart(6)} ${'<=env'.padStart(7)}`)
-for (const matchup of matchups) {
-  const [homeStyle] = matchup.label.split(' vs ') as [Archetype]
-  const actionId = COMMITTED_ATTACK[homeStyle]
-  const summary = summarise(matchup.samples[actionId] ?? [], matchup.geometryFailures[actionId] ?? 0)
-  console.log(
-    `${matchup.label.padEnd(26)} ${actionId.padEnd(26)} ${String(summary?.n ?? 0).padStart(5)} ` +
-    `${(summary ? fixed(summary.contactMedian) : '--').padStart(6)} ${(summary ? pct(summary.insideMurmilloEnvelope) : '--').padStart(7)}`,
-  )
+console.log('\nCOMMITTED attack, per ordered matchup')
+console.log(`${'matchup'.padEnd(26)} ${'n'.padStart(6)} ${'med'.padStart(6)} ${'<=env'.padStart(7)} ${'geomFail'.padStart(9)}`)
+for (const m of matchups) {
+  const s = committedOf(m.label)
+  console.log(`${m.label.padEnd(26)} ${String(s?.n ?? 0).padStart(6)} ${(s ? fixed(s.contactMedian) : '--').padStart(6)} ${(s ? pct(s.insideEnvelope) : '--').padStart(7)} ${(s ? pct(s.geometryFailureRate) : '--').padStart(9)}`)
 }
 
-console.log('\nORDERING (pooled committed medians)')
-const orderingRow = STYLES.map((style) => {
-  const summary = summarise(pooled.samples[COMMITTED_ATTACK[style]] ?? [], 0)
-  return { style, median: summary?.contactMedian }
-})
-console.log(orderingRow.map(({ style, median }) => `${style} ${median === undefined ? '--' : fixed(median)}`).join('   '))
-const [heavyRow, fastRow, technicalRow] = orderingRow
-if (heavyRow.median !== undefined && fastRow.median !== undefined && technicalRow.median !== undefined) {
-  console.log(`gaps: fast-heavy ${fixed(fastRow.median - heavyRow.median)}   technical-fast ${fixed(technicalRow.median - fastRow.median)}`)
+const headToHead = {
+  retiarius: committedOf('fast vs technical'),
+  hoplomachus: committedOf('technical vs fast'),
+}
+console.log('\nHEAD TO HEAD (the ordering gate)')
+console.log(`retiarius ${fixed(headToHead.retiarius?.contactMedian ?? Number.NaN)}   hoplomachus ${fixed(headToHead.hoplomachus?.contactMedian ?? Number.NaN)}   margin ${fixed((headToHead.hoplomachus?.contactMedian ?? 0) - (headToHead.retiarius?.contactMedian ?? 0))}`)
+
+/** The hoplomachus' geometry-failure rate over its matchups containing no `fast` -- an independent comparator. */
+function hoplomachusIndependentGeometryFailure(): number {
+  let reached = 0
+  let failed = 0
+  for (const label of ['technical vs heavy', 'technical vs technical']) {
+    const m = byLabel.get(label) as MatchupResult
+    reached += (m.reached['technical-driving-thrust'] ?? []).length
+    failed += m.geometryFailures['technical-driving-thrust'] ?? 0
+  }
+  return reached + failed > 0 ? failed / (reached + failed) : Number.NaN
 }
 
+const disengageTicks = pooledDisengages.map((d) => d.ticks).sort((a, b) => a - b)
+const disengageGained = pooledDisengages.map((d) => d.gained).sort((a, b) => a - b)
+const immediateShare = pooledDisengages.length > 0 ? pooledDisengages.filter((d) => d.ticks <= 1).length / pooledDisengages.length : Number.NaN
 console.log('\nSIGNATURE MECHANICS')
-const forced = [...pooled.forcedDisengageTicks].sort((x, y) => x - y)
-if (forced.length > 0) {
+if (pooledDisengages.length > 0) {
+  const byExit = (exit: string) => pooledDisengages.filter((d) => d.exit === exit).length
   console.log(
-    `fast forced disengage: n=${forced.length} med=${percentile(forced, 0.5)} p90=${percentile(forced, 0.9)} ticks, ` +
-    `cleared within one tick ${pct(pooled.forcedDisengageImmediate / forced.length)}`,
+    `fast forced disengage: n=${pooledDisengages.length} ticks med=${percentile(disengageTicks, 0.5)} ` +
+    `separation gained med=${fixed(percentile(disengageGained, 0.5))} p10=${fixed(percentile(disengageGained, 0.1))} ` +
+    `| cleared within one tick ${pct(immediateShare)} | exits range=${byExit('range')} cap=${byExit('cap')} censored=${byExit('censored')}`,
   )
 } else {
   console.log('fast forced disengage: never triggered')
 }
-console.log(
-  `technical parry -> counter: ${pooled.parryCounterStarts}/${pooled.successfulParries} = ` +
-  `${pooled.successfulParries > 0 ? pct(pooled.parryCounterStarts / pooled.successfulParries) : '--'}`,
-)
+const totalParries = Object.values(pooledParries).reduce((t, n) => t + n, 0)
+console.log(`technical parry -> counter: ${pooledCounters}/${totalParries} = ${totalParries > 0 ? pct(pooledCounters / totalParries) : '--'}`)
+console.log(`  parries by incoming action: ${Object.entries(pooledParries).map(([id, n]) => `${id} ${n}`).join(', ') || '(none)'}`)
+console.log(`hoplomachus geometry failure, fast-free matchups only: ${pct(hoplomachusIndependentGeometryFailure())}`)
+
+// ---------------------------------------------------------------------------
+// Gate
+// ---------------------------------------------------------------------------
+
+if (args.gate) {
+  const failures: string[] = []
+  const check = (ok: boolean, description: string) => { if (!ok) failures.push(description) }
+
+  const lunge = catalog.attacks['fast-burst-lunge']
+  const drivingThrust = catalog.attacks['technical-driving-thrust']
+  // Asserted, not left to prose: the "<= envelope" share counts the interval
+  // [contactRange.min, envelope], whose WIDTH is set by the floor. Comparing
+  // two types across unequal floors is invalid.
+  check(lunge.contactRange.min === drivingThrust.contactRange.min,
+    `floor alignment: lunge min ${lunge.contactRange.min} != driving thrust min ${drivingThrust.contactRange.min}, so the envelope shares are not comparable`)
+
+  const margin = (headToHead.hoplomachus?.contactMedian ?? Number.NaN) - (headToHead.retiarius?.contactMedian ?? Number.NaN)
+  check(margin >= 0.20, `head-to-head ordering margin ${fixed(margin)} below 0.20`)
+
+  const fastPooled = summarise(pooledSamples['fast-burst-lunge'] ?? [], pooledGeometryFailures['fast-burst-lunge'] ?? 0, ENVELOPE)
+  check((fastPooled?.insideEnvelope ?? 1) <= 0.15, `retiarius committed contacts inside the murmillo envelope ${pct(fastPooled?.insideEnvelope ?? Number.NaN)} above 15% pooled`)
+  for (const label of ['fast vs heavy', 'fast vs fast', 'fast vs technical']) {
+    const s = committedOf(label)
+    check((s?.insideEnvelope ?? 1) <= 0.25, `${label}: ${pct(s?.insideEnvelope ?? Number.NaN)} inside the murmillo envelope, above 25%`)
+  }
+
+  check(immediateShare <= 0.05, `forced disengages clearing within one tick ${pct(immediateShare)} above 5%`)
+  check(percentile(disengageTicks, 0.5) >= 24, `forced disengage median ${percentile(disengageTicks, 0.5)} ticks below 24`)
+  // Duration alone is satisfiable by making the range exit unreachable, which
+  // pins every episode to the 30-tick cap without proving Fast opened any
+  // ground. So the ground itself is gated, at the authored baseline's own
+  // measured median.
+  check(percentile(disengageGained, 0.5) >= DISENGAGE_GAIN_FLOOR, `forced disengage median separation gained ${fixed(percentile(disengageGained, 0.5))} below ${DISENGAGE_GAIN_FLOOR}`)
+
+  check(totalParries === 0 || pooledCounters / totalParries >= 0.90, `parry-to-counter conversion ${pct(pooledCounters / totalParries)} below 90%`)
+
+  const fastGeometry = fastPooled?.geometryFailureRate ?? 1
+  const comparator = hoplomachusIndependentGeometryFailure()
+  check(fastGeometry <= comparator, `retiarius committed geometry failures ${pct(fastGeometry)} above the hoplomachus' fast-free ${pct(comparator)}`)
+
+  console.log('\nGATE')
+  if (failures.length === 0) {
+    console.log('all reach gates pass')
+  } else {
+    for (const failure of failures) console.error(`FAIL ${failure}`)
+    process.exit(1)
+  }
+}
 
 if (args.json) {
   writeFileSync(args.json, `${JSON.stringify({
     seeds: args.seeds,
     overlay: args.overlay ?? null,
-    murmilloEnvelope: MURMILLO_ENVELOPE,
-    pooled: Object.fromEntries(Object.keys(catalog.attacks).map((id) => [id, summarise(pooled.samples[id] ?? [], pooled.geometryFailures[id] ?? 0) ?? null])),
-    perMatchup: matchups.map((matchup) => ({
-      label: matchup.label,
-      committed: Object.fromEntries(Object.keys(catalog.attacks).map((id) => [id, summarise(matchup.samples[id] ?? [], matchup.geometryFailures[id] ?? 0) ?? null])),
+    envelope: ENVELOPE,
+    pooled: Object.fromEntries((Object.keys(catalog.attacks) as AttackActionId[]).map((id) => [id, summarise(pooledSamples[id] ?? [], pooledGeometryFailures[id] ?? 0, ENVELOPE) ?? null])),
+    perMatchup: matchups.map((m) => ({
+      label: m.label,
+      attacks: Object.fromEntries((Object.keys(catalog.attacks) as AttackActionId[]).map((id) => [id, summarise(m.reached[id] ?? [], m.geometryFailures[id] ?? 0, ENVELOPE) ?? null])),
+      disengages: m.disengages,
+      parries: m.parries,
+      counters: m.counters,
     })),
-    forcedDisengage: { samples: forced.length, immediate: pooled.forcedDisengageImmediate },
-    parryCounter: { parries: pooled.successfulParries, counters: pooled.parryCounterStarts },
+    headToHeadMargin: (headToHead.hoplomachus?.contactMedian ?? Number.NaN) - (headToHead.retiarius?.contactMedian ?? Number.NaN),
+    hoplomachusIndependentGeometryFailure: hoplomachusIndependentGeometryFailure(),
   }, null, 2)}\n`, 'utf8')
   console.log(`\nwrote ${args.json}`)
 }

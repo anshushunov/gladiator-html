@@ -62,7 +62,39 @@
 # change, so the feature diff is judged by a boundary it did not write.
 set -euo pipefail
 BASE="${1:?base sha required}"
-FORBIDDEN='^(src/presentation/|src/style\.css$|src/main\.ts$|index\.html$|src/simulation/(balance|seasonBalance|dispositionBalance)\.test\.ts$|src/testSupport/balanceCohorts\.ts$)'
+# TWO PHASES, because a single list cannot be both complete and satisfiable.
+#
+# Review 2 found the previous version internally impossible: it forbade
+# `seasonBalance.test.ts`, which holds `GOLDEN_OUTCOMES`/`GOLDEN_SCORE`/
+# `GOLDEN_DELTAS`, and all of `src/presentation/`, which includes
+# `ArenaCamera.test.ts`'s recorded tick counts, opening distances and band-edge
+# crossings -- every one of which this slice's behaviour change MUST update.
+# Forbidding a file whose contents must move is a rule that cannot be obeyed.
+#
+# So the slice ships as two PRs and this list belongs to the first:
+#
+#   PREPARATORY PR (this one) -- the contact-diagnostics seam, the reach
+#   harness, the fixture splits, and this gate. It forbids the presentation
+#   SOURCE and the acceptance logic that carries no movable literal. The four
+#   mixed files are deliberately open, because splitting their literals into
+#   their own fixture modules is this PR's job.
+#
+#   CONTENT PR -- the catalog change. Branched from main after the first
+#   merges, so its diff no longer contains the harness, and its list adds:
+#   `scripts/measure-reach.ts`, `src/simulation/seasonBalance.test.ts`,
+#   `src/simulation/encounterCapacity.test.ts`, `src/simulation/series.test.ts`
+#   and `src/presentation/ArenaCamera.test.ts` -- by then all five hold only
+#   assertions, their literals having moved to fixture modules that the
+#   re-baseline rule governs instead.
+#
+# `scripts/measure-reach.ts` is absent here for the same reason: it is being
+# authored in this PR. It is the instrument that produces the acceptance
+# evidence, so from the content PR onward it is protected like any other
+# criterion.
+#
+# Screenshot baselines under `tests/__screenshots__/**` are never forbidden in
+# either phase: they are outputs of the change, not levers on it.
+FORBIDDEN='^(src/style\.css$|index\.html$|src/main\.ts$|src/presentation/(ArenaView|ArenaCamera|ProceduralFighter|PoseController|SeasonView|SeriesView|DecisionPanel|CombatAudio|gladiatorTypes|legibilityMode)\.ts$|src/presentation/poses/|src/simulation/(balance|dispositionBalance)\.test\.ts$|src/testSupport/balanceCohorts\.ts$|tests/legibility\.spec\.ts$|playwright\.config\.ts$)'
 # Committed + staged + unstaged + untracked, and both sides of every rename.
 CHANGED="$( { git diff --name-status -z --find-renames "$BASE" HEAD; git diff --name-status -z --find-renames HEAD; git diff --name-status -z --find-renames --cached; } \
   | tr '\0' '\n' | grep -vE '^[A-Z][0-9]*$' | sort -u )"
