@@ -73,9 +73,13 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { COMBAT_STYLES } from '../src/content/combatStyles'
 import { BASELINE_TEST_SEED } from '../src/content/mvpSeries'
 import { advanceBattleTick, createBattle, MAX_BOUT_TICKS } from '../src/simulation/battle'
-import { validateCombatStyleCatalog } from '../src/simulation/combatActions'
 import { FAST_FORCED_DISENGAGE_MAX_TICKS } from '../src/simulation/combatDecision'
 import { percentile } from '../src/testSupport/balanceCohorts'
+// `REACHED`, `GEOMETRY_FAILURE` and the overlay merge live in `src/` rather
+// than here: `scripts/` is outside tsconfig's `include`, so nothing in this
+// file is typechecked by `npm run build` or reachable by Vitest, and those two
+// pieces are the ones that can be silently wrong. See `reachHarness.ts`.
+import { applyOverlay, GEOMETRY_FAILURE, REACHED } from '../src/testSupport/reachHarness'
 import type { ContactCollector, ContactOutcome, ContactRecord } from '../src/simulation/contactDiagnostics'
 import type { AttackActionId, CombatStyleCatalog } from '../src/simulation/combatActions'
 import type { Archetype, FighterDefinition } from '../src/simulation/fighters'
@@ -115,11 +119,6 @@ const STYLE_ATTACKS: Readonly<Record<Archetype, readonly AttackActionId[]>> = {
  */
 const DISENGAGE_GAIN_FLOOR = 0.75
 
-/** Outcomes in which the weapon reached the target at the recorded separation. */
-const REACHED: ReadonlySet<ContactOutcome> = new Set<ContactOutcome>(['hit', 'blocked', 'parried', 'missed-accuracy'])
-/** Outcomes in which it did not, and which the geometry-failure rate is computed over. */
-const GEOMETRY_FAILURE: ReadonlySet<ContactOutcome> = new Set<ContactOutcome>(['missed-geometry', 'evaded'])
-
 interface Args { seeds: number; overlay?: string; json?: string; gate: boolean }
 
 function parseArgs(argv: readonly string[]): Args {
@@ -148,66 +147,18 @@ function equalStatFighter(id: string, archetype: Archetype): FighterDefinition {
 // Overlay
 // ---------------------------------------------------------------------------
 
-type Json = Record<string, unknown>
-
 /**
- * Recursive merge over plain objects, replacing leaves. `Object.assign` was
- * wrong here and was caught in review: patching `{contactRange: {max}}` with it
- * replaced the whole `contactRange`, silently dropping `min`.
+ * The merge, the strict unknown-key check and the catalog validation all live
+ * in `src/testSupport/reachHarness.ts`, where Vitest can reach them; this is
+ * only the file read. `applyOverlay` validates even with no overlay, so an
+ * unpatched run is checked against the same invariants a candidate is.
  */
-function deepMerge(base: Json, patch: Json): void {
-  for (const [key, value] of Object.entries(patch)) {
-    const existing = base[key]
-    if (value !== null && typeof value === 'object' && !Array.isArray(value) &&
-        existing !== null && typeof existing === 'object' && !Array.isArray(existing)) {
-      deepMerge(existing as Json, value as Json)
-    } else {
-      base[key] = value
-    }
-  }
-}
-
-/** Every key a patch names must already exist on the target, at every depth. */
-function requireKnownKeys(patch: Json, target: Json, path: string): void {
-  for (const [key, value] of Object.entries(patch)) {
-    if (!(key in target)) throw new Error(`overlay sets unknown field '${path}.${key}'`)
-    const existing = target[key]
-    if (value !== null && typeof value === 'object' && !Array.isArray(value) &&
-        existing !== null && typeof existing === 'object' && !Array.isArray(existing)) {
-      requireKnownKeys(value as Json, existing as Json, `${path}.${key}`)
-    }
-  }
-}
-
 function catalogFor(overlayPath: string | undefined): CombatStyleCatalog {
   const catalog = structuredClone(COMBAT_STYLES) as unknown as CombatStyleCatalog
-  if (overlayPath) {
-    const overlay = JSON.parse(readFileSync(overlayPath, 'utf8')) as { attacks?: Json; styles?: Json }
-    const attacks = catalog.attacks as unknown as Json
-    const styles = catalog.styles as unknown as Json
-    // Strict at every level, not just at the ids. `validateCombatStyleCatalog`
-    // checks the fields it knows about and ignores extras, so a typo like
-    // `rootTravl` would merge in as a new key, validate cleanly, and produce a
-    // candidate that measured exactly like the unpatched catalog -- a sweep
-    // silently reporting the baseline as a candidate result.
-    for (const key of Object.keys(overlay)) {
-      if (key !== 'attacks' && key !== 'styles') throw new Error(`overlay has unknown top-level key '${key}'; expected 'attacks' or 'styles'`)
-    }
-    for (const [id, patch] of Object.entries(overlay.attacks ?? {})) {
-      if (!(id in attacks)) throw new Error(`overlay patches unknown attack '${id}'`)
-      requireKnownKeys(patch as Json, attacks[id] as Json, `attacks.${id}`)
-      deepMerge(attacks[id] as Json, patch as Json)
-    }
-    for (const [id, patch] of Object.entries(overlay.styles ?? {})) {
-      if (!(id in styles)) throw new Error(`overlay patches unknown style '${id}'`)
-      requireKnownKeys(patch as Json, styles[id] as Json, `styles.${id}`)
-      deepMerge(styles[id] as Json, patch as Json)
-    }
-  }
-  // The duel arena, so a candidate that violates a catalog invariant fails here
-  // rather than producing plausible-looking numbers.
-  validateCombatStyleCatalog(catalog, { radius: 6.5, lateralLimit: 2.5, minimumSeparation: 0.9, movementPolicy: 'ordered-pair' })
-  return catalog
+  const overlay = overlayPath
+    ? (JSON.parse(readFileSync(overlayPath, 'utf8')) as { attacks?: Record<string, unknown>; styles?: Record<string, unknown> })
+    : {}
+  return applyOverlay(catalog, overlay)
 }
 
 // ---------------------------------------------------------------------------
