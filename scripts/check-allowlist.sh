@@ -47,14 +47,24 @@
 # checked to contain bands and method ONLY, with no frozen literal this slice
 # must re-baseline, so forbidding it outright costs nothing.
 #
-# NOT YET IN GROUP 2, and named here rather than left implicit:
-# `src/simulation/encounterCapacity.test.ts` and `src/simulation/series.test.ts`
-# each mix frozen literals that MUST move (the `dbe77c5e` fixture hash; the
-# per-bout lineup hashes and the `1-2` golden score) with acceptance logic that
-# must not (the capacity suite's >=50 action instances, >=50 contact
-# resolutions, >=1000 damage, >=20 damaged combatants, and its candidate-check
-# bounds). The plan's first task splits those literals into their own fixture
-# modules, after which both files join the list below. Until then they are open.
+# NOW IN GROUP 2, having been open in phase 1:
+# `src/simulation/encounterCapacity.test.ts`, `src/simulation/series.test.ts`,
+# `src/simulation/seasonBalance.test.ts`, `src/presentation/ArenaCamera.test.ts`
+# and `scripts/measure-reach.ts`. Each used to mix frozen literals that MUST
+# move (the `dbe77c5e` fixture hash; the per-bout lineup hashes and the `1-2`
+# golden score; `GOLDEN_OUTCOMES`/`GOLDEN_SCORE`/`GOLDEN_DELTAS`; the recorded
+# camera traces) with acceptance logic that must not (the capacity suite's
+# >=50 action instances, >=50 contact resolutions, >=1000 damage, >=20 damaged
+# combatants, its candidate-check bounds; `expectSmoothFraming`'s reversal,
+# zoom-rate, clamp and distance bounds). The preparatory PR split every one of
+# those literals into `src/testSupport/frozenFixtures/`, so the four test files
+# now hold criteria ONLY and can be forbidden without forbidding a file whose
+# contents must move.
+#
+# `src/testSupport/frozenFixtures/**` stays WRITABLE. That is the whole point
+# of the split: the values a behaviour change is allowed to move live there,
+# each tagged with its class, governed by the re-baseline rule instead of by
+# this gate.
 #
 # The gate's own file and `.github/` stay reachable, for the same reason the
 # previous list admitted them: a gate that cannot maintain itself cannot be
@@ -63,34 +73,34 @@
 set -euo pipefail
 BASE="${1:?base sha required}"
 # TWO PHASES, because a single list cannot be both complete and satisfiable.
+# THE TRANSITION IS COMPLETE; this is phase 2, and the note below is history
+# rather than a pending step.
 #
-# Review 2 found the previous version internally impossible: it forbade
-# `seasonBalance.test.ts`, which holds `GOLDEN_OUTCOMES`/`GOLDEN_SCORE`/
-# `GOLDEN_DELTAS`, and all of `src/presentation/`, which includes
+# Review 2 found the original version internally impossible: it forbade
+# `seasonBalance.test.ts`, which held `GOLDEN_OUTCOMES`/`GOLDEN_SCORE`/
+# `GOLDEN_DELTAS`, and all of `src/presentation/`, which included
 # `ArenaCamera.test.ts`'s recorded tick counts, opening distances and band-edge
 # crossings -- every one of which this slice's behaviour change MUST update.
 # Forbidding a file whose contents must move is a rule that cannot be obeyed.
 #
-# So the slice ships as two PRs and this list belongs to the first:
+# So the slice shipped as two PRs:
 #
-#   PREPARATORY PR (this one) -- the contact-diagnostics seam, the reach
-#   harness, the fixture splits, and this gate. It forbids the presentation
-#   SOURCE and the acceptance logic that carries no movable literal. The four
-#   mixed files are deliberately open, because splitting their literals into
-#   their own fixture modules is this PR's job.
+#   PREPARATORY PR (merged) -- the contact-diagnostics seam, the reach harness,
+#   the fixture splits, and the phase-1 form of this gate. It forbade the
+#   presentation SOURCE and the acceptance logic that carried no movable
+#   literal. Five files were deliberately open, because authoring
+#   `measure-reach.ts` and splitting the other four's literals into
+#   `src/testSupport/frozenFixtures/` was that PR's job.
 #
-#   CONTENT PR -- the catalog change. Branched from main after the first
-#   merges, so its diff no longer contains the harness, and its list adds:
-#   `scripts/measure-reach.ts`, `src/simulation/seasonBalance.test.ts`,
-#   `src/simulation/encounterCapacity.test.ts`, `src/simulation/series.test.ts`
-#   and `src/presentation/ArenaCamera.test.ts` -- by then all five hold only
-#   assertions, their literals having moved to fixture modules that the
-#   re-baseline rule governs instead.
+#   CONTENT PR (this one) -- the catalog change, branched from main after the
+#   first merged, so its diff no longer contains the harness. Its list adds all
+#   five, which by now hold only assertions: their literals live in fixture
+#   modules that the re-baseline rule governs instead.
 #
-# `scripts/measure-reach.ts` is absent here for the same reason: it is being
-# authored in this PR. It is the instrument that produces the acceptance
-# evidence, so from the content PR onward it is protected like any other
-# criterion.
+# `scripts/measure-reach.ts` joins them for the same reason the others do. It
+# is the instrument that produces this slice's acceptance evidence, and review
+# 2's finding was precisely that the previous list let an implementation weaken
+# the criteria it had to pass -- including the instrument itself.
 #
 # Screenshot baselines under `tests/__screenshots__/**` are never forbidden in
 # either phase: they are outputs of the change, not levers on it.
@@ -98,14 +108,15 @@ BASE="${1:?base sha required}"
 # filenames. The enumeration was reviewed and found incomplete -- it left
 # `battleFeed.ts`, `conditionTelegraph.ts`, `dispositionLabels.ts`,
 # `footstepThresholds.ts` and `formatPower.ts` writable -- and any such list
-# rots the moment a module is added. The four test files that still hold
-# movable literals are exempted below instead, which is a rule that stays true
-# as the directory grows.
-FORBIDDEN='^(src/style\.css$|index\.html$|src/main\.ts$|src/presentation/|src/simulation/(balance|dispositionBalance)\.test\.ts$|src/testSupport/balanceCohorts\.ts$|tests/legibility\.spec\.ts$|playwright\.config\.ts$)'
-# Phase-1 exemptions: presentation TEST files stay open because
-# `ArenaCamera.test.ts` holds recorded trace numbers this slice must update,
-# and splitting them out is this PR's job. Phase 2 drops this exemption.
-EXEMPT='^src/presentation/.*\.test\.ts$'
+# rots the moment a module is added.
+FORBIDDEN='^(src/style\.css$|index\.html$|src/main\.ts$|src/presentation/|src/simulation/(balance|dispositionBalance|seasonBalance|encounterCapacity|series)\.test\.ts$|src/testSupport/balanceCohorts\.ts$|tests/legibility\.spec\.ts$|playwright\.config\.ts$|scripts/measure-reach\.ts$|src/testSupport/reachHarness\.ts$)'
+# NO EXEMPTIONS in phase 2. The phase-1 list exempted
+# `^src/presentation/.*\.test\.ts$` because `ArenaCamera.test.ts` held recorded
+# trace numbers this slice must update. Those numbers now live in
+# `src/testSupport/frozenFixtures/cameraTraces.ts`, which no pattern here
+# matches, so the exemption has nothing left to protect and the whole of
+# `src/presentation/` -- source and tests alike -- is closed.
+EXEMPT='^$'
 # Committed + staged + unstaged + untracked, and both sides of every rename.
 CHANGED="$( { git diff --name-status -z --find-renames "$BASE" HEAD; git diff --name-status -z --find-renames HEAD; git diff --name-status -z --find-renames --cached; } \
   | tr '\0' '\n' | grep -vE '^[A-Z][0-9]*$' | sort -u )"
