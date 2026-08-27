@@ -274,12 +274,22 @@ test("keeps each rig's rendered root yaw locked to its simulation facing, never 
 // windup/impact tick math alone. Two bouts cover every category the brief
 // lists:
 //
-//   Bout A -- home.brutus (heavy) vs away.drusus (fast): heavy guard/cleave,
-//   fast burst/disengage, a simultaneous hit+stagger, a shield block,
-//   a defense-declined recognition window, and the bout's own defeat.
+//   Bout A -- home.brutus (heavy) vs away.drusus (fast), series 0 bout 0:
+//   heavy guard/cleave, fast burst/disengage, an ordinary hit+stagger, a
+//   shield block, a defense-declined recognition window, and the bout's own
+//   defeat.
 //
-//   Bout B -- home.nerva (technical) vs away.drusus (fast): technical's
-//   hold-range "measure" stance, a parry, and the forced parry-counter.
+//   Bout B -- home.nerva (technical) vs away.cassius (technical), series 0
+//   bout 1 of the `brutus/nerva/aquila` lineup: technical's hold-range
+//   "measure" stance, a parry, and the forced parry-counter.
+//
+// Both descriptions moved with the retiarius-reach slice, and the two changes
+// are findings rather than bookkeeping. Bout A's exchange is no longer
+// SIMULTANEOUS -- no tick in it carries two `damage-dealt` events, because the
+// retiarius no longer trades at the arena floor. And bout B is a different
+// bout: `nerva vs drusus` stopped containing a parry at all, so the pairing
+// that demonstrates the mechanic had to be found by searching for it. See
+// each test's own comment for the measurement.
 //
 // `getArenaDebugSnapshot()` is the dev-only numeric surface this task's
 // owned files can read without modifying `ArenaView.ts`/`main.ts`: it proves
@@ -378,7 +388,7 @@ test('separates body height from full prop bounds in the arena debug snapshot', 
   expect(overhang, 'the hoplomachus should carry visible prop beyond his own silhouette').toBeGreaterThan(5)
 })
 
-test('freezes heavy guard/cleave, fast burst/disengage, a mutual hit/stagger, a shield block, defense-declined recognition, and defeat', async ({ page }) => {
+test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger, a shield block, defense-declined recognition, and defeat', async ({ page }) => {
   await startBoutZeroWith(page, 'brutus')
   const cursor = { current: 0 }
 

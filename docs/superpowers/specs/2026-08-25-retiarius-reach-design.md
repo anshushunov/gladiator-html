@@ -510,20 +510,112 @@ nine roster pairings on the changed build:
 | every other pairing | 12 937 | 0 | ≤ 9.64° |
 | **total** | **14 848** | **1** (0.0067%) | |
 
-The single exceedance is at tick 1468 of `brutus/drusus`, at a separation of
-**1.011** units. The mechanism is not a slow drift but a one-tick event:
-`heavy-cleave` authors a `pushDistance` of 0.70, and a mostly-lateral 0.70-unit
-displacement applied at ~1.0 units of separation rotates the pair axis by far
-more than 15° in the single tick it lands. The camera's *undamped desired* yaw
-follows that axis by construction, so the bound is a claim about the camera's
-slew limiting, not about the content: nothing in this slice changed
-`heavy-cleave.pushDistance`, the arena's 0.90 minimum separation, or the
-camera. What changed is which configurations the bouts visit.
+The single exceedance is at tick 1468 of `brutus/drusus`.
 
-**Not fixed here, deliberately.** The fix belongs in `ArenaCamera` — a slew
-clamp on the desired yaw, or deriving it from a separation-floored axis — and
-both are camera work this slice may not touch. The damped *output* the player
-actually sees is unaffected: every other camera criterion passes, including the
-framing-error bound, the reversal ceiling, the zoom-rate limit, the clamp
-inertness, and all of `tests/legibility.spec.ts` (safe area, scale floor and
-screen separation at all three viewports).
+**A first draft of this amendment got the mechanism wrong, and external review
+caught it.** It claimed the pair axis itself rotates "far more than 15°" under
+`heavy-cleave`'s 0.70-unit push. Measured tick by tick, it does not:
+
+| tick | pair axis | axis moved | `unwrappedYaw` moved | separation |
+|---|---:|---:|---:|---:|
+| 1465–1467 | −38.178° | 0.000° | 0.000° | 0.900 |
+| **1468** | **−50.936°** | **12.758°** | **17.077°** | **1.011** |
+| 1469–1470 | −50.936° | 0.000° | 0.000° | 1.011 |
+
+The axis turns **12.758°** — comfortably *inside* the 15° bound. The extra
+**4.319°** is not motion at all: it is dead-zone lag being released. The
+camera holds a sticky reference and ignores axis changes below a 5° threshold,
+so through ticks 1465–1467 the reference sat 4.319° behind an axis that was
+not moving, and the one tick where the axis finally moves past the threshold
+pays back the whole backlog in a single step.
+
+**So the failing assertion is not measuring what its name says.** It is named
+for desired-yaw *continuity* and it bounds axis motion **plus released
+hysteresis**. A camera with a perfectly continuous unwrap and a dead zone will
+trip it whenever a stalled pair suddenly turns — which is exactly the
+configuration a push at the arena floor produces.
+
+**Not fixed here, and the fix is a different one than the first draft claimed.**
+It is not a slew clamp on the desired yaw: clamping would slow a legitimate
+12.758° turn to hide 4.319° of bookkeeping. The bound should compare
+`unwrappedYaw` against the nearest representative of the *actual* spread axis
+modulo π, allowing for the dead zone, so that released lag is not counted as
+motion — with the synthetic 180°-crossing test kept as the real unwrap
+regression guard. Both `ArenaCamera.ts` and `ArenaCamera.test.ts` are forbidden
+to this slice, so neither is done here.
+
+Nothing in this slice changed `heavy-cleave.pushDistance`, the arena's 0.90
+minimum separation, the dead zone, or the camera. What changed is which
+configurations the bouts visit. The damped *output* the player actually sees is
+unaffected: every other camera criterion passes, including the framing-error
+bound, the reversal ceiling, the zoom-rate limit, the clamp inertness, and all
+of `tests/legibility.spec.ts` (safe area, scale floor and screen separation at
+all three viewports).
+
+## Amendment — gate D's comparator is not independent, and the spec says two things
+
+**Written 2026-08-27, after external review of the implementation. The
+instrument is NOT changed here: `scripts/measure-reach.ts` is forbidden to this
+slice from the content PR onward, and quietly re-deriving a gate I have to pass
+is the exact move that protection exists to prevent.**
+
+This spec states a rule and then breaks it in one gate.
+
+The rule, from "Acceptance gates, frozen before implementation":
+
+> **Comparators are chosen to be independent of the change.** The hoplomachus'
+> pooled figures move when the retiarius moves — its `technical vs fast`
+> component is part of them — so where the hoplomachus is the yardstick, it is
+> taken from matchups containing no `fast` at all.
+
+Gates C and G obey it: both read the hoplomachus from `technical vs heavy` /
+`technical vs technical` only. **Gate D does not.**
+`wholeTypeEnvelopeShare('technical')` sums the pooled sample across all nine
+ordered matchups, including `technical vs fast` — so the yardstick moves with
+the thing it is judging. That is the *fourth* instance of this defect class in
+this slice's history, and the first one nobody caught until after
+implementation.
+
+**Measured on the shipped content, 200 seeds:**
+
+| figure | value | gate D reads |
+|---|---:|---|
+| retiarius, whole type, in-envelope | **63.263%** | |
+| hoplomachus, whole type, **pooled** (what the instrument uses) | 65.032% | **passes** |
+| hoplomachus, whole type, **`fast`-free only** (what the rule requires) | **71.857%** | **passes, by 8.6 points** |
+| the `63.0%` in this spec's own tables | — | **fails, by 0.263 points** |
+
+**The defect did not flatter the change.** Repairing the comparator the way the
+rule requires makes gate D pass by *more*, not less: the hoplomachus' fast-free
+whole-type share is 71.857%, well above the retiarius' 63.263%. The pooled
+figure is the *stricter* of the two, because the hoplomachus' `vs fast`
+component drags his own average down.
+
+**But this spec is internally inconsistent about what gate D even is**, and
+that is worth more than the number. The criterion text says a *comparison* —
+"no higher than the hoplomachus' same figure" — with 63.0% given as its source,
+exactly the shape gate C uses. The "Where it stands" table then writes it as a
+*bar*: "≤63.0%". Read as a comparison it passes either way. Read as a frozen
+bar it fails by 0.263 points. Unlike gate E's floor, which the harness encodes
+as a named constant (`DISENGAGE_GAIN_FLOOR`), gate D's 63.0% is nowhere in the
+instrument — it is a measurement of the *authored* content recorded in prose,
+which is precisely how a snapshot gets mistaken for a criterion.
+
+**What is owed, and by whom.** Three things, none of them this slice's to do
+unilaterally:
+
+1. Decide whether gate D is a comparison or a bar, and write the one answer in
+   both places.
+2. If it stays a comparison, fix `wholeTypeEnvelopeShare` to take the
+   hoplomachus from `fast`-free matchups, as gates C and G already do — and add
+   a regression that the comparator cannot move with the retiarius, since prose
+   has now failed to enforce that four times.
+3. If it becomes a bar, freeze 0.63 as a named constant beside
+   `DISENGAGE_GAIN_FLOOR` — and note that the shipped content is **0.263 points
+   over it**, which under the spec's own stopping rule means the slice stops
+   and reports rather than ships.
+
+Until (1) is answered by someone other than the implementation, this slice
+reports gate D as **passing on the instrument as frozen, failing against the
+prose snapshot, and passing with more margin under the rule the spec itself
+states** — and does not choose between them.

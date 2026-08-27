@@ -54,7 +54,25 @@ import type { FighterDefinition } from '../simulation/fighters'
 //
 // The golden scenario's three-distinct-profiles criterion was amended to two
 // during Task 13; see the amendment in the design doc for the measured conflict
-// with the roster win-rate bands.
+// with the roster win-rate bands. (The retiarius-reach slice produces four
+// distinct profiles again, so that amended floor is now exceeded rather than
+// merely met.)
+//
+// EVERY `maxHp` ROSE IN THE RETIARIUS-REACH SLICE, and the scale is worth
+// stating precisely because an earlier summary of that package rounded it down
+// to "roughly +20%", which external review correctly called out as making the
+// change sound smaller than it is:
+//
+//   brutus  324 -> 420  +29.6%      drusus  350 -> 470  +34.3%
+//   aquila  274 -> 404  +47.4%      cassius 312 -> 415  +33.0%
+//   nerva   314 -> 418  +33.1%      magnus  299 -> 406  +35.8%
+//
+// The bulk of it (~+30% across the board) restores bout length: the slice's
+// damage recalibration cut the combined roster median to 1446 against a
+// 1500..2400 pacing band. Aquila is the outlier at +47.4% and is NOT part of
+// that uniform scaling -- she was raised a second time, alone, because
+// `aquila/magnus` is the roster pairing pinned hardest against the 15% floor
+// by the same fast-vs-heavy wall the whole balance task ran into.
 export const homeRoster = [
   { id: 'brutus', name: 'Brutus', school: 'House of Mars', archetype: 'heavy', maxHp: 420, power: 21.2, accuracy: 0.86, defenseChance: 0.34, criticalChance: 0.10 },
   { id: 'aquila', name: 'Aquila', school: 'House of Mars', archetype: 'fast', maxHp: 404, power: 20, accuracy: 0.859, defenseChance: 0.334, criticalChance: 0.157 },
