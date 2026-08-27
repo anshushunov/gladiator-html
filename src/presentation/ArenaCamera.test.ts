@@ -1012,15 +1012,82 @@ function axisAngleDelta(a: number, b: number): number {
   return diff
 }
 
+/** The camera's own `nearestAxisRepresentative`, restated here so this file can
+ * unwrap the *measured* axis into its own continuous chain, independent of the
+ * camera's sticky reference. Deliberately a copy rather than an import: the
+ * point of the chain below is to be a second opinion about where the axis went,
+ * so it must not share the state the camera keeps. It shares only the
+ * arithmetic, which the synthetic "crosses the frame vertical" test above
+ * pins against the camera's own. */
+function unwrapAxisStep(angle: number, previous: number): number {
+  let candidate = angle
+  while (candidate - previous > Math.PI / 2) candidate -= Math.PI
+  while (candidate - previous < -Math.PI / 2) candidate += Math.PI
+  return candidate
+}
+
+/** `ArenaCamera.ts`'s `YAW_DEAD_ZONE_RADIANS`, design.md's 2026-08-18
+ * amendment: "only after the axis leaves a 5 degree dead zone". A literal for
+ * the same reason as the framing constants at the top of this file -- imported,
+ * the lag bound below would restate the implementation instead of pinning it. */
+const YAW_DEAD_ZONE_DEGREES = 5
+
 describe('yaw continuity over real bouts', () => {
-  it('never changes the *undamped desired* yaw by more than 15 degrees in a tick, in any pairing', () => {
-    // Regression note: this used to assert on `camera.update(...).yaw`, the
+  it('never turns the desired-yaw axis by more than 15 degrees in a tick, and never lags it by more than the dead zone, in any pairing', () => {
+    // Regression note 1: this used to assert on `camera.update(...).yaw`, the
     // damped, dead-zoned, clamped *output*. At any damping time constant of
     // more than a tick or two that output barely moves per tick no matter
     // how discontinuous its input is, so the 15-degree bound passed almost
     // automatically and proved nothing about the unwrap. `unwrappedYaw`
     // (`ArenaCamera`'s own doc comment) is the undamped, unclamped reference
     // the continuity fix actually governs.
+    //
+    // Regression note 2 (2026-08-27, the retiarius-reach slice): asserting the
+    // 15-degree bound on `unwrappedYaw`'s own per-tick delta was then wrong in
+    // the other direction, and the changed content exposed it -- one tick in
+    // 14 848 tripped it, `brutus/drusus` 1468, at 17.077 degrees.
+    //
+    // `unwrappedYaw` is a *sticky* reference: it holds still while the axis
+    // drifts inside the 5-degree dead zone and then pays the whole backlog
+    // back in the single tick the axis finally clears it. At that tick the
+    // pair axis turned 12.758 degrees -- comfortably inside the bound -- and
+    // the extra 4.319 was three ticks of held lag being released. So the
+    // assertion was named for continuity and measured axis motion PLUS
+    // released hysteresis; any camera with a continuous unwrap and a dead zone
+    // trips it whenever a stalled pair suddenly turns, which is exactly what a
+    // push at the arena's 0.90 minimum separation produces.
+    //
+    // Clamping the desired yaw's slew was the obvious fix and is the wrong
+    // one: it would slow a legitimate 12.758-degree turn in order to hide
+    // 4.319 degrees of bookkeeping. What the bound wants is the two component
+    // properties, measured separately against the *actual* spread axis:
+    //
+    //   1. the axis itself never turns more than 15 degrees in a tick
+    //      (worst measured over all nine pairings at BASELINE_TEST_SEED:
+    //      12.758 degrees, `brutus/drusus` tick 1468 -- three ticks exceed 10
+    //      degrees, all of them a `heavy-cleave` push off the separation
+    //      floor);
+    //   2. the sticky reference never sits further behind that axis than the
+    //      dead zone it is allowed to hold inside (worst measured: 4.99894 of
+    //      5 degrees, `aquila/cassius` tick 91 -- it saturates, as a dead zone
+    //      should).
+    //
+    // Together they bound `unwrappedYaw`'s per-tick step by 15 + 5 = 20
+    // degrees, which is the honest version of what the old assertion was
+    // reaching for. Neither is a restatement of the implementation: (1) is a
+    // property of the *fighters'* motion that the camera does not participate
+    // in, and (2) is checked against an axis chain unwrapped independently of
+    // the camera's own reference.
+    //
+    // The real unwrap regression guard stays where it always was: the
+    // synthetic "stays continuous when the pair axis crosses the frame
+    // vertical" test above. Real bouts do not reliably produce a crossing, so
+    // they cannot be that guard -- what they can do, and what property 2 does,
+    // is prove the two chains never fall out of phase over 14 848 real ticks.
+    let worstAxisStep = 0
+    let worstLag = 0
+    let ticksMeasured = 0
+
     for (const home of homeRoster) {
       for (const away of opponents) {
         const camera = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
@@ -1033,19 +1100,47 @@ describe('yaw continuity over real bouts', () => {
             { id: 'away', centerX: a.position.x, centerZ: a.position.z, radius: 0.6 },
           ]
         }
-        camera.reset(framing(battle))
-        let previous = camera.unwrappedYaw
+        const opening = framing(battle)
+        camera.reset(opening)
+        // Anchored to the camera's own post-reset reference, so the two chains
+        // start in phase and any later divergence is the camera's, not an
+        // artefact of picking a different pi-representative at tick 0.
+        let desiredAxisYaw = unwrapAxisStep(-measureSpreadAxisAngle(opening), camera.unwrappedYaw)
         let ticks = 0
         while (battle.phase === 'running' && ticks < 3600) {
           battle = advanceBattleTick(battle)
-          camera.update(framing(battle), 1 / 60)
-          const yaw = camera.unwrappedYaw
-          expect(Math.abs(yaw - previous)).toBeLessThan(15 * DEGREE)
-          previous = yaw
+          const targets = framing(battle)
+          camera.update(targets, 1 / 60)
+
+          const previousAxisYaw = desiredAxisYaw
+          desiredAxisYaw = unwrapAxisStep(-measureSpreadAxisAngle(targets), previousAxisYaw)
+
+          const axisStep = Math.abs(desiredAxisYaw - previousAxisYaw)
+          expect(axisStep).toBeLessThan(15 * DEGREE)
+          worstAxisStep = Math.max(worstAxisStep, axisStep)
+
+          // Unfolded on purpose: comparing `unwrappedYaw` against the chain's
+          // representative rather than against "whichever representative is
+          // nearest `unwrappedYaw`" is what makes this catch a reference that
+          // has fallen a half-turn out of phase, instead of quietly folding
+          // that half-turn away.
+          const lag = Math.abs(camera.unwrappedYaw - desiredAxisYaw)
+          expect(lag).toBeLessThanOrEqual(YAW_DEAD_ZONE_DEGREES * DEGREE)
+          worstLag = Math.max(worstLag, lag)
+
+          ticksMeasured += 1
           ticks += 1
         }
       }
     }
+
+    // The bouts have to actually be long enough for either bound to mean
+    // anything, and both have to be exercised rather than vacuously true: the
+    // dead zone is expected to saturate, and the axis is expected to get well
+    // past the sub-degree drift of a pair standing still.
+    expect(ticksMeasured).toBeGreaterThan(10000)
+    expect(worstAxisStep).toBeGreaterThan(5 * DEGREE)
+    expect(worstLag).toBeGreaterThan(4.9 * DEGREE)
   })
 
   it('keeps the on-screen framing error (camera screen-axis vs. pair axis) bounded across all nine pairings', () => {
