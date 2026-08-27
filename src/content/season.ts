@@ -88,8 +88,8 @@ export { homeRoster, opponents } from './mvpSeries'
 // the veteran on paper; it has to be measured.
 // ---------------------------------------------------------------------------
 const benchSpecialists = [
-  { id: 'vitus', name: 'Vitus', school: 'House of Mars', archetype: 'heavy', maxHp: 308, power: 23, accuracy: 0.84, defenseChance: 0.30, criticalChance: 0.09 },
-  { id: 'sura', name: 'Sura', school: 'House of Mars', archetype: 'fast', maxHp: 292, power: 17, accuracy: 0.905, defenseChance: 0.49, criticalChance: 0.14 },
+  { id: 'vitus', name: 'Vitus', school: 'House of Mars', archetype: 'heavy', maxHp: 372, power: 23.6, accuracy: 0.875, defenseChance: 0.30, criticalChance: 0.09 },
+  { id: 'sura', name: 'Sura', school: 'House of Mars', archetype: 'fast', maxHp: 396, power: 19, accuracy: 0.880, defenseChance: 0.52, criticalChance: 0.142 },
 ] as const satisfies readonly FighterDefinition[]
 
 export const SEASON_ROSTER = [...homeRoster, ...benchSpecialists] as const satisfies readonly FighterDefinition[]

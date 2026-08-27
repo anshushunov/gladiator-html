@@ -92,7 +92,7 @@ export const COMBAT_STYLES = {
       windupTicks: 14,
       impactTicks: 3,
       recoveryTicks: 20,
-      damageMultiplier: 0.88,
+      damageMultiplier: 0.80,
       accuracyModifier: 0.08,
       rootTravel: 0.25,
       pushDistance: 0.40,
@@ -106,8 +106,8 @@ export const COMBAT_STYLES = {
       minimumFacingDot: 0.6428, // ~50°
       windupTicks: 34,
       impactTicks: 6,
-      recoveryTicks: 34,
-      damageMultiplier: 1.98,
+      recoveryTicks: 56,
+      damageMultiplier: 2.70,
       accuracyModifier: -0.06,
       rootTravel: 0.45,
       pushDistance: 0.70,
@@ -136,8 +136,8 @@ export const COMBAT_STYLES = {
       minimumFacingDot: 0.4226, // ~65°
       windupTicks: 10,
       impactTicks: 2,
-      recoveryTicks: 19,
-      damageMultiplier: 0.68,
+      recoveryTicks: 10,
+      damageMultiplier: 1.65,
       accuracyModifier: 0.06,
       rootTravel: 0.25,
       pushDistance: 0.18,
@@ -176,7 +176,7 @@ export const COMBAT_STYLES = {
       // unchanged (the probe stays quicker and cheaper, Heavy's cleave stays
       // the slowest commitment, Technical keeps the longest reach).
       recoveryTicks: 20,
-      damageMultiplier: 1.45,
+      damageMultiplier: 2.60,
       accuracyModifier: 0,
       // 1.40 was the ACTUAL cause of the defect, not the contact range. The
       // kernel clamps root travel at max(minimumSeparation, contactRange.min)
@@ -200,7 +200,7 @@ export const COMBAT_STYLES = {
       windupTicks: 20,
       impactTicks: 3,
       recoveryTicks: 15,
-      damageMultiplier: 1.34,
+      damageMultiplier: 1.38,
       accuracyModifier: 0.04,
       rootTravel: 0.20,
       pushDistance: 0.30,
@@ -215,7 +215,7 @@ export const COMBAT_STYLES = {
       windupTicks: 30,
       impactTicks: 4,
       recoveryTicks: 24,
-      damageMultiplier: 1.82,
+      damageMultiplier: 1.90,
       accuracyModifier: -0.03,
       rootTravel: 0.50,
       pushDistance: 0.50,
@@ -244,7 +244,7 @@ export const COMBAT_STYLES = {
       tags: ['defense'],
       minimumReactionLeadTicks: 8,
       impactTicks: 4,
-      recoveryTicks: 12,
+      recoveryTicks: 6,
       minimumIncomingFacingDot: 0.3420, // ~front ±70°
     },
     'fast-evade': {
@@ -252,7 +252,7 @@ export const COMBAT_STYLES = {
       tags: ['defense'],
       minimumReactionLeadTicks: 7,
       impactTicks: 3,
-      recoveryTicks: 14,
+      recoveryTicks: 8,
       // Authored defense dash, distributed across the seven remaining
       // windup ticks. Deliberately independent of Fast's ordinary
       // locomotion speed; still constrained by arena/policy/separation.
@@ -263,7 +263,7 @@ export const COMBAT_STYLES = {
       tags: ['defense'],
       minimumReactionLeadTicks: 10,
       impactTicks: 4,
-      recoveryTicks: 16,
+      recoveryTicks: 10,
       minimumIncomingFacingDot: -0.1736, // ~front ±100°
     },
   },

@@ -56,15 +56,15 @@ import type { FighterDefinition } from '../simulation/fighters'
 // during Task 13; see the amendment in the design doc for the measured conflict
 // with the roster win-rate bands.
 export const homeRoster = [
-  { id: 'brutus', name: 'Brutus', school: 'House of Mars', archetype: 'heavy', maxHp: 324, power: 22, accuracy: 0.86, defenseChance: 0.34, criticalChance: 0.10 },
-  { id: 'aquila', name: 'Aquila', school: 'House of Mars', archetype: 'fast', maxHp: 274, power: 20, accuracy: 0.855, defenseChance: 0.315, criticalChance: 0.148 },
-  { id: 'nerva', name: 'Nerva', school: 'House of Mars', archetype: 'technical', maxHp: 314, power: 20, accuracy: 0.92, defenseChance: 0.40, criticalChance: 0.16 },
+  { id: 'brutus', name: 'Brutus', school: 'House of Mars', archetype: 'heavy', maxHp: 420, power: 21.2, accuracy: 0.86, defenseChance: 0.34, criticalChance: 0.10 },
+  { id: 'aquila', name: 'Aquila', school: 'House of Mars', archetype: 'fast', maxHp: 404, power: 20, accuracy: 0.859, defenseChance: 0.334, criticalChance: 0.157 },
+  { id: 'nerva', name: 'Nerva', school: 'House of Mars', archetype: 'technical', maxHp: 418, power: 20, accuracy: 0.902, defenseChance: 0.398, criticalChance: 0.1595 },
 ] as const satisfies readonly FighterDefinition[]
 
 export const opponents = [
-  { id: 'drusus', name: 'Drusus', school: 'House of Saturn', archetype: 'fast', maxHp: 350, power: 21, accuracy: 0.90, defenseChance: 0.36, criticalChance: 0.15 },
-  { id: 'cassius', name: 'Cassius', school: 'House of Neptune', archetype: 'technical', maxHp: 312, power: 19, accuracy: 0.90, defenseChance: 0.395, criticalChance: 0.12 },
-  { id: 'magnus', name: 'Magnus', school: 'House of Vulcan', archetype: 'heavy', maxHp: 299, power: 18, accuracy: 0.85, defenseChance: 0.335, criticalChance: 0.099 },
+  { id: 'drusus', name: 'Drusus', school: 'House of Saturn', archetype: 'fast', maxHp: 470, power: 21, accuracy: 0.90, defenseChance: 0.372, criticalChance: 0.1585 },
+  { id: 'cassius', name: 'Cassius', school: 'House of Neptune', archetype: 'technical', maxHp: 415, power: 19, accuracy: 0.90, defenseChance: 0.395, criticalChance: 0.12 },
+  { id: 'magnus', name: 'Magnus', school: 'House of Vulcan', archetype: 'heavy', maxHp: 406, power: 17.5, accuracy: 0.85, defenseChance: 0.335, criticalChance: 0.099 },
 ] as const satisfies readonly FighterDefinition[]
 
 export const BASELINE_TEST_SEED = 20260815
