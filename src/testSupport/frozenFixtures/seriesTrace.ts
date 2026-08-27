@@ -118,9 +118,8 @@ export const ALL_COUNTERS_SCORE = '2-1'
 export const LINEUP_SCORE_SET: readonly string[] = ['0-3', '1-2', '2-1', '3-0']
 
 /**
- * CLASS: determinism. The three short-handed series' final scores, in the
- * order `series.test.ts` asserts them: one uncovered slot, one trailing slot,
- * and two consecutive slots with a single gladiator available.
+ * CLASS: determinism. The short-handed series' final scores, in the order
+ * `series.test.ts` asserts them.
  *
  * NOT in the preparatory PR's inventory, and that omission is why its split
  * was incomplete. Each forfeit contributes exactly one away point, so these
@@ -128,10 +127,23 @@ export const LINEUP_SCORE_SET: readonly string[] = ['0-3', '1-2', '2-1', '3-0']
  * are pinned (rather than left as a `>= 1` lower bound) so a fought bout's
  * winner cannot flip silently. The STRUCTURE around them -- how many
  * forfeits, at which bout indices, against which opponents -- is the criterion
- * and stays in the test file, unchanged by this slice.
+ * and stays in the test file.
+ *
+ * `leadingSlot` was added on 2026-08-27, when finishing the split: the content
+ * PR moved three of these four and left the fourth inline, which is the same
+ * incompleteness one layer down. It is the same class as the other three --
+ * `brutus vs cassius` and `aquila vs magnus` are both real fought bouts, so
+ * this score moves whenever their winners do.
+ *
+ * The 'no fightable gladiators at all' case is deliberately NOT here. Its
+ * `{home: 0, away: 3}` is structural rather than measured: with an empty
+ * roster every bout forfeits and each forfeit is one away point, so no
+ * behaviour change can move it and freezing it in a re-baselinable module
+ * would misfile a criterion as a snapshot.
  */
 export const SHORT_HANDED_SCORES = {
   uncoveredSlot: { home: 2, away: 1 },
+  leadingSlot: { home: 1, away: 2 },
   trailingSlot: { home: 1, away: 2 },
   twoConsecutiveSlots: { home: 1, away: 2 },
 } as const
