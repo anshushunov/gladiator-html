@@ -1122,19 +1122,31 @@ describe('decisionIntervalTicks', () => {
 })
 
 describe('forced behavior thresholds', () => {
-  it('Fast forced disengage ends once the range has been opened back out to 2.4 units, and not before', () => {
+  it('Fast forced disengage ends once the range has been opened back out to its authored exit, and not before', () => {
     expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE, 10)).toBe(true)
-    expect(hasFastForcedDisengageEnded(2.41, 10)).toBe(true)
-    expect(hasFastForcedDisengageEnded(2.39, 10)).toBe(false)
-    // The range a burst-lunge actually lands at (contactRange 0.9..1.45):
-    // the forcing has to survive it, or Fast never disengages at all.
-    expect(hasFastForcedDisengageEnded(1.45, 1)).toBe(false)
-    expect(hasFastForcedDisengageEnded(0.9, 1)).toBe(false)
+    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE + 0.01, 10)).toBe(true)
+    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE - 0.01, 10)).toBe(false)
+    // The range a burst-lunge actually lands at: the forcing has to survive
+    // it, or Fast never disengages at all. Read from the catalog rather than
+    // written as a literal, so a future reach change cannot make this vacuous.
+    //
+    // The rewrite is not cosmetic. The literal version asserted
+    // `hasFastForcedDisengageEnded(1.45, 1) === false` -- and 1.45 stays below
+    // 3.35, so it would have kept passing after this slice moved the lunge to
+    // 1.60..2.40 while asserting nothing whatever about the new behaviour. The
+    // claim "the forcing survives a lunge" would have been true by accident.
+    const lunge = COMBAT_STYLES.attacks['fast-burst-lunge'].contactRange
+    expect(hasFastForcedDisengageEnded(lunge.max, 1)).toBe(false)
+    expect(hasFastForcedDisengageEnded(lunge.min, 1)).toBe(false)
   })
 
-  it('Fast forced disengage ends at 30 ticks even when the range never opened', () => {
-    expect(hasFastForcedDisengageEnded(1.2, FAST_FORCED_DISENGAGE_MAX_TICKS)).toBe(true)
-    expect(hasFastForcedDisengageEnded(1.2, 29)).toBe(false)
+  it('Fast forced disengage ends at its authored tick cap even when the range never opened', () => {
+    // Same rewrite, same reason: a literal 29/30 pair would have gone on
+    // passing against a cap this slice moved to 37, while testing a boundary
+    // the kernel no longer has.
+    const pinned = COMBAT_STYLES.attacks['fast-burst-lunge'].contactRange.min
+    expect(hasFastForcedDisengageEnded(pinned, FAST_FORCED_DISENGAGE_MAX_TICKS)).toBe(true)
+    expect(hasFastForcedDisengageEnded(pinned, FAST_FORCED_DISENGAGE_MAX_TICKS - 1)).toBe(false)
   })
 
   it('Technical forced parry counter starts only within 2.3 units, otherwise clears', () => {

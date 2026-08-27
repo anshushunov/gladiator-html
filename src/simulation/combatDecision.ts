@@ -955,18 +955,59 @@ export function decisionIntervalTicks(archetype: Archetype, intervalRoll: number
 // distance/tick-elapsed values.
 // ---------------------------------------------------------------------------
 
-/** Fast's forced disengage (after a burst-lunge recovery) ends once the fighter has *opened* the range back out to this distance... */
-export const FAST_FORCED_DISENGAGE_END_RANGE = 2.4
-/** ...or after this many ticks, whichever comes first. */
-export const FAST_FORCED_DISENGAGE_MAX_TICKS = 30
+/**
+ * Fast's forced disengage (after a burst-lunge recovery) ends once the fighter
+ * has *opened* the range back out to this distance...
+ *
+ * 3.35 rather than the authored 2.4, because the lunge itself moved. The
+ * authored exit sat 0.95 above the authored lunge's contact max of 1.45; the
+ * same gap above the new 2.40 is 3.35. Leaving it at 2.4 would have put the
+ * exit INSIDE the lunge's own contact range, so the disengage would end on the
+ * tick it began -- exactly the defect that was fixed on 2026-08-18, arriving
+ * again by a different route.
+ */
+export const FAST_FORCED_DISENGAGE_END_RANGE = 3.35
+/**
+ * ...or after this many ticks, whichever comes first.
+ *
+ * 37 rather than the authored 30. The retiarius now starts its disengage from
+ * further out, so more episodes run into the cap before reaching the exit, and
+ * at 30 the median ground actually gained fell to 0.70 against a floor of 0.75
+ * -- the pinning the acceptance gate's third clause was written to catch.
+ *
+ * 37 is the SMALLEST value that clears every reach gate jointly. Measured at
+ * 200 seeds x 9 ordered matchups, exit range fixed at 3.35:
+ *
+ *   ticks   gain   immediate   duration   exits range/cap    gate D margin
+ *      30   0.70        3.7%         30      1328 / 2702      +0.80 pt
+ *      36   0.74        3.7%         36      1560 / 2331      +0.70 pt
+ *      37   0.77        3.5%         37      1681 / 2202      +0.78 pt   <-- all gates pass
+ *      38   0.78        3.4%         38      1732 / 2110      +0.72 pt
+ *      39   0.80        3.9%         39      1817 / 2009      +0.25 pt
+ *      40   0.81        3.6%         40      1846 / 2041      +0.79 pt
+ *      41   0.82        3.6%         40      1839 / 1928      -0.33 pt   gate D fails
+ *      42   0.82        3.8%         40      1903 / 1916      -0.09 pt   gate D fails
+ *
+ * Lowering the exit range instead was measured and is strictly worse: at 3.00
+ * the exit becomes reachable on the tick the forcing starts, so the
+ * "cleared within one tick" share jumps to 6.7% (30 ticks) and 6.6% (36),
+ * breaking gate E's FIRST clause while the ground gained falls to 0.58/0.62.
+ *
+ * Note what the right-hand column costs: a longer forced retreat is a real
+ * nerf in `fast vs heavy`, and gate D -- the whole-type in-envelope share --
+ * is thin and non-monotonic across single ticks. It is why the reach gate is
+ * re-run after every accepted balance-tuning package rather than once.
+ */
+export const FAST_FORCED_DISENGAGE_MAX_TICKS = 37
 
 /**
  * design.md: Fast "is forced into `disengage` after a burst-lunge recovery
- * until reaching 2.4 units or spending 30 ticks". `disengage` moves *away*
- * from the target, so "reaching 2.4 units" is a range the fighter opens up
- * to -- the exit test is `>=`, not `<=`. A lunge lands inside its own
- * `contactRange` (0.9..1.45), so a `<=` test would be satisfied on the very
- * tick the forcing starts and the whole mechanic -- Fast's signature
+ * until reaching 2.4 units or spending 30 ticks" -- now 3.35 units and 37
+ * ticks; see the two constants above for the measurement that moved them.
+ * `disengage` moves *away* from the target, so "reaching" that range is a
+ * distance the fighter opens up to -- the exit test is `>=`, not `<=`. A lunge
+ * lands inside its own `contactRange`, so a `<=` test would be satisfied on
+ * the very tick the forcing starts and the whole mechanic -- Fast's signature
  * "disengage before retaliation" -- would never run for more than one tick.
  */
 export function hasFastForcedDisengageEnded(distanceToTarget: number, ticksSinceForced: number): boolean {

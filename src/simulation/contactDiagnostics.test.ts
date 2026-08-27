@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { COMBAT_STYLES } from '../content/combatStyles'
 import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
 import { advanceBattleTick, createBattle, MAX_BOUT_TICKS, type BattleState } from './battle'
+import { advanceEncounterTick, createEncounter, type CombatantId, type EncounterState } from './encounter'
+import type { AttackActionId, CombatActionState } from './combatActions'
+import { combatant, freeArena } from '../testSupport/combatFixtures'
 import type { ContactCollector, ContactRecord } from './contactDiagnostics'
 import type { FighterDefinition } from './fighters'
 
@@ -21,6 +24,28 @@ function runBout(home: FighterDefinition, away: FighterDefinition, collector?: C
     battle = advanceBattleTick(battle, undefined, wrapped)
   }
   return { traceHash: battle.traceHash, records }
+}
+
+/** The tick the hand-built contact fixtures below are advanced from. */
+const CONTACT_FIXTURE_TICK = 49
+
+/** Same whitebox state patch `encounter.test.ts` uses, deliberately not shared. */
+function patchCombatant(state: EncounterState, id: CombatantId, overrides: Partial<EncounterState['combatants'][string]>): EncounterState {
+  return { ...state, combatants: { ...state.combatants, [id]: { ...state.combatants[id], ...overrides } } }
+}
+
+/** An action already in its one-tick `contact` phase, which is what phase 9 resolves. */
+function activeContact(instanceId: string, definitionId: AttackActionId, targetId: string): CombatActionState {
+  return {
+    type: 'active' as const,
+    instanceId,
+    definitionId,
+    phase: 'contact' as const,
+    phaseStartedTick: CONTACT_FIXTURE_TICK + 1,
+    phaseEndsAtTick: CONTACT_FIXTURE_TICK + 2,
+    targetId,
+    attackRolls: { accuracy: 0.01, critical: 0.99 },
+  }
 }
 
 describe('contact diagnostics', () => {
@@ -169,11 +194,101 @@ describe('contact diagnostics', () => {
       for (const away of opponents) runBout(home, away, { record: (entry) => records.push(entry) })
     }
     const seen = new Set(records.map((r) => r.outcome))
-    // `actor-defeated` and `target-unavailable` are rare but reachable across
-    // nine pairings; if one never appears, either the classifier cannot emit it
-    // or the kernel path is dead, and both are worth knowing.
     for (const outcome of ['hit', 'blocked', 'parried', 'evaded', 'missed-geometry', 'missed-accuracy']) {
       expect(seen.has(outcome as never), outcome).toBe(true)
     }
+    // The two remaining outcomes are NOT asserted here, and an earlier comment
+    // in their place claimed they were "rare but reachable across nine
+    // pairings" -- a claim this loop then did not check. External review was
+    // right to call that out. Measured over 40 seeds x 9 pairings, 12,123
+    // records: `actor-defeated` appears TWICE (0.016%) and
+    // `target-unavailable` never at all. At the single baseline seed these
+    // bouts run on, neither occurs, so requiring them here would be a flake.
+    // They get dedicated fixtures below instead, which is the only way to test
+    // a path this rare without making the assertion depend on luck.
+    expect(seen.has('actor-defeated' as never) || seen.has('target-unavailable' as never)).toBe(false)
+  })
+
+  // -------------------------------------------------------------------------
+  // The two rare outcomes, on purpose-built fixtures.
+  //
+  // Both were previously untested, and the gap was load-bearing rather than
+  // cosmetic: `actor-defeated` and `target-unavailable` are excluded from BOTH
+  // the reach numerator and the geometry-failure denominator, so an intent
+  // that lands in either one silently leaves the sample the whole slice is
+  // measured on. A seam that mislabels a record as `target-unavailable`
+  // removes it from every rate without failing anything.
+  // -------------------------------------------------------------------------
+
+  it('records an intent whose actor was defeated earlier in the same batch, rather than dropping it', () => {
+    // Three combatants, one lethal exchange. `a` and `b` both reach contact on
+    // the same tick against a target that kills `a` first by contact priority;
+    // `a`'s own intent is then skipped by the live-status check, and the seam
+    // must still emit exactly one record for it.
+    //
+    // Asserted against the intent's OWN id, captured before the tick, not
+    // against post-tick action state: a defeated combatant's action is cleared,
+    // so a ground truth read after the fact cannot tell "skipped and recorded"
+    // from "skipped and dropped". That is precisely the hole external review
+    // found in the drop-detection test above, which reads post-tick state and
+    // therefore cannot catch a dropped `actor-defeated` intent at all.
+    const created = createEncounter({
+      seed: 7,
+      combatants: [
+        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 }, fighter: { maxHp: 1 } }),
+        combatant('v', 'away', { archetype: 'heavy', startPosition: { x: 0, z: 0 } }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'different-factions' },
+      combatStyles: COMBAT_STYLES,
+    })
+    // Both are mid-contact on each other; `v` holds the higher contact
+    // priority and `a` has 1 HP, so `v` resolves first and kills it, and `a`'s
+    // own intent is then skipped by the live-status check.
+    let state = patchCombatant(created.state, 'a', {
+      targetId: 'v',
+      hp: 1,
+      nextDecisionTick: 999_999,
+      facing: { x: 1, z: 0 },
+      // `heavy-cleave` carries contactPriority 10 against `fast-slash`'s 40, so
+      // `v` resolves FIRST and kills `a` before `a`'s own intent comes up.
+      action: activeContact('a:0', 'heavy-cleave', 'v'),
+    })
+    state = patchCombatant(state, 'v', {
+      targetId: 'a',
+      nextDecisionTick: 999_999,
+      facing: { x: -1, z: 0 },
+      action: activeContact('v:0', 'fast-slash', 'a'),
+    })
+
+    const records: ContactRecord[] = []
+    advanceEncounterTick({ ...state, tick: CONTACT_FIXTURE_TICK }, undefined, { record: (entry) => records.push(entry) })
+
+    const byInstance = new Map(records.map((r) => [r.actionInstanceId, r.outcome]))
+    // Both intents are present. `v`'s resolved; `a`'s was skipped because it
+    // was dead by the time its turn came, and is recorded as such rather than
+    // vanishing from the denominator.
+    expect(byInstance.get('v:0' as never)).toBe('hit')
+    expect(byInstance.get('a:0' as never)).toBe('actor-defeated')
+    expect(records).toHaveLength(2)
+  })
+
+  it('never falls back to target-unavailable on a real bout, so the classifier default is not silently absorbing intents', () => {
+    // `classifyContactOutcome` returns `target-unavailable` when an intent
+    // emitted none of the events it knows about. That is a legitimate outcome
+    // for a genuinely absent target -- and also the place an instrumentation
+    // defect would hide, because `target-unavailable` is counted in neither
+    // the reach numerator nor the geometry-failure denominator.
+    //
+    // So the fallback is pinned at zero over the whole nine-pairing set. If it
+    // ever starts firing, either a real `target-unavailable` path became
+    // reachable in a duel (worth knowing) or the classifier stopped
+    // recognising an event family (worth knowing more).
+    const records: ContactRecord[] = []
+    for (const home of homeRoster) {
+      for (const away of opponents) runBout(home, away, { record: (entry) => records.push(entry) })
+    }
+    expect(records.length).toBeGreaterThan(0)
+    expect(records.filter((r) => r.outcome === 'target-unavailable')).toEqual([])
   })
 })

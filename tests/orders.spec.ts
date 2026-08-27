@@ -312,7 +312,10 @@ test('shows every challenge\'s opponent temperaments on the season board', async
 // to see it.
 // ---------------------------------------------------------------------------
 
-const CANONICAL_DUEL_HASH = 'dc635911'
+// RE-FROZEN with `battle.test.ts`'s own literal by the retiarius-reach slice.
+// What this file asserts is that an explicit `standard` disposition perturbs
+// nothing -- the VALUE is incidental, the equality is the claim.
+const CANONICAL_DUEL_HASH = '2a0f3da2'
 
 test('leaves the frozen canonical duel hash untouched under explicit standard dispositions', async ({ page }) => {
   await page.goto('/?snapshot')
@@ -359,8 +362,9 @@ test('plays the seeded bout 0 to its frozen outcome when every order is left sta
   // The real product path (season -> series -> battle), not a direct module
   // call: `series.ts` always passes `dispositions` now, so the default lineup
   // must still reproduce the bout `combat-visuals.spec.ts` freezes its key
-  // poses and its `combat-outcomes.png` baseline against -- `home.brutus`
-  // defeated by `away.drusus` on tick 2106.
+  // poses and its `combat-outcomes.png` baseline against -- which the
+  // retiarius-reach slice reverses: `away.drusus` is now the one defeated, by
+  // `home.brutus`, on tick 1827.
   await fightBoutZeroUnder(page, 'standard')
   expect(await seriesOrders(page)).toEqual(['standard', 'standard', 'standard'])
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
@@ -369,7 +373,7 @@ test('plays the seeded bout 0 to its frozen outcome when every order is left sta
     const battle = window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!
     return { tick: battle.encounter.tick, winnerSide: battle.winnerSide, finishReason: battle.finishReason, hash: window.__GLADIATOR_TEST__.getActiveBattleTraceHash() }
   })
-  expect(standardOutcome).toMatchObject({ tick: 2106, winnerSide: 'away', finishReason: 'defeat' })
+  expect(standardOutcome).toMatchObject({ tick: 1827, winnerSide: 'home', finishReason: 'defeat' })
 
   // ...and the order the player picks genuinely reaches that simulation: the
   // same seeded bout under `press` produces a different trace, so the

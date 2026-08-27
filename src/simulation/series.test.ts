@@ -10,6 +10,8 @@ import {
   LINEUP_BOUT_HASHES,
   LINEUP_SCORE_SET,
   LINEUP_TRACE_SCORE,
+  SHORT_HANDED_SCORES,
+  STATS_LED_LINEUP,
   STATS_LED_SCORE,
 } from '../testSupport/frozenFixtures/seriesTrace'
 import { advanceSeriesTicks, assignFighter, confirmLineup, createSeries, rematch, requiredAssignmentCount, startNextBout, unassignSlot, type BoutOutcome, type PlanningSlot, type SeriesState } from './series'
@@ -234,7 +236,10 @@ it('makes stats matter more than blindly taking all counters', () => {
   // is useful but must not be a mechanical answer to stronger opponents. So
   // taking every counter must NOT be the best available lineup.
   const allCounters = playSeries(['brutus', 'aquila', 'nerva'])
-  const statsLed = playSeries(['aquila', 'brutus', 'nerva'])
+  // The witness for "a different ordering does strictly better" is named in
+  // the fixture module, not here: which lineup beats the all-counter one moves
+  // with the content, while the CRITERION below does not.
+  const statsLed = playSeries(STATS_LED_LINEUP)
 
   // Never a sweep -- the design's explicit prohibition. Under the Task 13
   // calibration the all-counter lineup does not merely fail to sweep, it LOSES.
@@ -339,15 +344,20 @@ it('produces at least two distinct scores across all six lineups (amended from t
   expect(scores.size).toBeGreaterThanOrEqual(2)
   expect(scores).toEqual(new Set(LINEUP_SCORE_SET))
 
-  // No lineup may sweep, and the all-counter ordering must not be among the
-  // winners. Asserted by name rather than by set membership, because the set
-  // alone cannot tell "some lineup sweeps" from "the forbidden one sweeps".
+  // The ALL-COUNTER ordering must not sweep. Asserted by name rather than by
+  // set membership, because the set alone cannot tell "some lineup sweeps"
+  // from "the forbidden one sweeps" -- and that is now a live distinction:
+  // `brutus/nerva/aquila` does sweep, which design.md explicitly permits ("at
+  // least one different lineup wins 2-1 OR 3-0").
   //
-  // NOTE: this `3-0` prohibition is STRICTER than design.md, which permits
-  // "at least one different lineup wins 2-1 or 3-0". See the header of
-  // `frozenFixtures/seriesTrace.ts`: the conflict is recorded there and is to
-  // be met deliberately, not resolved by editing whichever side is convenient.
-  expect(scores.has('3-0')).toBe(false)
+  // A blanket `expect(scores.has('3-0')).toBe(false)` stood here and was
+  // STRICTER than design.md. The conflict was recorded in
+  // `frozenFixtures/seriesTrace.ts` before it went live, and the decision to
+  // drop the blanket clause while keeping the by-name one is written up in
+  // `docs/superpowers/specs/2026-08-25-retiarius-reach-design.md`, under
+  // "Amendment -- the golden series' 3-0 prohibition, decided rather than
+  // relaxed".
+  expect(byLineup.get('brutus/aquila/nerva')).not.toBe('3-0')
   expect(byLineup.get('brutus/aquila/nerva')).toBe(ALL_COUNTERS_SCORE)
 })
 
@@ -402,7 +412,7 @@ describe('short-handed series', () => {
     // (read from the actual run, not guessed) rather than left as a >= 1
     // lower bound, which would stay green even if a fought bout's winner
     // silently flipped.
-    expect(state.score).toEqual({ home: 0, away: 3 })
+    expect(state.score).toEqual(SHORT_HANDED_SCORES.uncoveredSlot)
   })
 
   it('completes a series with no fightable gladiators at all', () => {
@@ -459,7 +469,7 @@ describe('short-handed series', () => {
     const away = fighterBySide(state.activeBattle, 'away')
     expect(home.definition.id).toBe('aquila')
     expect(away.definition.id).toBe(opponents[1].id)
-    expect(state.score).toEqual({ home: 0, away: 3 })
+    expect(state.score).toEqual(SHORT_HANDED_SCORES.trailingSlot)
   })
 
   it('forfeits two consecutive slots when only one gladiator is available', () => {
@@ -481,7 +491,7 @@ describe('short-handed series', () => {
     expect(forfeited).toHaveLength(2)
     expect(forfeited.map((outcome) => outcome.boutIndex)).toEqual([1, 2])
     expect(forfeited.map((outcome) => outcome.opponentId)).toEqual([opponents[1].id, opponents[2].id])
-    expect(state.score).toEqual({ home: 0, away: 3 })
+    expect(state.score).toEqual(SHORT_HANDED_SCORES.twoConsecutiveSlots)
   })
 })
 

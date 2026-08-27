@@ -139,18 +139,15 @@ test('plays a full three-series season through the real dev command surface, end
   const outcomes = season.records.flatMap((record) => record.outcomes)
   expect(outcomes).toHaveLength(9)
   expect(outcomes.every((outcome) => outcome.kind === 'fought')).toBe(true)
+  // RE-BASELINED with `frozenFixtures/goldenSeason.ts` by the retiarius-reach
+  // slice, and still the same nine bouts in the same order: three of them
+  // change hands.
   expect(outcomes.map(formatOutcome)).toEqual([
-    'brutus vs drusus: away', 'aquila vs cassius: away', 'nerva vs magnus: home',
-    'vitus vs drusus: home', 'sura vs cassius: away', 'brutus vs magnus: away',
-    // `nerva vs cassius: home`: series 2 is challenge 3, whose Cassius presses
-    // (`content/season.ts`'s `TEMPERAMENTS` row 2). Pressing is the one
-    // temperament change that HELPS the Technical gladiator across from him --
-    // 39.5% to 50.5% over `seasonBalance.test.ts`'s fixed cohort -- and Nerva's
-    // own order is the default `standard`, so the opponent's temperament is the
-    // only changed input. Same flip, same reason, as the golden season's.
-    'aquila vs drusus: away', 'nerva vs cassius: home', 'vitus vs magnus: away',
+    'brutus vs drusus: home', 'aquila vs cassius: away', 'nerva vs magnus: home',
+    'vitus vs drusus: home', 'sura vs cassius: home', 'brutus vs magnus: away',
+    'aquila vs drusus: away', 'nerva vs cassius: away', 'vitus vs magnus: away',
   ])
-  expect(season.score).toEqual({ home: 3, away: 6 })
+  expect(season.score).toEqual({ home: 4, away: 5 })
 
   // The season-summary screen itself, not just the dev-API state -- a real
   // player only ever sees this DOM, never `getSeasonState()`.

@@ -92,7 +92,7 @@ export const COMBAT_STYLES = {
       windupTicks: 14,
       impactTicks: 3,
       recoveryTicks: 20,
-      damageMultiplier: 0.88,
+      damageMultiplier: 0.80,
       accuracyModifier: 0.08,
       rootTravel: 0.25,
       pushDistance: 0.40,
@@ -106,8 +106,8 @@ export const COMBAT_STYLES = {
       minimumFacingDot: 0.6428, // ~50°
       windupTicks: 34,
       impactTicks: 6,
-      recoveryTicks: 34,
-      damageMultiplier: 1.98,
+      recoveryTicks: 56,
+      damageMultiplier: 2.70,
       accuracyModifier: -0.06,
       rootTravel: 0.45,
       pushDistance: 0.70,
@@ -117,12 +117,27 @@ export const COMBAT_STYLES = {
     'fast-slash': {
       id: 'fast-slash',
       tags: ['attack', 'probe', 'weapon', 'parryable'],
-      contactRange: { min: 0.9, max: 1.35 },
+      // The retiarius' probe, widened with his committed attack. The floor
+      // stays at 0.9 deliberately: he must retain one legal attack at EVERY
+      // distance. The hoplomachus can afford a 1.2 floor because he authors
+      // `backstep` and the decision seam gates that intent below 1.2 to answer
+      // exactly this; the retiarius authors no `backstep`, and the anti-stall
+      // exemption only frees movement that *restores a legal action* -- a
+      // fighter with no legal action anywhere near him is the absorbing state
+      // Task 13 had to dig the kernel out of.
+      //
+      // This is a larger change than it looks and carries its own risks: the
+      // probe is now legal from ~2.30 units, it changes Technical's reaction
+      // opportunities and defense-stream consumption, and its priority-40
+      // contact resolves ahead of most others. Measured effects: parries
+      // against it rise from 36 to 201, and its own geometry failures FALL
+      // from 14.1% to 4.1%.
+      contactRange: { min: 0.9, max: 2.05 },
       minimumFacingDot: 0.4226, // ~65°
       windupTicks: 10,
       impactTicks: 2,
-      recoveryTicks: 19,
-      damageMultiplier: 0.68,
+      recoveryTicks: 10,
+      damageMultiplier: 1.65,
       accuracyModifier: 0.06,
       rootTravel: 0.25,
       pushDistance: 0.18,
@@ -132,8 +147,16 @@ export const COMBAT_STYLES = {
     'fast-burst-lunge': {
       id: 'fast-burst-lunge',
       tags: ['attack', 'committed', 'burst', 'weapon', 'parryable'],
-      contactRange: { min: 0.9, max: 1.45 },
-      startMaxRange: 2.8,
+      // 1.60 rather than a value interpolated from the equipment: it is
+      // `technical-driving-thrust`'s floor, deliberately. The acceptance gate
+      // compares the two types' shares of contacts inside the murmillo's
+      // envelope, and that share counts the interval [contactRange.min, 1.7],
+      // whose WIDTH this floor sets. At 1.4 the retiarius showed 35.4% against
+      // the hoplomachus' 11.3% purely because it had three times the room;
+      // aligned, the same package measures 5.5%. `measure-reach.ts`'s gate
+      // asserts the equality rather than trusting this comment.
+      contactRange: { min: 1.6, max: 2.4 },
+      startMaxRange: 4.0,
       minimumFacingDot: 0.8192, // ~35°
       windupTicks: 18,
       impactTicks: 3,
@@ -153,9 +176,18 @@ export const COMBAT_STYLES = {
       // unchanged (the probe stays quicker and cheaper, Heavy's cleave stays
       // the slowest commitment, Technical keeps the longest reach).
       recoveryTicks: 20,
-      damageMultiplier: 1.45,
+      damageMultiplier: 2.60,
       accuracyModifier: 0,
-      rootTravel: 1.40,
+      // 1.40 was the ACTUAL cause of the defect, not the contact range. The
+      // kernel clamps root travel at max(minimumSeparation, contactRange.min)
+      // (`encounter.ts`, the phase-8 lunge clamp), so a lunge carrying 1.40
+      // forward landed on the 0.9 arena floor whatever its nominal reach: the
+      // authored attack was chosen at a median separation of 2.13, closed 1.23
+      // units between decision and contact, and made contact at 0.90 -- the
+      // closest two fighters can legally stand -- every time. A candidate with
+      // reach 2.70 and this field left at 1.40 reproduced that 0.90 median
+      // exactly, which is how the diagnosis was confirmed rather than assumed.
+      rootTravel: 0.50,
       pushDistance: 0.35,
       staggerTicks: 14,
       contactPriority: 30,
@@ -168,7 +200,7 @@ export const COMBAT_STYLES = {
       windupTicks: 20,
       impactTicks: 3,
       recoveryTicks: 15,
-      damageMultiplier: 1.34,
+      damageMultiplier: 1.38,
       accuracyModifier: 0.04,
       rootTravel: 0.20,
       pushDistance: 0.30,
@@ -183,7 +215,7 @@ export const COMBAT_STYLES = {
       windupTicks: 30,
       impactTicks: 4,
       recoveryTicks: 24,
-      damageMultiplier: 1.82,
+      damageMultiplier: 1.90,
       accuracyModifier: -0.03,
       rootTravel: 0.50,
       pushDistance: 0.50,
@@ -212,7 +244,7 @@ export const COMBAT_STYLES = {
       tags: ['defense'],
       minimumReactionLeadTicks: 8,
       impactTicks: 4,
-      recoveryTicks: 12,
+      recoveryTicks: 6,
       minimumIncomingFacingDot: 0.3420, // ~front ±70°
     },
     'fast-evade': {
@@ -220,7 +252,7 @@ export const COMBAT_STYLES = {
       tags: ['defense'],
       minimumReactionLeadTicks: 7,
       impactTicks: 3,
-      recoveryTicks: 14,
+      recoveryTicks: 8,
       // Authored defense dash, distributed across the seven remaining
       // windup ticks. Deliberately independent of Fast's ordinary
       // locomotion speed; still constrained by arena/policy/separation.
@@ -231,7 +263,7 @@ export const COMBAT_STYLES = {
       tags: ['defense'],
       minimumReactionLeadTicks: 10,
       impactTicks: 4,
-      recoveryTicks: 16,
+      recoveryTicks: 10,
       minimumIncomingFacingDot: -0.1736, // ~front ±100°
     },
   },
