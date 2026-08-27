@@ -88,7 +88,7 @@ export const LINEUP_TRACE_SCORE = { home: 1, away: 2 } as const
  * against technical, which is exactly "reading the stat cards beats reading
  * only the archetype triangle".
  */
-export const STATS_LED_LINEUP: readonly string[] = ['brutus', 'nerva', 'aquila']
+export const STATS_LED_LINEUP = ['brutus', 'nerva', 'aquila'] as const satisfies readonly [string, string, string]
 export const STATS_LED_SCORE = { home: 3, away: 0 } as const
 
 /**
