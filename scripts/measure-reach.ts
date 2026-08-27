@@ -55,10 +55,17 @@
 //    while half the sample sits at the old close distance.
 //
 //  * COMPARATORS ARE CHOSEN TO BE INDEPENDENT of the change being judged.
-//    The hoplomachus' geometry-failure rate is taken from its matchups that
-//    contain no `fast` at all, because its `vs fast` component moves when the
-//    retiarius moves -- the coupling defect that invalidated an earlier version
-//    of the ordering criterion.
+//    Every hoplomachus yardstick is taken from its matchups that contain no
+//    `fast` at all, because its `vs fast` component moves when the retiarius
+//    moves -- the coupling defect that invalidated an earlier version of the
+//    ordering criterion, and then shipped anyway inside gate D.
+//
+//    The selection is NOT written out here. It comes from
+//    `independentComparatorMatchups` in `src/testSupport/reachHarness.ts`,
+//    which is typechecked and has a regression against exactly this defect.
+//    Prose stated the rule and four separate comparators broke it; the fifth
+//    time it is code, and there is one call site shape for all three gates that
+//    need it rather than a literal pair of labels repeated per gate.
 //
 // `--overlay <file.json>` deep-merges a partial `{ attacks?, styles? }` into
 // the catalog before the run and validates the result, so candidate numbers are
@@ -79,7 +86,7 @@ import { percentile } from '../src/testSupport/balanceCohorts'
 // than here: `scripts/` is outside tsconfig's `include`, so nothing in this
 // file is typechecked by `npm run build` or reachable by Vitest, and those two
 // pieces are the ones that can be silently wrong. See `reachHarness.ts`.
-import { applyOverlay, GEOMETRY_FAILURE, REACHED } from '../src/testSupport/reachHarness'
+import { applyOverlay, GEOMETRY_FAILURE, independentComparatorMatchups, matchupLabel, REACHED } from '../src/testSupport/reachHarness'
 import type { ContactCollector, ContactOutcome, ContactRecord } from '../src/simulation/contactDiagnostics'
 import type { AttackActionId, CombatStyleCatalog } from '../src/simulation/combatActions'
 import type { Archetype, FighterDefinition } from '../src/simulation/fighters'
@@ -194,7 +201,7 @@ function emptyMatchup(label: string, home: Archetype, away: Archetype): MatchupR
 }
 
 function runMatchup(catalog: CombatStyleCatalog, home: Archetype, away: Archetype, seeds: number): MatchupResult {
-  const result = emptyMatchup(`${home} vs ${away}`, home, away)
+  const result = emptyMatchup(matchupLabel(home, away), home, away)
 
   for (let index = 0; index < seeds; index += 1) {
     let battle = createBattle({
@@ -401,29 +408,73 @@ console.log('\nHEAD TO HEAD (the ordering gate)')
 console.log(`retiarius ${fixed(headToHead.retiarius?.contactMedian ?? Number.NaN)}   hoplomachus ${fixed(headToHead.hoplomachus?.contactMedian ?? Number.NaN)}   margin ${fixed((headToHead.hoplomachus?.contactMedian ?? 0) - (headToHead.retiarius?.contactMedian ?? 0))}`)
 
 /**
- * Gate D's statistic: over ALL of a style's reached contacts, probe and
- * committed together, the share landing inside the murmillo's envelope.
+ * The archetype this slice changes, and the one every criterion measures it
+ * against. Named once so the comparator selection below reads as the rule it
+ * implements rather than as two string literals that happen to be right.
  */
-function wholeTypeEnvelopeShare(archetype: Archetype): number {
+const SUBJECT: Archetype = 'fast'
+const COMPARATOR: Archetype = 'technical'
+
+/** Every ordered matchup that was run. The SUBJECT is pooled over all of them -- it is what is being judged, so nothing about it is held out. */
+const ALL_MATCHUPS: readonly string[] = matchups.map((m) => m.label)
+
+/**
+ * The COMPARATOR's matchups containing no SUBJECT at all. Selected by
+ * `reachHarness.ts` rather than written here; see that module for why the rule
+ * had to become code.
+ *
+ * Gates D and G average over the whole set. Gate C reads ONE member of it --
+ * `technical vs heavy` -- because gate C is a like-for-like comparison against
+ * the same opponent the subject is measured against (`fast vs heavy`), so
+ * broadening its comparator would change what it compares, not just how much
+ * of it. What matters is that gate C's single label is a MEMBER of this set
+ * rather than an independently written literal, which the gate asserts.
+ */
+const COMPARATOR_MATCHUPS = independentComparatorMatchups(COMPARATOR, SUBJECT, STYLES)
+
+function matchupsFor(labels: readonly string[]): MatchupResult[] {
+  return labels.map((label) => {
+    const m = byLabel.get(label)
+    // A label the run never produced would select an empty sample, and an empty
+    // sample is `NaN` -- which reads as a comparator rather than as a bug.
+    if (m === undefined) throw new Error(`no matchup '${label}' was run; comparator selection is out of step with the matchup grid`)
+    return m
+  })
+}
+
+/**
+ * Gate D's statistic: over ALL of a style's reached contacts, probe and
+ * committed together, the share landing inside the murmillo's envelope,
+ * restricted to `labels`.
+ *
+ * `labels` is a parameter, and that is the fix for the defect external review
+ * found after this slice shipped. This function used to read `pooledSamples`,
+ * i.e. all nine matchups, for BOTH sides of gate D -- so the hoplomachus'
+ * yardstick included `technical vs fast` and moved with the very thing it was
+ * judging, breaking the rule gates C and G obey.
+ */
+function wholeTypeEnvelopeShare(archetype: Archetype, labels: readonly string[]): number {
   let inside = 0
   let total = 0
-  for (const id of STYLE_ATTACKS[archetype]) {
-    for (const sample of pooledSamples[id] ?? []) {
-      total += 1
-      if (sample.contact <= ENVELOPE) inside += 1
+  for (const m of matchupsFor(labels)) {
+    for (const id of STYLE_ATTACKS[archetype]) {
+      for (const sample of m.reached[id] ?? []) {
+        total += 1
+        if (sample.contact <= ENVELOPE) inside += 1
+      }
     }
   }
   return total > 0 ? inside / total : Number.NaN
 }
 
-/** The hoplomachus' geometry-failure rate over its matchups containing no `fast` -- an independent comparator. */
-function hoplomachusIndependentGeometryFailure(): number {
+/** A style's committed-attack geometry-failure rate, restricted to `labels`. */
+function committedGeometryFailure(archetype: Archetype, labels: readonly string[]): number {
+  const id = COMMITTED_ATTACK[archetype]
   let reached = 0
   let failed = 0
-  for (const label of ['technical vs heavy', 'technical vs technical']) {
-    const m = byLabel.get(label) as MatchupResult
-    reached += (m.reached['technical-driving-thrust'] ?? []).length
-    failed += m.geometryFailures['technical-driving-thrust'] ?? 0
+  for (const m of matchupsFor(labels)) {
+    reached += (m.reached[id] ?? []).length
+    failed += m.geometryFailures[id] ?? 0
   }
   return reached + failed > 0 ? failed / (reached + failed) : Number.NaN
 }
@@ -450,7 +501,14 @@ for (const [incoming, parried] of Object.entries(pooledParries)) {
   const converted = pooledCountersByIncoming[incoming] ?? 0
   console.log(`    ${incoming.padEnd(26)} ${String(converted).padStart(5)}/${String(parried).padEnd(5)} ${pct(parried > 0 ? converted / parried : Number.NaN)}`)
 }
-console.log(`hoplomachus geometry failure, fast-free matchups only: ${pct(hoplomachusIndependentGeometryFailure())}`)
+console.log('\nCOMPARATORS (gates D and G average this set, gate C reads one member of it; printed so the gate inputs are visible)')
+console.log(`  comparator matchups: ${COMPARATOR_MATCHUPS.join(', ')}`)
+console.log(`  hoplomachus geometry failure, committed attack: ${pct(committedGeometryFailure(COMPARATOR, COMPARATOR_MATCHUPS))} (pooled, for contrast: ${pct(committedGeometryFailure(COMPARATOR, ALL_MATCHUPS))})`)
+console.log(
+  `  hoplomachus whole-type inside envelope: ${pct(wholeTypeEnvelopeShare(COMPARATOR, COMPARATOR_MATCHUPS))} ` +
+  `(pooled, the coupled figure gate D used to read: ${pct(wholeTypeEnvelopeShare(COMPARATOR, ALL_MATCHUPS))})`,
+)
+console.log(`  retiarius whole-type inside envelope, all nine matchups: ${pct(wholeTypeEnvelopeShare(SUBJECT, ALL_MATCHUPS))}`)
 
 // ---------------------------------------------------------------------------
 // Gate
@@ -488,8 +546,14 @@ if (args.gate) {
   // the hoplomachus' pooled figure would move with the retiarius and could be
   // raised by worsening Technical, which is the coupling defect this whole
   // criterion set had to be rebuilt to avoid.
-  const retiariusVsMurmillo = committedOf('fast vs heavy')
-  const hoplomachusVsMurmillo = committedOf('technical vs heavy')
+  const gateCComparatorLabel = matchupLabel(COMPARATOR, 'heavy')
+  // Not decoration: gate C's comparator was a bare string literal, which is how
+  // gate D's comparator drifted out of the rule without anyone noticing. This
+  // ties it to the same selection the other two gates use.
+  check(COMPARATOR_MATCHUPS.includes(gateCComparatorLabel),
+    `C: comparator matchup '${gateCComparatorLabel}' is not in the ${SUBJECT}-free set (${COMPARATOR_MATCHUPS.join(', ')})`)
+  const retiariusVsMurmillo = committedOf(matchupLabel(SUBJECT, 'heavy'))
+  const hoplomachusVsMurmillo = committedOf(gateCComparatorLabel)
   check((retiariusVsMurmillo?.insideEnvelope ?? 1) <= (hoplomachusVsMurmillo?.insideEnvelope ?? 0),
     `C: retiarius vs murmillo ${pct(retiariusVsMurmillo?.insideEnvelope ?? Number.NaN)} inside the envelope, above the hoplomachus' ${pct(hoplomachusVsMurmillo?.insideEnvelope ?? Number.NaN)}`)
 
@@ -497,10 +561,24 @@ if (args.gate) {
   // would let the cheap probe carry the visual impression, and measurement
   // confirms it can: `fast-slash` is selected more often than the lunge and
   // lands far closer.
-  const fastWhole = wholeTypeEnvelopeShare('fast')
-  const technicalWhole = wholeTypeEnvelopeShare('technical')
+  //
+  // A COMPARISON, not a bar (decided by the design owner, 2026-08-27): the
+  // `63.0%` the spec quotes is a measurement of the authored content offered as
+  // the comparison's source, exactly as gate C's `65.0%` is, and was never a
+  // threshold. Nothing here encodes it, and nothing should.
+  //
+  // The comparator side is `COMPARATOR_MATCHUPS`, not the pooled sample. It was
+  // pooled until external review of the shipped implementation caught it -- the
+  // fourth comparator in this slice to be coupled to the thing it judged, and
+  // the first to survive into the merged content. Fixing it makes gate D pass
+  // by MORE, not less (the hoplomachus' `vs fast` component drags his own
+  // pooled average down, so pooled was the stricter reading), which is why no
+  // shipped content depends on this repair -- but a gate that would move with
+  // the subject is not a gate whatever direction it happens to point today.
+  const fastWhole = wholeTypeEnvelopeShare(SUBJECT, ALL_MATCHUPS)
+  const technicalWhole = wholeTypeEnvelopeShare(COMPARATOR, COMPARATOR_MATCHUPS)
   check(fastWhole <= technicalWhole,
-    `D: retiarius total offence ${pct(fastWhole)} inside the envelope, above the hoplomachus' ${pct(technicalWhole)}`)
+    `D: retiarius total offence ${pct(fastWhole)} inside the envelope, above the hoplomachus' fast-free ${pct(technicalWhole)}`)
 
   // GATE E -- give-ground survives, gated on ground rather than on time.
   check(immediateShare <= 0.05, `E: forced disengages clearing within one tick ${pct(immediateShare)} above 5%`)
@@ -533,7 +611,7 @@ if (args.gate) {
   // GATE G -- against the same independent comparator as gate C, for the same
   // reason: the hoplomachus' pooled failure rate moves when the retiarius does.
   const fastGeometry = fastPooled?.geometryFailureRate ?? 1
-  const comparator = hoplomachusIndependentGeometryFailure()
+  const comparator = committedGeometryFailure(COMPARATOR, COMPARATOR_MATCHUPS)
   check(fastGeometry <= comparator, `G: retiarius committed geometry failures ${pct(fastGeometry)} above the hoplomachus' fast-free ${pct(comparator)}`)
 
   console.log('\nGATE')
@@ -559,7 +637,16 @@ if (args.json) {
       countersByIncoming: m.countersByIncoming,
     })),
     headToHeadMargin: (headToHead.hoplomachus?.contactMedian ?? Number.NaN) - (headToHead.retiarius?.contactMedian ?? Number.NaN),
-    hoplomachusIndependentGeometryFailure: hoplomachusIndependentGeometryFailure(),
+    comparatorMatchups: COMPARATOR_MATCHUPS,
+    hoplomachusIndependentGeometryFailure: committedGeometryFailure(COMPARATOR, COMPARATOR_MATCHUPS),
+    // Both sides of gate D, plus the coupled figure it used to read, so a
+    // recorded run says which comparator produced it rather than leaving a
+    // reader to infer it from the harness version.
+    wholeTypeEnvelopeShare: {
+      subject: wholeTypeEnvelopeShare(SUBJECT, ALL_MATCHUPS),
+      comparatorIndependent: wholeTypeEnvelopeShare(COMPARATOR, COMPARATOR_MATCHUPS),
+      comparatorPooled: wholeTypeEnvelopeShare(COMPARATOR, ALL_MATCHUPS),
+    },
   }, null, 2)}\n`, 'utf8')
   console.log(`\nwrote ${args.json}`)
 }
