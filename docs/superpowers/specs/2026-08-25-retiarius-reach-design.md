@@ -436,3 +436,94 @@ Re-opening the type choice; any presentation change; moving
 - **The two long types converge.** Head to head the margin is +0.45, down from
   an authored +1.32.
 - **The balance task is the expensive half.**
+
+---
+
+## Amendment — the golden series' `3–0` prohibition, decided rather than relaxed
+
+**Written 2026-08-27, during the reconciliation task, before either side of the
+conflict was edited.**
+
+`src/testSupport/frozenFixtures/seriesTrace.ts` was created in the preparatory
+PR with a conflict recorded in its header: `series.test.ts` asserted
+`scores.has('3-0') === false` across all six lineups, while design.md's golden
+criteria are weaker — the *all-counter* lineup must not sweep, and "at least
+one different lineup wins 2–1 **or 3–0**". The test was stricter than the spec,
+and the plan required that if a `3–0` ever appeared it be met deliberately.
+
+It has appeared. Measured on the changed build, at the same fixed seed:
+
+| lineup | score | |
+|---|---|---|
+| `brutus/aquila/nerva` (all counters) | **2–1** | does not sweep |
+| `brutus/nerva/aquila` | **3–0** | |
+| `aquila/brutus/nerva` | 1–2 | |
+| `aquila/nerva/brutus` | 1–2 | |
+| `nerva/brutus/aquila` | 1–2 | |
+| `nerva/aquila/brutus` | 0–3 | |
+
+**Both of design.md's golden criteria hold, and were checked directly against
+this run rather than inferred from a fixture matching:**
+
+1. the all-counter lineup does not sweep — it scores 2–1;
+2. a different lineup does strictly better — `brutus/nerva/aquila` sweeps 3–0.
+
+**The decision: the blanket prohibition is dropped; the by-name one stays.**
+`series.test.ts` continues to assert that `brutus/aquila/nerva` specifically
+does not sweep, which is what design.md actually forbids and what the test's
+own comment says the by-name assertion exists for ("the set alone cannot tell
+'some lineup sweeps' from 'the forbidden one sweeps'"). What is removed is the
+extra clause forbidding *any* lineup from sweeping, which design.md never
+stated.
+
+**What this costs, stated plainly.** The product puzzle is unchanged in
+substance but changes witness. The design's claim is "taking every counter must
+NOT be the best available lineup, and reading the stat cards beats reading only
+the archetype triangle". The lineup that now beats the all-counter ordering is
+`brutus/nerva/aquila`, which throws the retiarius at the *murmillo* — the
+matchup the triangle says he loses — and mirrors technical against technical.
+That is a stronger illustration of the design's own point than the previous
+witness was, not a weaker one. The all-counter lineup no longer *loses* (it
+went 1–2, it now goes 2–1); design.md never required it to lose, only that it
+not be the best.
+
+**And one criterion is un-relaxed by this run.** Task 13 amended "at least
+three distinct final score/result profiles" down to two, because a third was
+unreachable. The changed content produces **four** — `3–0`, `2–1`, `1–2`,
+`0–3`. The amended floor stays where it is (it is not this slice's to move),
+but the original criterion is satisfied again and that is worth recording.
+
+## Amendment — a camera finding this slice does not fix
+
+`ArenaCamera.ts` is forbidden to this slice, and one of its acceptance criteria
+now fails on the changed content. Reported rather than nudged, per the plan's
+rule that a constant needing to move here "is a finding to report — a slice to
+schedule, not a number to nudge".
+
+**`ArenaCamera.test.ts`'s undamped-desired-yaw continuity bound**: the camera's
+`unwrappedYaw` must not change by more than 15° in a tick. Measured over all
+nine roster pairings on the changed build:
+
+| pairing | ticks | over 15° | max |
+|---|---:|---:|---:|
+| `brutus/drusus` | 1911 | **1** | **17.08°** |
+| every other pairing | 12 937 | 0 | ≤ 9.64° |
+| **total** | **14 848** | **1** (0.0067%) | |
+
+The single exceedance is at tick 1468 of `brutus/drusus`, at a separation of
+**1.011** units. The mechanism is not a slow drift but a one-tick event:
+`heavy-cleave` authors a `pushDistance` of 0.70, and a mostly-lateral 0.70-unit
+displacement applied at ~1.0 units of separation rotates the pair axis by far
+more than 15° in the single tick it lands. The camera's *undamped desired* yaw
+follows that axis by construction, so the bound is a claim about the camera's
+slew limiting, not about the content: nothing in this slice changed
+`heavy-cleave.pushDistance`, the arena's 0.90 minimum separation, or the
+camera. What changed is which configurations the bouts visit.
+
+**Not fixed here, deliberately.** The fix belongs in `ArenaCamera` — a slew
+clamp on the desired yaw, or deriving it from a separation-floored axis — and
+both are camera work this slice may not touch. The damped *output* the player
+actually sees is unaffected: every other camera criterion passes, including the
+framing-error bound, the reversal ceiling, the zoom-rate limit, the clamp
+inertness, and all of `tests/legibility.spec.ts` (safe area, scale floor and
+screen separation at all three viewports).

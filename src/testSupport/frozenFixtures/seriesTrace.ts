@@ -15,18 +15,23 @@
 //   that forced it, what it costs.
 //
 // -----------------------------------------------------------------------
-// A CONFLICT THIS FILE EXISTS TO SURFACE, recorded here for the task that
-// reconciles the moved artifacts.
+// THE CONFLICT THIS FILE EXISTED TO SURFACE HAS BEEN MET. RESOLVED.
 //
-// `series.test.ts` asserts `scores.has('3-0') === false` for every one of the
-// six lineups. design.md's golden criteria are weaker: the all-counter lineup
-// must not sweep, and "at least one different lineup wins 2-1 OR 3-0". The
-// test is therefore STRICTER THAN THE SPEC.
+// `series.test.ts` asserted `scores.has('3-0') === false` for every one of the
+// six lineups, while design.md's golden criteria are weaker: the ALL-COUNTER
+// lineup must not sweep, and "at least one different lineup wins 2-1 OR 3-0".
+// The test was stricter than the spec.
 //
-// If a 3-0 appears after the content change, that is not automatically a
-// failure -- but it is also not to be resolved by editing whichever of the two
-// is more convenient. Decide it explicitly and write the decision into the
-// spec.
+// A 3-0 has appeared. Both of design.md's criteria were checked directly
+// against the new run before either side was edited: the all-counter lineup
+// scores 2-1 (no sweep), and `brutus/nerva/aquila` sweeps 3-0 (a different
+// lineup does strictly better). The blanket prohibition is dropped; the
+// by-name one -- which is what design.md actually states -- stays.
+//
+// Written up in full, with the six-lineup table and what the change costs, in
+// `docs/superpowers/specs/2026-08-25-retiarius-reach-design.md`, under
+// "Amendment -- the golden series' 3-0 prohibition, decided rather than
+// relaxed".
 // -----------------------------------------------------------------------
 
 /**
@@ -70,29 +75,63 @@ export const LINEUP_BOUT_DURATIONS: readonly number[] = [1705, 1402, 1934]
 export const LINEUP_TRACE_SCORE = { home: 1, away: 2 } as const
 
 /**
- * CLASS: product. `Aquila/Nerva/Brutus`'s score. It is the "a different
- * ordering does strictly better" half of design.md's golden criteria; the
- * test also asserts `statsLed.score.home > allCounters.score.home`, which is
- * the criterion itself and is not re-baselinable.
+ * CLASS: product. The lineup that beats the all-counter ordering, and its
+ * score -- the "a different ordering does strictly better" half of design.md's
+ * golden criteria. The test also asserts
+ * `statsLed.score.home > allCounters.score.home`, which is the criterion
+ * itself and is NOT re-baselinable; this pair only names the witness.
+ *
+ * The witness moved with the content, from `aquila/brutus/nerva` (2-1) to
+ * `brutus/nerva/aquila` (3-0), and the new one illustrates the design's point
+ * more sharply than the old one: it throws the retiarius at the MURMILLO --
+ * the matchup the archetype triangle says he loses -- and mirrors technical
+ * against technical, which is exactly "reading the stat cards beats reading
+ * only the archetype triangle".
  */
-export const STATS_LED_SCORE = { home: 2, away: 1 } as const
+export const STATS_LED_LINEUP: readonly string[] = ['brutus', 'nerva', 'aquila']
+export const STATS_LED_SCORE = { home: 3, away: 0 } as const
 
 /**
  * CLASS: product. The all-counter lineup `Brutus/Aquila/Nerva`. design.md
- * forbids it sweeping 3-0; under the Task 13 calibration it does not merely
- * fail to sweep, it LOSES. Asserted by name rather than by set membership,
- * because the set alone cannot tell "some lineup sweeps" from "the forbidden
- * one sweeps".
+ * forbids it SWEEPING 3-0 and nothing more; under the Task 13 calibration it
+ * did not merely fail to sweep, it lost, and this literal read `1-2`. It now
+ * wins 2-1, which the design permits: what it may not be is the BEST lineup,
+ * and `brutus/nerva/aquila`'s 3-0 is strictly better.
+ *
+ * Asserted by name rather than by set membership, because the set alone cannot
+ * tell "some lineup sweeps" from "the forbidden one sweeps" -- now a live
+ * distinction rather than a hypothetical one.
  */
-export const ALL_COUNTERS_SCORE = '1-2'
+export const ALL_COUNTERS_SCORE = '2-1'
 
 /**
  * CLASS: product. The distinct scores across all six lineups. design.md's
- * criterion, amended during Task 13, is "at least two distinct profiles"; the
- * `>= 2` assertion is the criterion and lives in the test file. THIS set is
- * the stronger, re-baselinable statement of which two they are.
+ * criterion, amended during Task 13 from "at least three distinct profiles"
+ * down to two because a third was unreachable, is the `>= 2` assertion in the
+ * test file. THIS set is the stronger, re-baselinable statement of which
+ * profiles they are.
  *
- * The `3-0` prohibition asserted next to it in the test file is the conflict
- * described in this file's header. It is not part of this literal.
+ * There are now FOUR. The amended floor stays where it is -- moving it is not
+ * this slice's to do -- but the criterion Task 13 had to relax is satisfied
+ * again, and that is worth recording rather than leaving to be noticed.
  */
-export const LINEUP_SCORE_SET: readonly string[] = ['1-2', '2-1']
+export const LINEUP_SCORE_SET: readonly string[] = ['0-3', '1-2', '2-1', '3-0']
+
+/**
+ * CLASS: determinism. The three short-handed series' final scores, in the
+ * order `series.test.ts` asserts them: one uncovered slot, one trailing slot,
+ * and two consecutive slots with a single gladiator available.
+ *
+ * NOT in the preparatory PR's inventory, and that omission is why its split
+ * was incomplete. Each forfeit contributes exactly one away point, so these
+ * scores are fully determined once the fought bouts' winners are known; they
+ * are pinned (rather than left as a `>= 1` lower bound) so a fought bout's
+ * winner cannot flip silently. The STRUCTURE around them -- how many
+ * forfeits, at which bout indices, against which opponents -- is the criterion
+ * and stays in the test file, unchanged by this slice.
+ */
+export const SHORT_HANDED_SCORES = {
+  uncoveredSlot: { home: 2, away: 1 },
+  trailingSlot: { home: 1, away: 2 },
+  twoConsecutiveSlots: { home: 1, away: 2 },
+} as const
