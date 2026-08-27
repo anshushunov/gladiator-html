@@ -41,8 +41,15 @@ describe('reach harness', () => {
   it('rejects an overlay that makes the catalog invalid', () => {
     // `startMaxRange` must be >= `contactRange.max`; a candidate that violates
     // an authored invariant must fail loudly rather than produce numbers.
+    //
+    // The violating `max` is derived from the catalog rather than written as a
+    // literal. It was `3.5`, chosen when `startMaxRange` was 2.8; the content
+    // slice moved that field to 4.0, and 3.5 quietly stopped violating
+    // anything -- the test then asserted that a VALID overlay throws, which is
+    // the opposite of its own name.
+    const startMax = COMBAT_STYLES.attacks['fast-burst-lunge'].startMaxRange as number
     expect(() => applyOverlay(structuredClone(COMBAT_STYLES) as never, {
-      attacks: { 'fast-burst-lunge': { contactRange: { min: 0.9, max: 3.5 } } },
+      attacks: { 'fast-burst-lunge': { contactRange: { min: 0.9, max: startMax + 0.5 } } },
     })).toThrow(/startMaxRange/)
   })
 

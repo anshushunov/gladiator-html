@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { COMBAT_STYLES } from '../content/combatStyles'
 import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
 import { combatant, duelArena, freeArena, traceHash } from '../testSupport/combatFixtures'
+// Read rather than restated: the retiarius-reach slice moved both, and every
+// literal 2.4/30 in this file asserted a boundary the kernel no longer has.
+import { FAST_FORCED_DISENGAGE_END_RANGE, FAST_FORCED_DISENGAGE_MAX_TICKS } from './combatDecision'
 import type { AttackActionId, CombatActionState } from './combatActions'
 import {
   advanceEncounterTick,
@@ -1080,12 +1083,22 @@ describe("advanceEncounterTick: Fast's forced disengage (design.md; Task 7's has
 
   it('holds the forced disengage across many ticks after a real burst-lunge recovery, ending on the opened range rather than on the timeout', () => {
     // The end-to-end shape of the mechanic, not just its threshold helper: a
-    // lunge lands inside its own contactRange (0.9..1.45), so the fighter
-    // starts the forcing far *inside* the 2.4-unit end range and has to
-    // actually travel to get out of it. An exit test pointing the wrong way
-    // would clear the field on the very next tick and this would fail on
-    // `forcedTicks`.
-    const base = fastDisengageFixture({ x: 1.2, z: 0 })
+    // lunge lands inside its own contactRange, so the fighter starts the
+    // forcing well *inside* the exit range and has to actually travel to get
+    // out of it. An exit test pointing the wrong way would clear the field on
+    // the very next tick and this would fail on `forcedTicks`.
+    //
+    // The start separation is read from the lunge's own contact range rather
+    // than written as `1.2`, and the reason is a finding rather than tidiness:
+    // 1.2 is now BELOW that range's 1.60 floor, so the fixture had stopped
+    // representing "where a lunge lands" at all -- and from 1.2, Fast's 2.7
+    // u/s backward speed cannot reach the new 3.35 exit inside the 37-tick
+    // cap, so this test's own claim ("ending on the opened range rather than
+    // on the timeout") had silently become false of its fixture. Started at
+    // the middle of the range the lunge actually lands in, the range exit is
+    // reached in about 30 ticks and the claim holds again.
+    const lungeRange = COMBAT_STYLES.attacks['fast-burst-lunge'].contactRange
+    const base = fastDisengageFixture({ x: (lungeRange.min + lungeRange.max) / 2, z: 0 })
     const state = patchCombatant(base, 'self', {
       targetId: 'other',
       nextDecisionTick: 999_999,
@@ -1126,13 +1139,20 @@ describe("advanceEncounterTick: Fast's forced disengage (design.md; Task 7's has
 
     expect(forcedTicks).toBeGreaterThan(1)
     expect(endedAtTick).toBeDefined()
-    expect(endedAtDistance).toBeGreaterThanOrEqual(2.4)
-    // Ended on the range, with the 30-tick timeout still unspent.
-    expect(endedAtTick! - 6).toBeLessThan(30)
+    expect(endedAtDistance).toBeGreaterThanOrEqual(FAST_FORCED_DISENGAGE_END_RANGE)
+    // Ended on the range, with the tick timeout still unspent. Both bounds
+    // read from the exported constants rather than written as literals: the
+    // retiarius-reach slice moved them (2.4 -> 3.35, 30 -> 37), and a literal
+    // pair states a boundary the kernel no longer has.
+    expect(endedAtTick! - 6).toBeLessThan(FAST_FORCED_DISENGAGE_MAX_TICKS)
   })
 
   it('ends the forced disengage once the range has been opened back out to 2.4 units, and immediately re-enters ordinary weighted choice', () => {
-    const base = fastDisengageFixture({ x: 2.5, z: 0 }) // past FAST_FORCED_DISENGAGE_END_RANGE (2.4): the retreat is done
+    // Past FAST_FORCED_DISENGAGE_END_RANGE: the retreat is done. Derived from
+    // the constant rather than written as `2.5`, which stopped being past the
+    // exit when the slice moved it to 3.35 -- the fixture then measured the
+    // opposite of what the test's name claims.
+    const base = fastDisengageFixture({ x: FAST_FORCED_DISENGAGE_END_RANGE + 0.1, z: 0 })
     const state = patchCombatant(base, 'self', {
       targetId: 'other',
       nextDecisionTick: 999_999,
@@ -1140,7 +1160,7 @@ describe("advanceEncounterTick: Fast's forced disengage (design.md; Task 7's has
       forcedDisengageStartTick: 0,
       action: { type: 'neutral' },
     })
-    const withTick: EncounterState = { ...state, tick: 4 } // ticksSinceForced becomes 5, well under the 30-tick timeout
+    const withTick: EncounterState = { ...state, tick: 4 } // ticksSinceForced becomes 5, well under the tick timeout
     const decisionStreamBefore = withTick.randomByCombatant.self.decision
 
     const { state: next } = advanceEncounterTick(withTick)
@@ -1155,8 +1175,8 @@ describe("advanceEncounterTick: Fast's forced disengage (design.md; Task 7's has
     expect(next.combatants.self.nextDecisionTick).toBeGreaterThan(5)
   })
 
-  it('ends the forced disengage after 30 ticks regardless of distance', () => {
-    const base = fastDisengageFixture({ x: 1.2, z: 0 }) // still pinned inside the 2.4-unit range, so only the timeout can end it
+  it('ends the forced disengage at its authored tick cap regardless of distance', () => {
+    const base = fastDisengageFixture({ x: 1.2, z: 0 }) // still pinned inside the exit range, so only the timeout can end it
     const state = patchCombatant(base, 'self', {
       targetId: 'other',
       nextDecisionTick: 999_999,
@@ -1164,7 +1184,7 @@ describe("advanceEncounterTick: Fast's forced disengage (design.md; Task 7's has
       forcedDisengageStartTick: 0,
       action: { type: 'neutral' },
     })
-    const withTick: EncounterState = { ...state, tick: 29 } // ticksSinceForced becomes 30 this tick
+    const withTick: EncounterState = { ...state, tick: FAST_FORCED_DISENGAGE_MAX_TICKS - 1 } // ticksSinceForced reaches the cap this tick
     const decisionStreamBefore = withTick.randomByCombatant.self.decision
 
     const { state: next } = advanceEncounterTick(withTick)
@@ -1596,11 +1616,11 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
 
     expect(types(blockBatch)).toEqual(['attack-blocked', 'damage-dealt', 'fighter-staggered'])
     expect(blockBatch[0]).toMatchObject({ contactZone: 'shield' })
-    expect(blockBatch[1]).toMatchObject({ amount: 14, remainingHp: 86, contactZone: 'shield' }) // round(20*1.98*0.35)=13.86->14
+    expect(blockBatch[1]).toMatchObject({ amount: 19, remainingHp: 81, contactZone: 'shield' }) // round(20*2.70*0.35)=18.9->19
     expect(blockBatch[2]).toMatchObject({ durationTicks: 10 }) // max(1,round(24*0.40))=10
     expect((blockBatch[2] as Extract<EncounterEvent, { type: 'fighter-staggered' }>).direction.x).toBeCloseTo(1, 9)
 
-    expect(next.combatants.target.hp).toBe(86)
+    expect(next.combatants.target.hp).toBe(81)
     // push 0.70 * 0.30 = 0.21 away from the actor (toward +x); no separation correction needed at this distance.
     expect(next.combatants.target.position.x).toBeCloseTo(0.21, 6)
   })
@@ -1647,8 +1667,8 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
 
     expect(types(batch)).toEqual(['defense-failed', 'damage-dealt', 'fighter-staggered'])
     expect(batch[0]).toMatchObject({ reason: 'facing' })
-    expect(batch[1]).toMatchObject({ amount: 40, remainingHp: 60 }) // unblocked: round(20*1.98*1.00)=39.6->40
-    expect(next.combatants.target.hp).toBe(60)
+    expect(batch[1]).toMatchObject({ amount: 54, remainingHp: 46 }) // unblocked: round(20*2.70*1.00)=54
+    expect(next.combatants.target.hp).toBe(46)
   })
 
   it('parry: attack-parried -> fighter-staggered(attacker, 24 ticks), no damage-dealt, and queues the defender\'s forced counter', () => {
@@ -1705,7 +1725,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
 
     expect(types(criticalBatch)).toEqual(['critical-hit', 'damage-dealt', 'fighter-staggered'])
     expect(criticalBatch[0]).toMatchObject({ multiplier: 1.5 })
-    expect(criticalBatch[1]).toMatchObject({ amount: 20 }) // round(20*0.68*1.00*1.5)=20.4->20 (fast-slash multiplier tuned 0.75->0.68 in Task 13)
+    expect(criticalBatch[1]).toMatchObject({ amount: 50 }) // round(20*1.65*1.00*1.5)=49.5->50 (fast-slash multiplier 0.68 -> 1.65 in the retiarius-reach slice)
   })
 
   it('no critical when the target was not open in the snapshot, even with a winning critical roll', () => {
@@ -2556,14 +2576,14 @@ describe("advanceEncounterTick: forced parry-counter timing is pinned to the par
       definitionId: 'technical-parry',
       phase: 'impact',
       phaseStartedTick: CONTACT_TICK + 1,
-      phaseEndsAtTick: CONTACT_TICK + 1 + 4, // technical-parry's authored impactTicks
+      phaseEndsAtTick: CONTACT_TICK + 1 + COMBAT_STYLES.defenses['technical-parry'].impactTicks, // authored impactTicks, read from the catalog
     })
 
     const { state: atRecovery } = advanceEncounterTicks(afterGateCheck, 4) // advance to CONTACT_TICK + 5: impact ends
     expect(atRecovery.combatants.target.action).toMatchObject({
       definitionId: 'technical-parry',
       phase: 'recovery',
-      phaseEndsAtTick: CONTACT_TICK + 5 + 16, // technical-parry's authored recoveryTicks
+      phaseEndsAtTick: CONTACT_TICK + 5 + COMBAT_STYLES.defenses['technical-parry'].recoveryTicks, // read, not restated: the slice moved it 16 -> 10
     })
   })
 })
@@ -3241,7 +3261,7 @@ describe("advanceEncounterTick: Fast's forced disengage measures its 30-tick tim
       seed: 1,
       combatants: [
         combatant('self', 'home', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
-        combatant('other', 'away', { archetype: 'fast', startPosition: { x: 0.9, z: 0 } }), // pinned inside the 2.4-unit end range throughout, so only the timeout can end it
+        combatant('other', 'away', { archetype: 'fast', startPosition: { x: 0.9, z: 0 } }), // pinned inside the exit range throughout, so only the timeout can end it
       ],
       arena: freeArena,
       hostility: { mode: 'different-factions' },
@@ -3254,7 +3274,7 @@ describe("advanceEncounterTick: Fast's forced disengage measures its 30-tick tim
       nextDecisionTick: 999_999,
       locomotionIntent: 'disengage',
       forcedDisengageStartTick: 0,
-      staggerUntilTick: 25, // blocks 'self' own movement through tick 24; unrelated to the disengage's own 30-tick clock
+      staggerUntilTick: 25, // blocks 'self' own movement through tick 24; unrelated to the disengage's own tick clock
       action: { type: 'neutral' },
     })
     state = { ...state, tick: 0 }
@@ -3263,12 +3283,15 @@ describe("advanceEncounterTick: Fast's forced disengage measures its 30-tick tim
     expect(afterStaggerWindow.tick).toBe(25)
     expect(afterStaggerWindow.combatants.self.forcedDisengageStartTick).toBe(0) // unaffected by the stagger's own clearing rules
 
-    const { state: beforeTimeout } = advanceEncounterTicks(afterStaggerWindow, 4) // ticks 26..29
-    expect(beforeTimeout.tick).toBe(29)
-    expect(beforeTimeout.combatants.self.forcedDisengageStartTick).toBe(0) // ticksSinceForced 29: neither exit condition met yet
+    // Up to one tick short of the cap, derived rather than written as 29/30:
+    // the slice moved the cap to 37, and the literal pair asserted a boundary
+    // the kernel no longer has while still passing.
+    const { state: beforeTimeout } = advanceEncounterTicks(afterStaggerWindow, FAST_FORCED_DISENGAGE_MAX_TICKS - 1 - 25)
+    expect(beforeTimeout.tick).toBe(FAST_FORCED_DISENGAGE_MAX_TICKS - 1)
+    expect(beforeTimeout.combatants.self.forcedDisengageStartTick).toBe(0) // one tick short of the cap: neither exit condition met yet
 
-    const { state: atTimeout } = advanceEncounterTick(beforeTimeout) // tick 30: ticksSinceForced === 30
-    expect(atTimeout.tick).toBe(30)
+    const { state: atTimeout } = advanceEncounterTick(beforeTimeout) // ticksSinceForced reaches the cap
+    expect(atTimeout.tick).toBe(FAST_FORCED_DISENGAGE_MAX_TICKS)
     // Times out from the ORIGINAL stamp (tick 0), not from tick 25 when
     // stagger cleared -- even though 'self' barely moved during ticks 1-24.
     expect(atTimeout.combatants.self.forcedDisengageStartTick).toBeUndefined()
