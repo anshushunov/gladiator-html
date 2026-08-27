@@ -301,9 +301,9 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
   })
   // tick 256: the frozen mutual hit/stagger from `combat-visuals.spec.ts`'s
   // key-pose fixture -- a real, guaranteed contact-flash trigger.
-  await normalPage.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(256))
+  await normalPage.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(255))
   const normalSnapshot = await normalPage.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
-  const normalEvents = await seenEvents(normalPage, 255)
+  const normalEvents = await seenEvents(normalPage, 254)
   expect(normalSnapshot!.activeEffectIds.length).toBeGreaterThan(0) // sanity: a real flash fired without reduced motion
 
   // Reduced motion: identical seed/lineup/tick count, `prefers-reduced-
@@ -318,9 +318,9 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
     window.__GLADIATOR_TEST__.assign('nerva', 2)
     window.__GLADIATOR_TEST__.confirm()
   })
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(256))
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(255))
   const reducedSnapshot = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
-  const reducedEvents = await seenEvents(page, 255)
+  const reducedEvents = await seenEvents(page, 254)
 
   // Anticipation/contact/result preserved: the simulation's own event trace
   // (amounts, remaining HP, stagger durations) is byte-identical regardless
@@ -330,10 +330,15 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
     const battle = window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!
     return { brutus: battle.encounter.combatants['home.brutus'], drusus: battle.encounter.combatants['away.drusus'] }
   })
-  expect(reducedCombatants.brutus.hp).toBe(297)
-  expect(reducedCombatants.drusus.hp).toBe(302)
-  expect(reducedCombatants.brutus.staggerUntilTick).toBeGreaterThan(256)
-  expect(reducedCombatants.drusus.staggerUntilTick).toBeGreaterThan(256)
+  // The checkpoint moved from the simultaneous mutual hit at tick 255 to the
+  // guard block at 254, because after the retiarius-reach slice this bout has
+  // no tick carrying two `damage-dealt` events at all -- the retiarius strikes
+  // from range and withdraws instead of trading at the arena floor. Only the
+  // fighter who was actually struck is staggered, which is why the away-side
+  // stagger assertion is gone rather than re-numbered.
+  expect(reducedCombatants.brutus.hp).toBe(378)
+  expect(reducedCombatants.drusus.hp).toBe(470)
+  expect(reducedCombatants.brutus.staggerUntilTick).toBeGreaterThan(255)
   expect(reducedSnapshot!.jointTransformsFinite).toBe(true)
 
   // Trail/flash removed: the same contact that lit a flash above spawns none
@@ -569,19 +574,20 @@ test('a throwing presentation frame latches a disabled-presentation flag but nev
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState().presentationDisabled)).toBe(true)
 })
 
-test('plays three bouts, reports a 2–1 win, then the summary "Continue" button continues into the next series', async ({ page }) => {
-  // A stats-led ordering, deliberately NOT the all-counter one. Under Task 13's
-  // final balance the all-counter lineup (Brutus->Drusus, Aquila->Cassius,
-  // Nerva->Magnus) actually loses 1-2, which is the design's golden scenario
-  // working as intended: the visible counter triangle is useful but is not a
-  // mechanical answer to stronger individual opponents. See series.test.ts's
+test('plays three bouts, reports a 3–0 win, then the summary "Continue" button continues into the next series', async ({ page }) => {
+  // A stats-led ordering, deliberately NOT the all-counter one. The lineup
+  // moved with the content: `aquila/brutus/nerva` used to win 2-1 and now
+  // loses 1-2, while `brutus/nerva/aquila` sweeps 3-0. The new one is the
+  // better illustration of the design's golden scenario anyway -- it throws
+  // the retiarius at the MURMILLO, the matchup the archetype triangle says he
+  // loses, and mirrors technical against technical. See series.test.ts's
   // golden-scenario block for the full six-lineup table.
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
-    window.__GLADIATOR_TEST__.assign('aquila', 0)
-    window.__GLADIATOR_TEST__.assign('brutus', 1)
-    window.__GLADIATOR_TEST__.assign('nerva', 2)
+    window.__GLADIATOR_TEST__.assign('brutus', 0)
+    window.__GLADIATOR_TEST__.assign('nerva', 1)
+    window.__GLADIATOR_TEST__.assign('aquila', 2)
     window.__GLADIATOR_TEST__.confirm()
   })
   for (let bout = 0; bout < 3; bout += 1) {
@@ -589,7 +595,7 @@ test('plays three bouts, reports a 2–1 win, then the summary "Continue" button
     if (bout < 2) await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
   }
   await expect(page.getByRole('heading', { name: 'School victory' })).toBeFocused()
-  await expect(page.getByTestId('series-score')).toHaveText('2–1')
+  await expect(page.getByTestId('series-score')).toHaveText('3–0')
   await expect(page.getByTestId('bout-result')).toHaveCount(3)
   await expect(page.getByTestId('bout-result').first()).toContainText('%')
 
@@ -606,7 +612,7 @@ test('plays three bouts, reports a 2–1 win, then the summary "Continue" button
   expect(afterContinue.phase).toBe('season-board') // mid-season: two more series to play
   expect(afterContinue.seriesIndex).toBe(1)
   expect(afterContinue.records).toHaveLength(1)
-  expect(afterContinue.records[0].score).toEqual({ home: 2, away: 1 })
+  expect(afterContinue.records[0].score).toEqual({ home: 3, away: 0 })
   // The condition ladder actually moved for the three gladiators who fought.
   // `lastDeltas` carries one row per roster member, fought and rested alike,
   // and a rested row is NOT necessarily a change: `conditionAfterRest` clamps
@@ -681,17 +687,12 @@ test('flushes the series-ending bout\'s final event batch to audio instead of dr
 })
 
 test('reports school defeat in the summary heading for a losing lineup', async ({ page }) => {
-  // Task 11 swapped this test off the all-counter ordering because that lineup
-  // had started sweeping 3-0, and left a note to revisit "once the golden
-  // lineup loses again". Under Task 13's final calibration it does lose -- the
-  // all-counter lineup `brutus/aquila/nerva` finishes 1-2 -- so the note's
-  // condition is met, but that makes it a candidate for THIS test rather than
-  // for the victory test above, which now plays `aquila/brutus/nerva`.
-  //
-  // `nerva/aquila/brutus` is used here instead simply to keep the two tests on
-  // different orderings. This test's job is the "School defeat" heading and
-  // score rendering, so which losing lineup it uses is incidental -- but it is
-  // chosen from the final measured balance rather than to dodge it. See
+  // `nerva/aquila/brutus` keeps the two tests on different orderings. This
+  // test's job is the "School defeat" heading and score rendering, so which
+  // losing lineup it uses is incidental -- but it is chosen from the measured
+  // balance rather than to dodge it. Under the retiarius-reach slice that
+  // lineup goes from 1-2 to 0-3, a clean sweep against the school, and the
+  // all-counter lineup it was originally swapped off now WINS 2-1. See
   // series.test.ts's golden-scenario block for the full six-lineup table.
   await page.goto('/?seed=20260815&snapshot')
   await page.evaluate(() => {
@@ -706,7 +707,7 @@ test('reports school defeat in the summary heading for a losing lineup', async (
     if (bout < 2) await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
   }
   await expect(page.getByRole('heading', { name: 'School defeat' })).toBeFocused()
-  await expect(page.getByTestId('series-score')).toHaveText('1–2')
+  await expect(page.getByTestId('series-score')).toHaveText('0–3')
 })
 
 test('supports keyboard planning and deterministic focus', async ({ page }) => {
@@ -805,8 +806,8 @@ test('matches the stable planning snapshot', async ({ page }) => {
   // The stats line is asserted as text, not left to the screenshot: even at
   // 0.002 the pixel check swallowed `Power 22` -> `Power 22.0` across all five
   // cards, so a short text change is exactly what it cannot see.
-  await expect(page.getByTestId('fighter-brutus')).toContainText('HP 324 · Power 22.0')
-  await expect(page.locator('.matchup-slot').first()).toContainText('HP 350 · Power 21.0')
+  await expect(page.getByTestId('fighter-brutus')).toContainText('HP 420 · Power 21.2')
+  await expect(page.locator('.matchup-slot').first()).toContainText('HP 470 · Power 21.0')
 
   await expect(page).toHaveScreenshot('planning.png', { fullPage: true, maxDiffPixelRatio: 0.002 })
 })
