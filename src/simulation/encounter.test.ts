@@ -3358,9 +3358,13 @@ describe('canonical trace hash (Task 10 Step 3, test-only diagnostic helper)', (
   // per-seed expectations pin that the pair actually closed and actually traded
   // contacts, so an inert or non-engaging run cannot be silently re-frozen.
   const FROZEN_DUEL_TRACES: Readonly<Record<number, { hash: string; separation: number; homeHp: number; awayHp: number; events: number }>> = {
-    3: { hash: '36b5a5dc', separation: 0.96, homeHp: 88, awayHp: 81, events: 18 },
-    11: { hash: 'e6229886', separation: 1.28, homeHp: 74, awayHp: 100, events: 12 },
-    42: { hash: '1968d282', separation: 1.67, homeHp: 74, awayHp: 81, events: 16 },
+    // RE-FROZEN by the retiarius-reach slice, from a probe run. Every row's
+    // shape is asserted below, so a hash taken from inert behaviour has
+    // something to trip over: all three still close from 4.4 apart and all
+    // three still trade contacts.
+    3: { hash: 'd038d539', separation: 1.92, homeHp: 100, awayHp: 82, events: 16 },
+    11: { hash: '0f22fd5a', separation: 1.17, homeHp: 70, awayHp: 100, events: 14 },
+    42: { hash: '6f33239c', separation: 1.15, homeHp: 100, awayHp: 82, events: 17 },
   }
 
   it.each(seeds)('seed %i: matches its frozen canonical trace hash and the trace it folds', (seed) => {

@@ -34,15 +34,18 @@
  * the fixed seed. Pinned per bout rather than folded into one value so a
  * failure names the bout that moved.
  *
- *   bout 0  aquila vs drusus   away wins by defeat -> 3600fb53
- *   bout 1  nerva  vs cassius  home wins by defeat -> dee79f52
- *   bout 2  brutus vs magnus   home wins by defeat -> 563432bd
+ *   bout 0  aquila vs drusus   away wins by defeat -> 9b27f0d9
+ *   bout 1  nerva  vs cassius  home wins by defeat -> 9b59d2f7
+ *   bout 2  brutus vs magnus   away wins by defeat -> 1e2f91ff
  *
- * Bout 0 was re-frozen on 2026-08-18 (Fast's forced disengage went live and
- * `fast-burst-lunge` was recalibrated with it); bouts 1 and 2 contain no Fast
- * fighter and came through byte-identical.
+ * ALL THREE re-frozen by the retiarius-reach slice. Unlike the 2026-08-18
+ * re-freeze, which only moved the bout containing a Fast fighter, this slice
+ * also recalibrated Heavy and Technical damage and every roster stat, so no
+ * bout comes through byte-identical. Bout 2 changes hands: Brutus no longer
+ * beats Magnus, which is the murmillo-mirror consequence of the same
+ * recalibration the equal-stat cohort measures.
  */
-export const LINEUP_BOUT_HASHES: readonly string[] = ['3600fb53', 'dee79f52', '563432bd']
+export const LINEUP_BOUT_HASHES: readonly string[] = ['9b27f0d9', '9b59d2f7', '1e2f91ff']
 
 /**
  * CLASS: determinism. The same three bouts' durations, pinned alongside the
@@ -50,7 +53,7 @@ export const LINEUP_BOUT_HASHES: readonly string[] = ['3600fb53', 'dee79f52', '5
  * All three sit inside the roster cohort's 1200..2700 median band, which is
  * an acceptance claim and stays asserted in the test file.
  */
-export const LINEUP_BOUT_DURATIONS: readonly number[] = [1721, 2183, 1202]
+export const LINEUP_BOUT_DURATIONS: readonly number[] = [1705, 1402, 1934]
 
 /**
  * CLASS: determinism. The same lineup's final score, pinned beside the hashes
@@ -64,7 +67,7 @@ export const LINEUP_BOUT_DURATIONS: readonly number[] = [1721, 2183, 1202]
  * Note that this lineup (`aquila/nerva/brutus`) is NOT the `statsLed` one
  * (`aquila/brutus/nerva`) below, even though both currently read 2-1.
  */
-export const LINEUP_TRACE_SCORE = { home: 2, away: 1 } as const
+export const LINEUP_TRACE_SCORE = { home: 1, away: 2 } as const
 
 /**
  * CLASS: product. `Aquila/Nerva/Brutus`'s score. It is the "a different

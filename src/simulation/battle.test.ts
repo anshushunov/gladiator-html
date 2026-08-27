@@ -328,11 +328,23 @@ describe('battle duel adapter', () => {
   // power 10), deliberately not the roster rows, so the literal is insulated
   // from roster retuning. Re-frozen on 2026-08-18, when Fast's forced
   // disengage started actually running (`hasFastForcedDisengageEnded`'s range
-  // test was inverted) and `fast-burst-lunge` was recalibrated around it. The
-  // reviewed run: a complete, decisive duel -- 1785 ticks, away (the Fast
-  // fixture) wins by `defeat` with 36 HP against 0, 166 events comprising 31
-  // action-starts, 15 damage-dealt, 8 misses, 4 blocks, 2 evades, 15 staggers,
-  // 7 interruptions, one `fighter-defeated` and one `encounter-finished`.
+  // test was inverted) and `fast-burst-lunge` was recalibrated around it.
+  //
+  // RE-FROZEN by the retiarius-reach slice, which changes behaviour on
+  // purpose: the retiarius' committed attack moved from the arena's 0.90
+  // minimum separation out to 1.89, and the counter triangle was recalibrated
+  // around it. The bout does not merely re-hash -- it changes hands. Read
+  // from a probe run that printed the census beside the hash, never copied
+  // from a failing diff. The reviewed run: a complete, decisive duel -- 1222
+  // ticks, HOME (the Heavy fixture, previously the loser) wins by `defeat`
+  // with 62 HP against 0, 100 events comprising 14 action-starts, 8
+  // damage-dealt, 4 misses, 0 blocks, 1 evade, 8 staggers, 2 interruptions,
+  // one `fighter-defeated` and one `encounter-finished`.
+  //
+  // The shape is what carries the meaning: the murmillo now survives with
+  // more than half his HP where the retiarius used to win outright, which is
+  // the same reversal the equal-stat cohort measures as `heavy > fast`
+  // returning to its 55..75% band from 99%.
   //
   // The trace's shape is pinned beside the hash so a differently-shaped bout
   // cannot coincidentally satisfy the literal, and a failure says what changed
@@ -344,15 +356,15 @@ describe('battle duel adapter', () => {
 
     expect(first.traceHash).toBe(second.traceHash)
     expect(first.finishReason).toBe('defeat')
-    expect(first.winnerSide).toBe('away')
-    expect(first.encounter.tick).toBe(1785)
-    expect(first.events).toHaveLength(166)
+    expect(first.winnerSide).toBe('home')
+    expect(first.encounter.tick).toBe(1222)
+    expect(first.events).toHaveLength(100)
     expect(first.events.filter((event) => event.type === 'fighter-defeated')).toHaveLength(1)
     expect(first.events.filter((event) => event.type === 'encounter-finished')).toHaveLength(1)
 
     const hash = formatTraceHash(first.traceHash)
     expect(hash).toMatch(/^[0-9a-f]{8}$/)
-    expect(hash).toBe('dc635911')
+    expect(hash).toBe('2a0f3da2')
   })
 
   it('does not shift the away encounter beyond one tick when only advanceBattleTick is called', () => {
