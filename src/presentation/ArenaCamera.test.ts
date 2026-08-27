@@ -7,6 +7,7 @@ import { advanceBattleTick, createBattle, fighterBySide, type BattleState } from
 import type { Archetype } from '../simulation/fighters'
 import { assignFighter, confirmLineup, createSeason, startNextSeries } from '../simulation/season'
 import { advanceSeriesTicks } from '../simulation/series'
+import { RECORDED_TRACES } from '../testSupport/frozenFixtures/cameraTraces'
 
 const DEGREE = Math.PI / 180
 
@@ -1203,16 +1204,11 @@ describe('framing distance over real bouts', () => {
   }
 
   it('replays the recorded browser traces without chattering, overshooting or lurching', () => {
-    // `label`, `ticks` and `openingDistance` are read out of
-    // `.superpowers/framing/rec-8.81-full-ease7.00.json`; `lineup` is the one
-    // `scripts/measure-framing.ts` opened the series with.
-    const recorded = [
-      { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 2106, openingDistance: 15.082901146815477, crossings: 1 },
-      { label: '04 retiarius vs retiarius', lineup: ['aquila', 'nerva', 'brutus'], ticks: 1721, openingDistance: 15.931454116156672, crossings: 1 },
-      { label: '07 hoplomachus vs retiarius', lineup: ['nerva', 'brutus', 'aquila'], ticks: 1689, openingDistance: 16.29718777542238, crossings: 5 },
-    ] as const
-
-    for (const trace of recorded) {
+    // The recorded numbers live in `frozenFixtures/cameraTraces.ts`: this file
+    // goes behind the CI gate from the content PR onward, and these are the
+    // only values in it a behaviour change is allowed to move. Everything
+    // `expectSmoothFraming` asserts stays here and is not re-baselinable.
+    for (const trace of RECORDED_TRACES) {
       let season = createSeason({ roster: SEASON_ROSTER, challenges: SEASON_CHALLENGES, combatStyles: COMBAT_STYLES, seed: BASELINE_TEST_SEED })
       season = startNextSeries(season).state
       trace.lineup.forEach((fighterId, slot) => { season = assignFighter(season, fighterId, slot).state })

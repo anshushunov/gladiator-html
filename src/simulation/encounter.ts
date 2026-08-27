@@ -67,6 +67,7 @@ import {
   TARGET_RETENTION_RADIUS,
   type IncomingThreat,
 } from './combatDecision'
+import type { ContactCollector, ContactOutcome } from './contactDiagnostics'
 import type { DecisionCollector, DecisionRecord } from './decisionDiagnostics'
 import { DISPOSITION_IDS, dispositionModifiers, isDispositionId, type DispositionId } from './disposition'
 import type { FighterDefinition } from './fighters'
@@ -2048,6 +2049,7 @@ export function resolveContactIntents(
   tick: number,
   cursor: EventIdCursor,
   arena: Readonly<CombatArenaDefinition>,
+  contactCollector?: ContactCollector,
 ): ContactResolutionResult {
   const snapshot = combatants
   let live: Record<CombatantId, FighterCombatState> = { ...combatants }
@@ -2058,11 +2060,18 @@ export function resolveContactIntents(
 
   for (const intent of sortedIntents) {
     const actorLive = live[intent.actorId]
-    if (!actorLive || actorLive.status !== 'active') continue
+    if (!actorLive || actorLive.status !== 'active') {
+      // Recorded, not skipped silently: this intent DID reach contact, and
+      // dropping it would quietly shrink the denominator of every rate
+      // derived from these records. See `contactDiagnostics.ts`.
+      recordContact(contactCollector, intent, snapshot, tick, 'actor-defeated')
+      continue
+    }
 
     const result = resolveOneIntent(intent, snapshot, live, combatStyles, tick, cursor, arena)
     live = result.combatants
     events.push(...result.events)
+    recordContact(contactCollector, intent, snapshot, tick, classifyContactOutcome(result.events, intent.actionInstanceId))
 
     if (result.pushVector) {
       const existing = pushByTarget[intent.targetId] ?? { x: 0, z: 0 }
@@ -2071,6 +2080,70 @@ export function resolveContactIntents(
   }
 
   return { combatants: live, events, pushByTarget }
+}
+
+/**
+ * The terminal outcome of one contact intent, read back off the events phase 9
+ * just emitted for it rather than re-derived, so a diagnostic can never
+ * disagree with the event log it describes.
+ *
+ * Precedence matters in exactly one place: a blocked hit emits `attack-blocked`
+ * *and* `damage-dealt`, so `blocked` has to be checked before `hit` or the
+ * distinction that the guard worked is lost. The remaining outcomes are
+ * mutually exclusive per instance.
+ *
+ * Falls back to `'hit'` only when a `damage-dealt` is present; an intent that
+ * somehow emitted none of these is reported as `'target-unavailable'`, the one
+ * outcome that legitimately produces no geometry, so an unclassifiable record
+ * is still a record rather than a silent drop.
+ */
+function classifyContactOutcome(events: readonly EncounterEvent[], actionInstanceId: ActionInstanceId): ContactOutcome {
+  let sawDamage = false
+  for (const event of events) {
+    if (!('actionInstanceId' in event) || event.actionInstanceId !== actionInstanceId) continue
+    switch (event.type) {
+      case 'attack-parried': return 'parried'
+      case 'attack-blocked': return 'blocked'
+      case 'attack-evaded': return 'evaded'
+      case 'attack-missed':
+        return event.reason === 'geometry' ? 'missed-geometry' : event.reason === 'accuracy' ? 'missed-accuracy' : 'target-unavailable'
+      case 'damage-dealt':
+        sawDamage = true
+        break
+      default:
+        break
+    }
+  }
+  return sawDamage ? 'hit' : 'target-unavailable'
+}
+
+function recordContact(
+  collector: ContactCollector | undefined,
+  intent: ContactIntent,
+  snapshot: Readonly<Record<CombatantId, FighterCombatState>>,
+  tick: number,
+  outcome: ContactOutcome,
+): void {
+  if (!collector) return
+  const actor = snapshot[intent.actorId]
+  const target = snapshot[intent.targetId]
+  // Throws rather than recording `NaN`. A contact intent exists only because
+  // both combatants were in the snapshot phase 9 was handed, so a missing one
+  // is a kernel invariant violation -- and `NaN` would pass a finiteness check
+  // written as two comparisons, silently poisoning a median instead of
+  // failing. Raised in external review of the acceptance instrument.
+  if (!actor || !target) {
+    throw new Error(`contact diagnostics: intent ${intent.actionInstanceId} references a combatant absent from the phase-9 snapshot`)
+  }
+  collector.record({
+    tick,
+    actorId: intent.actorId,
+    targetId: intent.targetId,
+    actionId: intent.actionId,
+    actionInstanceId: intent.actionInstanceId,
+    separation: distanceBetween(actor.position, target.position),
+    outcome,
+  })
 }
 
 // --- Phase 10: apply accumulated push, then re-run arena/policy/separation -
@@ -2214,7 +2287,7 @@ function resolveNoHostilePairsCompletion(state: EncounterState): EncounterTransi
  * identity, empty event batch) -- a finished encounter is inert. Never
  * mutates `previous` or anything reachable from it.
  */
-export function advanceEncounterTick(previous: EncounterState, collector?: DecisionCollector): EncounterTransition {
+export function advanceEncounterTick(previous: EncounterState, collector?: DecisionCollector, contactCollector?: ContactCollector): EncounterTransition {
   if (previous.phase !== 'running') {
     return { state: previous, events: [] }
   }
@@ -2290,7 +2363,7 @@ export function advanceEncounterTick(previous: EncounterState, collector?: Decis
   combatants = resolveMovementConstraints(combatants, previous.combatantIds, intents, previous.arena)
 
   // Phase 9
-  const contactResolution = resolveContactIntents(combatants, previous.combatantIds, previous.combatStyles, previous.seed, tick, cursor, previous.arena)
+  const contactResolution = resolveContactIntents(combatants, previous.combatantIds, previous.combatStyles, previous.seed, tick, cursor, previous.arena, contactCollector)
   combatants = contactResolution.combatants
   events.push(...contactResolution.events)
 

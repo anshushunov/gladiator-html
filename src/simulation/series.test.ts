@@ -4,6 +4,14 @@ import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
 import { advanceBattleTicks, fighterBySide, MAX_BOUT_TICKS } from './battle'
 import type { FighterDefinition } from './fighters'
 import { formatTraceHash } from './random'
+import {
+  ALL_COUNTERS_SCORE,
+  LINEUP_BOUT_DURATIONS,
+  LINEUP_BOUT_HASHES,
+  LINEUP_SCORE_SET,
+  LINEUP_TRACE_SCORE,
+  STATS_LED_SCORE,
+} from '../testSupport/frozenFixtures/seriesTrace'
 import { advanceSeriesTicks, assignFighter, confirmLineup, createSeries, rematch, requiredAssignmentCount, startNextBout, unassignSlot, type BoutOutcome, type PlanningSlot, type SeriesState } from './series'
 
 const createMvpSeries = () => createSeries({
@@ -231,11 +239,11 @@ it('makes stats matter more than blindly taking all counters', () => {
   // Never a sweep -- the design's explicit prohibition. Under the Task 13
   // calibration the all-counter lineup does not merely fail to sweep, it LOSES.
   expect(allCounters.score).not.toEqual({ home: 3, away: 0 })
-  expect(allCounters.score).toEqual({ home: 1, away: 2 })
+  expect(`${allCounters.score.home}-${allCounters.score.away}`).toBe(ALL_COUNTERS_SCORE)
 
   // ...and a different ordering does strictly better, which is the whole point:
   // reading the stat cards beats reading only the archetype triangle.
-  expect(statsLed.score).toEqual({ home: 2, away: 1 })
+  expect(statsLed.score).toEqual(STATS_LED_SCORE)
   expect(statsLed.score.home).toBeGreaterThan(allCounters.score.home)
 
   // Every bout resolves by defeat, not by running out the 3600-tick clock.
@@ -284,12 +292,12 @@ it('matches the frozen canonical trace hashes for the Aquila/Nerva/Brutus lineup
 
   // Pin the trace's shape alongside its hashes, so a differently-shaped series
   // cannot coincidentally satisfy the literals.
-  expect(state.score).toEqual({ home: 2, away: 1 })
+  expect(state.score).toEqual(LINEUP_TRACE_SCORE)
   expect(state.results.map((result) => asFought(result).endedBy)).toEqual(['defeat', 'defeat', 'defeat'])
-  expect(state.results.map((result) => asFought(result).durationTicks)).toEqual([1721, 2183, 1202])
+  expect(state.results.map((result) => asFought(result).durationTicks)).toEqual([...LINEUP_BOUT_DURATIONS])
 
   for (const hash of boutHashes) expect(hash).toMatch(/^[0-9a-f]{8}$/)
-  expect(boutHashes).toEqual(['3600fb53', 'dee79f52', '563432bd'])
+  expect(boutHashes).toEqual([...LINEUP_BOUT_HASHES])
 })
 
 // AMENDED CRITERION. The design originally required "at least three distinct
@@ -329,13 +337,18 @@ it('produces at least two distinct scores across all six lineups (amended from t
   const scores = new Set(byLineup.values())
 
   expect(scores.size).toBeGreaterThanOrEqual(2)
-  expect(scores).toEqual(new Set(['1-2', '2-1']))
+  expect(scores).toEqual(new Set(LINEUP_SCORE_SET))
 
   // No lineup may sweep, and the all-counter ordering must not be among the
   // winners. Asserted by name rather than by set membership, because the set
   // alone cannot tell "some lineup sweeps" from "the forbidden one sweeps".
+  //
+  // NOTE: this `3-0` prohibition is STRICTER than design.md, which permits
+  // "at least one different lineup wins 2-1 or 3-0". See the header of
+  // `frozenFixtures/seriesTrace.ts`: the conflict is recorded there and is to
+  // be met deliberately, not resolved by editing whichever side is convenient.
   expect(scores.has('3-0')).toBe(false)
-  expect(byLineup.get('brutus/aquila/nerva')).toBe('1-2')
+  expect(byLineup.get('brutus/aquila/nerva')).toBe(ALL_COUNTERS_SCORE)
 })
 
 describe('short-handed series', () => {
