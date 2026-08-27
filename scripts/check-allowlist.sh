@@ -1,145 +1,130 @@
 #!/usr/bin/env bash
 # scripts/check-allowlist.sh — the paths this slice may not touch.
 #
-# RE-SCOPED for the retiarius-reach slice. The list is per-slice by
-# construction (the readable-types slice's own header said so, and its final
-# review recorded that "a slice that legitimately edits `src/simulation/**` --
-# including this one -- must widen or remove that step before its first PR").
-# What changed is not just the contents but the SHAPE, so the reason is worth
-# stating rather than leaving to be inferred from the regex.
+# RE-SCOPED for the measurement-repair slice (2026-08-27). The list is
+# per-slice by construction and is rebuilt from scratch each time rather than
+# amended, because the shape follows the slice's claim and the claim changes.
+# The two lists this one replaces are worth a sentence each, since the shape
+# has now flipped twice:
 #
-# The readable-types slice was presentational and changed no behaviour. Its
-# list was therefore an ALLOWLIST whose job was to keep the diff out of
-# `src/simulation/**`, `src/content/**` and `src/style.css` -- the files that
-# could have made the "same behaviour, presented differently" claim untrue.
+#   readable-gladiator-types — presentational, changed no behaviour. An
+#   ALLOWLIST, keeping the diff OUT of `src/simulation/**`, `src/content/**`
+#   and `src/style.css`.
 #
-# This slice is the exact inverse: it changes behaviour on purpose, and every
-# path that list protected is a path this one must edit. An allowlist rebuilt
-# around that would have to admit nearly the whole tree, which is theatre --
-# a gate that forbids nothing reads as a gate that passed.
+#   retiarius-reach — changed behaviour on purpose, so every path that list
+#   protected was a path it had to edit. A DENYLIST over presentation source
+#   and acceptance logic, in two phases, because a single list could not be
+#   both complete and satisfiable while the fixture split was in flight.
 #
-# So the shape flips to a DENYLIST, protecting the two risks this slice
-# actually carries. An earlier revision named only three files and was found by
-# external review to leave both holes below open; it is widened here.
+# ---------------------------------------------------------------------------
+# WHAT THIS SLICE CLAIMS, and therefore what this list protects
+# ---------------------------------------------------------------------------
 #
-# GROUP 1 -- PRESENTATION SOURCE. This slice's premise is that BEHAVIOUR
-# separates the trident from the spear even while the silhouette does not (the
-# fork resolves at ~2x the shipped framing). Anything that changes what is
-# drawn, how it is posed, or how it is framed would answer the same question a
-# second way and make the two answers inseparable. That includes the camera,
-# whose constants were swept against 46,647 recorded ticks and frozen: giving
-# the retiarius real reach widens the separations it sees, and "the existing
-# flat band absorbs that with nothing retuned" is a claim worth testing rather
-# than quietly fixing. Also `src/style.css`, since growing the 730x518 arena
-# canvas is the largest remaining legibility lever and belongs to its own
-# slice -- a bout that reads better because the canvas grew would say nothing
-# about reach.
+# This slice repairs three MEASURING DEVICES and changes nothing they measure:
 #
-# Playwright baselines under `tests/__screenshots__/**` are deliberately NOT in
-# this group. They are outputs of the change, not levers on it, and this slice
-# is expected to regenerate them.
+#   1. `ArenaCamera.test.ts`'s desired-yaw continuity bound, which was named
+#      for axis motion and measured axis motion PLUS released dead-zone
+#      hysteresis, and failed on one tick in 14 848 of the shipped content.
+#   2. `measure-reach.ts`'s gate D comparator, which summed the hoplomachus
+#      across all nine matchups including `technical vs fast`, so the yardstick
+#      moved with the thing it judged.
+#   3. `series.test.ts`'s fixture split, finished in the preparatory PR.
 #
-# GROUP 2 -- ACCEPTANCE LOGIC. The first revision forbade three presentation
-# files and left the balance suites open, so an implementation could have
-# weakened the very criteria it was meant to satisfy. design.md is explicit
-# that cohort seeds, bands and metric formulas are test data that may not be
-# changed during tuning; this is that rule made enforceable. Each file below was
-# checked to contain bands and method ONLY, with no frozen literal this slice
-# must re-baseline, so forbidding it outright costs nothing.
+# So the claim is "the instruments changed, the game did not", and it is the
+# exact inverse of the slice before it. That makes this a DENYLIST again, but
+# over a different set: everything that could make the claim untrue.
 #
-# NOW IN GROUP 2, having been open in phase 1:
-# `src/simulation/encounterCapacity.test.ts`, `src/simulation/series.test.ts`,
-# `src/simulation/seasonBalance.test.ts`, `src/presentation/ArenaCamera.test.ts`
-# and `scripts/measure-reach.ts`. Each used to mix frozen literals that MUST
-# move (the `dbe77c5e` fixture hash; the per-bout lineup hashes and the `1-2`
-# golden score; `GOLDEN_OUTCOMES`/`GOLDEN_SCORE`/`GOLDEN_DELTAS`; the recorded
-# camera traces) with acceptance logic that must not (the capacity suite's
-# >=50 action instances, >=50 contact resolutions, >=1000 damage, >=20 damaged
-# combatants, its candidate-check bounds; `expectSmoothFraming`'s reversal,
-# zoom-rate, clamp and distance bounds). The preparatory PR split every one of
-# those literals into `src/testSupport/frozenFixtures/`, so the four test files
-# now hold criteria ONLY and can be forbidden without forbidding a file whose
-# contents must move.
+# The strongest form of the claim is the one worth gating on, and it is
+# checkable: IF NO BEHAVIOUR CHANGED, NO FROZEN VALUE MAY MOVE. A repaired
+# instrument that also happens to produce nicer numbers is the failure mode
+# this slice is least able to notice about itself — the slice's own risk note
+# records five defects in a row where the instrument was wrong in the flattering
+# direction — so `src/testSupport/frozenFixtures/**` is CLOSED here, having been
+# deliberately open in the slice before. A fixture that needs re-baselining is
+# not a re-baseline this time; it is evidence the repair moved the game.
 #
-# `src/testSupport/frozenFixtures/**` stays WRITABLE. That is the whole point
-# of the split: the values a behaviour change is allowed to move live there,
-# each tagged with its class, governed by the re-baseline rule instead of by
-# this gate.
+# GROUP 1 -- THE GAME. `src/simulation/**` and `src/content/**`, wholesale.
+# Matched wholesale rather than enumerated: the enumeration in the previous list
+# was reviewed and found incomplete twice, and any such list rots the moment a
+# module is added. Wholesale also subsumes, without special-casing them:
 #
-# The gate's own file and `.github/` stay reachable, for the same reason the
-# previous list admitted them: a gate that cannot maintain itself cannot be
-# enforced at all. This re-scope lands as its own commit BEFORE the content
-# change, so the feature diff is judged by a boundary it did not write.
+#   * the balance suites (`balance`, `dispositionBalance`, `seasonBalance`,
+#     `encounterCapacity`) — criteria this slice must satisfy and has no
+#     licence to weaken. `src/testSupport/balanceCohorts.ts`, which carries
+#     their metric formulas, is named separately below because it lives
+#     elsewhere;
+#   * `src/simulation/series.test.ts`, WHICH IS NOW CLOSED. The retiarius-reach
+#     list left it open and said why: the preparatory PR's split of that file
+#     was incomplete, and forbidding a file that still holds values which must
+#     move is a rule that cannot be obeyed. That debt is discharged. The
+#     preparatory PR of THIS slice moved the last measured literal (the
+#     leading-slot forfeit score) into `frozenFixtures/seriesTrace.ts` and
+#     deleted the stale copy of the trace hashes, durations and score that had
+#     been left behind in a comment describing a run that no longer existed.
+#     The file now holds criteria only, which is the condition the previous list
+#     named for closing it.
+#
+# GROUP 2 -- PRESENTATION SOURCE, `src/presentation/**` wholesale, `src/style.css`,
+# `index.html`, `src/main.ts`. Nothing here is repaired by this slice, and
+# anything drawn differently would move the screenshot baselines and the
+# legibility checks — which is precisely the signal group 3 exists to read.
+# `ArenaCamera.ts` is the load-bearing member: the spec's camera amendment
+# forbids nudging its constants in place of fixing the metric, and "slew-clamp
+# the desired yaw" is a real, tempting, WRONG fix that would slow a legitimate
+# 12.758-degree turn to hide 4.319 degrees of bookkeeping. The exemption below
+# opens exactly one file in this tree, its test.
+#
+# GROUP 3 -- FROZEN OUTPUTS. `src/testSupport/frozenFixtures/**` and
+# `tests/__screenshots__/**`. Screenshot baselines were never forbidden by
+# either previous list, on the correct grounds that they are outputs of the
+# change rather than levers on it. This slice has no change for them to be an
+# output of, so the reasoning inverts: a moved baseline here is not a
+# regeneration, it is a behaviour change nobody declared.
+#
+# GROUP 4 -- ACCEPTANCE METHOD that lives outside `src/simulation/`:
+# `src/testSupport/balanceCohorts.ts` (cohort seeds, bands, metric formulas),
+# `tests/legibility.spec.ts` and `playwright.config.ts` (viewports and the safe
+# -area/scale-floor criteria the camera work is judged against).
+#
+# WHAT IS DELIBERATELY OPEN, since a denylist is only honest if it says what it
+# lets through: `scripts/measure-reach.ts`, `src/testSupport/reachHarness.ts`
+# and its test, and `src/presentation/ArenaCamera.test.ts`. These are the three
+# instruments being repaired; closing them would forbid the slice's own work.
+# `docs/**` is open, and `scripts/check-allowlist.sh` and `.github/` stay
+# reachable for the same reason every previous revision admitted them: a gate
+# that cannot maintain itself cannot be enforced at all.
+#
+# ---------------------------------------------------------------------------
+# TWO PRs, and why this list needs no phases to survive it
+# ---------------------------------------------------------------------------
+#
+# The retiarius-reach list needed two phases because one list could not be both
+# complete and satisfiable while a fixture split was in flight. This one does
+# not, because the work is split across PRs instead of the list across phases:
+#
+#   PREPARATORY PR -- finishes the `series.test.ts` split and nothing else. It
+#   is judged by the PREVIOUS list, still in the tree at that point, which left
+#   `series.test.ts` open for exactly this and keeps
+#   `frozenFixtures/**` writable for exactly this. It touches no path this list
+#   closes for any other reason.
+#
+#   REPAIR PR (this one) -- branched from main after that merged, so its diff no
+#   longer contains the split. It ships THIS list as its first commit, before
+#   the three repairs, so the diff is judged by a boundary it did not write.
+#
+# That ordering is the whole reason `series.test.ts` can be closed here without
+# reintroducing the contradiction: by the time this list is live, the file that
+# had to move has already moved, in a PR this list never judged.
 set -euo pipefail
 BASE="${1:?base sha required}"
-# TWO PHASES, because a single list cannot be both complete and satisfiable.
-# THE TRANSITION IS COMPLETE; this is phase 2, and the note below is history
-# rather than a pending step.
-#
-# Review 2 found the original version internally impossible: it forbade
-# `seasonBalance.test.ts`, which held `GOLDEN_OUTCOMES`/`GOLDEN_SCORE`/
-# `GOLDEN_DELTAS`, and all of `src/presentation/`, which included
-# `ArenaCamera.test.ts`'s recorded tick counts, opening distances and band-edge
-# crossings -- every one of which this slice's behaviour change MUST update.
-# Forbidding a file whose contents must move is a rule that cannot be obeyed.
-#
-# So the slice shipped as two PRs:
-#
-#   PREPARATORY PR (merged) -- the contact-diagnostics seam, the reach harness,
-#   the fixture splits, and the phase-1 form of this gate. It forbade the
-#   presentation SOURCE and the acceptance logic that carried no movable
-#   literal. Five files were deliberately open, because authoring
-#   `measure-reach.ts` and splitting the other four's literals into
-#   `src/testSupport/frozenFixtures/` was that PR's job.
-#
-#   CONTENT PR (this one) -- the catalog change, branched from main after the
-#   first merged, so its diff no longer contains the harness. Its list adds all
-#   five, which by now hold only assertions: their literals live in fixture
-#   modules that the re-baseline rule governs instead.
-#
-# `scripts/measure-reach.ts` joins them for the same reason the others do. It
-# is the instrument that produces this slice's acceptance evidence, and review
-# 2's finding was precisely that the previous list let an implementation weaken
-# the criteria it had to pass -- including the instrument itself.
-#
-# Screenshot baselines under `tests/__screenshots__/**` are never forbidden in
-# either phase: they are outputs of the change, not levers on it.
-# `src/presentation/` is matched WHOLESALE rather than by an enumeration of
-# filenames. The enumeration was reviewed and found incomplete -- it left
-# `battleFeed.ts`, `conditionTelegraph.ts`, `dispositionLabels.ts`,
-# `footstepThresholds.ts` and `formatPower.ts` writable -- and any such list
-# rots the moment a module is added.
-# `src/simulation/series\.test\.ts$` IS DELIBERATELY ABSENT, and saying why is
-# the point of this comment rather than an apology for it.
-#
-# The preparatory PR's split of that file was INCOMPLETE. Its inventory found
-# five movable literals and missed three more: the `{home: 0, away: 3}` scores
-# in the short-handed block, and the hard-coded lineup naming which ordering
-# beats the all-counter one. The content change moves all four. Forbidding the
-# file while it still holds values that must move is exactly the contradiction
-# review 2 found in the original single-phase list -- a rule that cannot be
-# obeyed -- so the honest options were to leave it open for one more PR or to
-# pretend the split was finished.
-#
-# It is left open, and the split is FINISHED in this PR: those literals now
-# live in `frozenFixtures/seriesTrace.ts` alongside the other five. From the
-# next slice the file holds criteria only and joins the list below, which is
-# the same transition `measure-reach.ts` and the other three made here.
-#
-# What this costs while it is open, stated so a reviewer can check it: this PR
-# can edit assertions in `series.test.ts` that it also has to satisfy. Every
-# such edit is enumerated in its own commit message, and the one that changes
-# a criterion rather than a literal -- dropping the blanket `3-0` prohibition
-# -- is written up as an amendment in the slice's spec, with both of
-# design.md's golden criteria verified against the new run first.
-FORBIDDEN='^(src/style\.css$|index\.html$|src/main\.ts$|src/presentation/|src/simulation/(balance|dispositionBalance|seasonBalance|encounterCapacity)\.test\.ts$|src/testSupport/balanceCohorts\.ts$|tests/legibility\.spec\.ts$|playwright\.config\.ts$|scripts/measure-reach\.ts$|src/testSupport/reachHarness\.ts$)'
-# NO EXEMPTIONS in phase 2. The phase-1 list exempted
-# `^src/presentation/.*\.test\.ts$` because `ArenaCamera.test.ts` held recorded
-# trace numbers this slice must update. Those numbers now live in
-# `src/testSupport/frozenFixtures/cameraTraces.ts`, which no pattern here
-# matches, so the exemption has nothing left to protect and the whole of
-# `src/presentation/` -- source and tests alike -- is closed.
-EXEMPT='^$'
+FORBIDDEN='^(src/simulation/|src/content/|src/presentation/|src/style\.css$|index\.html$|src/main\.ts$|src/testSupport/frozenFixtures/|tests/__screenshots__/|src/testSupport/balanceCohorts\.ts$|tests/legibility\.spec\.ts$|playwright\.config\.ts$)'
+# ONE EXEMPTION, and it is the slice's subject rather than an escape hatch.
+# `src/presentation/` is matched wholesale in FORBIDDEN (an enumeration of
+# filenames was reviewed and found incomplete in the previous list, and rots
+# whenever a module is added), so the camera METRIC being repaired has to be
+# named back out. Only the test: `ArenaCamera.ts` itself stays closed, which is
+# the point of the camera amendment this repair answers.
+EXEMPT='^src/presentation/ArenaCamera\.test\.ts$'
 # Committed + staged + unstaged + untracked, and both sides of every rename.
 CHANGED="$( { git diff --name-status -z --find-renames "$BASE" HEAD; git diff --name-status -z --find-renames HEAD; git diff --name-status -z --find-renames --cached; } \
   | tr '\0' '\n' | grep -vE '^[A-Z][0-9]*$' | sort -u )"

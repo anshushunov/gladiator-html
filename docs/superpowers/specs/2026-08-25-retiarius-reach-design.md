@@ -615,3 +615,49 @@ has now failed to enforce that rule four times in this slice alone; the fifth
 time it should be code. `scripts/measure-reach.ts` is forbidden here, so the
 repair belongs to whoever next opens it — and it makes gate D pass by a wider
 margin, so nothing about the shipped content depends on it.
+
+## Closing note — the three debts above are paid, 2026-08-27/28
+
+**Written by the measurement-repair slice, which exists to discharge them.** It
+changes three instruments and nothing they measure; its own CI gate closes
+`src/testSupport/frozenFixtures/**` and `tests/__screenshots__/**` for exactly
+that reason, so "no frozen value moved" is checked rather than asserted.
+
+**The camera metric.** Fixed in `ArenaCamera.test.ts` alone, as the amendment
+above requires — `ArenaCamera.ts` is untouched, and no constant was nudged. The
+bound is split into the two properties it was conflating, each measured against
+the actual spread axis unwrapped into its own chain: the axis never turns more
+than 15° in a tick (worst over all nine pairings, **12.758°**, confirming this
+document's measurement exactly), and the sticky reference never lags that axis
+by more than the 5° dead zone (worst **4.99894°** — it saturates, as a dead zone
+should). Together they bound the reference's step by 20°. The lag half is
+compared *unfolded*, which makes it strictly stronger than what it replaces: it
+fails at `lag = π` if the unwrap is broken, which asserting on the reference's
+own per-tick delta never could. Verified by three mutations of `ArenaCamera.ts`,
+each reverted.
+
+**Gate D's comparator.** Fixed, and the fix lives in
+`src/testSupport/reachHarness.ts` as `independentComparatorMatchups` rather than
+in the script, so it is typechecked and has a regression: structurally, that no
+selection ever names a matchup containing the subject; behaviourally, that the
+`fast`-free matchups are bit-identical under an overlay moving every `fast`
+attack, with a negative control on `technical vs fast`. Gates C and G are
+bit-identical, and gate C's comparator label is now asserted to be a *member* of
+the same set instead of a bare literal. Re-measured at 200 seeds on the shipped
+content: retiarius **63.3%**, hoplomachus **71.9%** `fast`-free and **65.0%**
+pooled — reproducing this document's figures, including that the repair widens
+the margin rather than narrowing it.
+
+**The `series.test.ts` split.** Finished, and it was one repair short of
+finished: the leading-slot forfeit score was still inline (same class as the
+three that were extracted — two real fought bouts decide it), and the comment
+above the canonical-hash test still carried a *pre-slice* copy of the three
+hashes, three durations and the score, so the file documented a run that no
+longer existed while its assertions passed against one that did. The copy is
+deleted rather than corrected. The file now holds criteria only, which is the
+condition the previous gate named for closing it, and the new gate closes it.
+
+**The one thing that did not survive first contact.** This document said the
+`series.test.ts` split was complete. It was not, and the discovery is the same
+shape as everything else here: the instrument, not the logic, and in the
+direction that made the work look done.
