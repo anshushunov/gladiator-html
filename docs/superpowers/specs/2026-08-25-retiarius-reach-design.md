@@ -296,7 +296,7 @@ All figures at 200 seeds. Package: `fast-slash` 0.9–2.05, `fast-burst-lunge`
 | A. not closer than the sword | ≥ murmillo's | 0.90 vs 1.08 ✘ | **1.89** vs 1.09 | ✔ |
 | B. spear keeps the reach | ≥0.20 | +1.32 | **+0.45** | ✔ |
 | C. vs murmillo, in-envelope | ≤65.0% | 100.0% ✘ | **40.8%** | ✔ |
-| D. whole type, in-envelope | ≤63.0% | 100.0% ✘ | **62.2%** | ✔ thin |
+| D. whole type, in-envelope | ≤ hoplomachus' | 100.0% ✘ | **62.2%** vs 63.0% | ✔ thin |
 | E. disengage: immediate | ≤5% | 4.3% | **3.8%** | ✔ |
 | E. disengage: duration | ≥24 | 29 | **30** | ✔ |
 | E. disengage: ground gained | ≥0.75 | 0.77 | **0.70** | ✘ |
@@ -601,21 +601,17 @@ as a named constant (`DISENGAGE_GAIN_FLOOR`), gate D's 63.0% is nowhere in the
 instrument — it is a measurement of the *authored* content recorded in prose,
 which is precisely how a snapshot gets mistaken for a criterion.
 
-**What is owed, and by whom.** Three things, none of them this slice's to do
-unilaterally:
+**DECIDED, 2026-08-27, by the design owner: gate D is a COMPARISON, not a bar.**
+The `63.0%` was a measurement of the authored content, offered as the source of
+the comparison in the same way gate C offers `65.0%`, and was never a threshold.
+The "Where it stands" row above is corrected to say so; the shipped content
+passes at 63.263% against a hoplomachus who measures 65.032% pooled and 71.857%
+`fast`-free.
 
-1. Decide whether gate D is a comparison or a bar, and write the one answer in
-   both places.
-2. If it stays a comparison, fix `wholeTypeEnvelopeShare` to take the
-   hoplomachus from `fast`-free matchups, as gates C and G already do — and add
-   a regression that the comparator cannot move with the retiarius, since prose
-   has now failed to enforce that four times.
-3. If it becomes a bar, freeze 0.63 as a named constant beside
-   `DISENGAGE_GAIN_FLOOR` — and note that the shipped content is **0.263 points
-   over it**, which under the spec's own stopping rule means the slice stops
-   and reports rather than ships.
-
-Until (1) is answered by someone other than the implementation, this slice
-reports gate D as **passing on the instrument as frozen, failing against the
-prose snapshot, and passing with more margin under the rule the spec itself
-states** — and does not choose between them.
+**One thing is still owed, and it is not this slice's to do.** The comparator
+must be fixed to take the hoplomachus from `fast`-free matchups, as gates C and
+G already do, and a regression added so it cannot move with the retiarius. Prose
+has now failed to enforce that rule four times in this slice alone; the fifth
+time it should be code. `scripts/measure-reach.ts` is forbidden here, so the
+repair belongs to whoever next opens it — and it makes gate D pass by a wider
+margin, so nothing about the shipped content depends on it.
