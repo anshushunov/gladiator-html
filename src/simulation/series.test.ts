@@ -264,15 +264,23 @@ it('makes stats matter more than blindly taking all counters', () => {
 // Per-bout hashes are pinned individually rather than folded into one value, so
 // a failure names the bout that moved instead of just saying the series changed.
 // Each was read from a probe that printed the hash beside its trace, never
-// copied from a failing diff. The reviewed run:
-// Bout 0 was re-frozen on 2026-08-18 (Fast's forced disengage went live and
-// `fast-burst-lunge` was recalibrated with it); bouts 1 and 2 have no Fast
-// fighter in them and came through byte-identical.
-//   bout 0  aquila vs drusus   away wins by defeat in 1721 ticks -> 3600fb53
-//   bout 1  nerva  vs cassius  home wins by defeat in 2183 ticks -> dee79f52
-//   bout 2  brutus vs magnus   home wins by defeat in 1202 ticks -> 563432bd
-// Score 2-1, every bout decided by defeat rather than the tick cap, and all
-// three durations inside the roster cohort's 1200..2700 median band.
+// copied from a failing diff.
+//
+// THE VALUES THEMSELVES ARE NOT RESTATED HERE, and that is the point of the
+// split rather than an omission. They live in `frozenFixtures/seriesTrace.ts`,
+// tagged with their re-baselining class and with the run that produced them.
+// This comment used to carry its own copy of the three hashes, the three
+// durations and the score; the content PR re-froze all seven values in the
+// fixture module and the copy here stayed at the pre-slice numbers, so the file
+// documented a run that no longer existed while its assertions passed against
+// one that did. A duplicated snapshot next to assertions that no longer read it
+// is worse than no snapshot at all -- and once this file is closed to editing,
+// the copy could not even be corrected.
+//
+// What stays here is what this file is for: the criteria those values are
+// checked against -- every bout decided by `defeat` rather than the tick cap,
+// and the trace's shape pinned alongside its hashes so a differently-shaped
+// series cannot coincidentally satisfy the literals.
 it('matches the frozen canonical trace hashes for the Aquila/Nerva/Brutus lineup', () => {
   let state = createMvpSeries()
   for (const [boutIndex, fighterId] of (['aquila', 'nerva', 'brutus'] as const).entries()) {
@@ -421,6 +429,11 @@ describe('short-handed series', () => {
     state = confirmLineup(state).state
     expect(state.phase).toBe('summary')
     expect(state.results).toHaveLength(3)
+    // Structural, not measured, which is why this one score is NOT in
+    // `SHORT_HANDED_SCORES`: with an empty roster every bout forfeits and each
+    // forfeit is worth exactly one away point, so no behaviour change can move
+    // it. Moving it into the re-baselinable fixture module would file a
+    // criterion as a snapshot.
     expect(state.score).toEqual({ home: 0, away: 3 })
     expect(state.activeBattle).toBeUndefined()
   })
@@ -437,7 +450,7 @@ describe('short-handed series', () => {
     const forfeited = state.results.filter((outcome) => outcome.kind === 'forfeit')
     expect(forfeited).toHaveLength(1)
     expect(forfeited[0]).toMatchObject({ boutIndex: 0, opponentId: opponents[0].id })
-    expect(state.score).toEqual({ home: 1, away: 2 })
+    expect(state.score).toEqual(SHORT_HANDED_SCORES.leadingSlot)
   })
 
   // Regression coverage for a fix-round finding: a series that ends by
