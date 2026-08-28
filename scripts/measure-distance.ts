@@ -152,6 +152,18 @@ interface MatchupResult {
    */
   homeWins: number
   bouts: number
+  /**
+   * `fast-burst-lunge` `action-started` events inside the engaged window,
+   * summed over every Fast fighter in the matchup.
+   *
+   * Reported per fighter, never raw: the mirror has TWO retiarii and the kernel
+   * emits one event per actor, so a raw count makes the mirror look twice as
+   * committed as it is. That exact error turned a real 22% frequency gap into a
+   * reported 61% before it was caught, so the division happens here rather than
+   * in whoever reads the number.
+   */
+  lungeStarts: number
+  fastFighters: number
 }
 
 const args = parseArgs(process.argv.slice(2))
@@ -159,7 +171,8 @@ const catalog = catalogFor(args.overlay)
 const BANDS = distanceBands(catalog)
 
 function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupResult {
-  const result: MatchupResult = { label: matchupLabel(home, away), home, away, all: emptyAccumulator(), engaged: emptyAccumulator(), homeWins: 0, bouts: 0 }
+  const result: MatchupResult = { label: matchupLabel(home, away), home, away, all: emptyAccumulator(), engaged: emptyAccumulator(), homeWins: 0, bouts: 0,
+    lungeStarts: 0, fastFighters: [home, away].filter((a) => a === 'fast').length }
 
   for (let index = 0; index < seeds; index += 1) {
     let battle = createBattle({
@@ -187,11 +200,40 @@ function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupRes
       accumulate(result.all, separation, BANDS)
       // `hasEngaged` is monotone: `lastResolutionTick` never returns to 0, so
       // this latches on and the engaged window is a suffix of the bout.
-      if (hasEngaged(battle.encounter.combatants, ids)) {
+      const engaged = hasEngaged(battle.encounter.combatants, ids)
+      if (engaged) {
         everEngaged = true
         accumulate(result.engaged, separation, BANDS)
       }
+
+      const previousTick = battle.encounter.tick
       battle = advanceBattleTick(battle)
+
+      // Commitment frequency, counted here rather than inferred from contacts.
+      //
+      // The numerator is `action-started`, not a contact record, and that is the
+      // whole point: `measure-reach.ts` files a contact under `reached` only when
+      // the outcome is in `REACHED`, geometry misses in their own bucket, and an
+      // action interrupted before phase 9 leaves no record at all. Deriving
+      // "attempts" from those buckets counts how many commitments *survived*, not
+      // how many were made -- so a candidate that commits less often but more
+      // cleanly reads as unchanged. External review caught that on a first draft
+      // of this metric and it is the reason this loop counts starts.
+      //
+      // Gated on `engaged`, the same flag that decided whether this tick entered
+      // the denominator, so numerator and denominator describe one tick
+      // population. The earlier figure joined contact counts spanning the WHOLE
+      // bout to a denominator of engaged ticks only, across two JSON files by
+      // hand, and the mismatch survived precisely because nothing computed both
+      // halves in one place.
+      if (engaged) {
+        for (const event of battle.events) {
+          if (event.tick !== previousTick + 1) continue
+          if (event.type !== 'action-started') continue
+          if (event.actionId !== 'fast-burst-lunge') continue
+          result.lungeStarts += 1
+        }
+      }
     }
 
     if (!everEngaged) {
@@ -301,6 +343,15 @@ console.log('  pinned -- which means this comparison cannot, on its own, tell a 
 // all, because both sides of it are the subject -- so nothing in it can move
 // with the thing it judges, which is the defect class this slice's whole gate
 // history is made of.
+console.log('\nCOMMITMENT FREQUENCY (lunge starts per 1000 engaged ticks, PER FAST FIGHTER)')
+console.log('  both halves from this one run; the numerator is action-started, not surviving contacts')
+for (const m of matchups) {
+  if (m.fastFighters === 0) continue
+  const ticks = m.engaged.separations.length
+  const rate = ticks > 0 ? (m.lungeStarts / m.fastFighters / ticks) * 1000 : Number.NaN
+  console.log(`  ${m.label.padEnd(22)} starts ${String(m.lungeStarts).padStart(5)} / ${m.fastFighters}   engaged ticks ${String(ticks).padStart(7)}   ${fixed(rate).padStart(6)} per 1000`)
+}
+
 console.log('\nTHE SAME SUBJECT AGAINST EVERY OPPONENT (what the playtest claimed, and the criterion that needs no yardstick)')
 for (const away of STYLES) {
   const m = byLabel.get(matchupLabel(SUBJECT, away)) as MatchupResult
@@ -318,6 +369,12 @@ if (args.json) {
       all: summarise(m.all, percentile) ?? null,
       bouts: m.bouts,
       homeWins: m.homeWins,
+      lungeStarts: m.lungeStarts,
+      fastFighters: m.fastFighters,
+      lungeStartsPer1000EngagedTicksPerFighter:
+        m.fastFighters > 0 && m.engaged.separations.length > 0
+          ? (m.lungeStarts / m.fastFighters / m.engaged.separations.length) * 1000
+          : null,
     })),
     comparison: { subject: subjectLabel, comparator: comparatorLabel, comparatorMatchups: COMPARATOR_MATCHUPS },
   }, null, 2)}\n`, 'utf8')

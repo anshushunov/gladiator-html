@@ -1168,3 +1168,80 @@ Standing: PR #20 green through e2e, unmerged. `fix/murmillo-pin` holds the
 distance instrument (809/809 tests, `tsc` clean), the boundary committed ahead of
 the work it judges, and the spec at revision 5 with seven gates, one of whose
 bars is deliberately withdrawn. No content has been touched.
+
+
+---
+
+## 2026-08-28 — session 3, discharging round 3's gate-V blocker by measuring it
+
+The §8.2 decision is still the design owner's. This is the one round-3 fix that
+could be settled with a measurement instead of a promise, and `measure-distance.ts`
+is open to this slice, so it was.
+
+### What was built
+
+`measure-distance.ts` now counts `fast-burst-lunge` `action-started` events inside
+the same latched engaged window that gates the denominator, per Fast fighter, and
+both halves come from one run. Two regressions in `distanceHarness.test.ts`.
+
+**The first regression failed, and the failure was mine.** I asserted that starts
+*strictly* exceed the contact-derived count, and on seed 20260815 both are 4 —
+every lunge in that bout survived to phase 9. Starts exceeding survivors is a
+tendency, not a law, and asserting it as a law would have shipped a flaky test
+wearing a regression's clothes. It now asserts the actual invariant per bout
+(starts ≥ contacts, since a contact cannot exist without a start) and the actual
+defect in aggregate (pre-engagement starts are a real, excluded population).
+
+### The measurement, and it moves against me for once
+
+Per Fast fighter, 200 seeds:
+
+| | starts in window | old contact-derived | rate /1000 |
+|---|---:|---:|---:|
+| `fast vs heavy` | 508 | 569 | **3.76** |
+| `heavy vs fast` | 492 | 552 | **3.76** |
+| mirror | 1085 | 1079 | 5.45 |
+| `fast vs technical` | 617 | 607 | 7.04 |
+| `technical vs fast` | 568 | 542 | 6.60 |
+
+Against the murmillo the corrected count is **11% lower** than the old
+derivation: ~61 lunges per 200 bouts start during the approach, and the old
+figure counted them while counting none of their ticks. Everywhere else it is
+slightly higher, because starts that never reach phase 9 now register.
+
+**So the frequency reduction against the murmillo is 31% against the mirror and
+45% against the hoplomachus** — bigger than the 22% I reported after the
+double-count fix, not smaller.
+
+That is worth naming explicitly. Five corrections in this slice ran toward the
+claim I was making. This is the sixth and it runs the other way: the effect is
+larger than my last number said. The pattern was never "my numbers are
+pessimistic"; it was "my numbers are unchecked", and an unchecked number lands
+wherever the arithmetic happens to put it.
+
+Gate V's bar is frozen at **3.55**, 95% of the measured 3.76.
+
+### Where I stopped / next session
+
+Unchanged: **§8.2 is the design owner's call** — a fourth review round, accept
+revision 5 and start PR-2, or park. Round 3's other blocker (gate P's epsilon
+successes) is fixed in the spec and, unlike this one, cannot be discharged by
+measurement — it needs the PR-2 seam to exist.
+
+### The full suite went red once, and it was not my change
+
+811 tests, 810 passed, one failed: `encounter.test.ts`'s "informational pacing
+probe", **timed out at 5184 ms against Vitest's default 5000 ms**. Not an
+assertion — a timeout, in a file this slice does not touch.
+
+Checked rather than assumed: run alone the same test takes **905 ms**. It needs
+a 5.5× slowdown to trip, and it got one, because I had a 200-seed
+`measure-distance` run competing for the machine. Re-ran the whole suite with
+nothing else going: **811/811 across 39 files.**
+
+Recorded as debt 5 rather than waved off. A test that sits at 18% of its timeout
+budget will flake on a loaded CI runner, `stateHash.test.ts` solves the identical
+problem with an explicit `30_000`, and the brief's §4.4 is precisely about what a
+red gate costs: `npm run check` stops at the first failure, so this one would
+have eaten the e2e report. `src/simulation/**` is closed to this slice, so it is
+written down, not fixed.

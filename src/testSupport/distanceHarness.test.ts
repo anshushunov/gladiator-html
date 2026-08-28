@@ -10,10 +10,11 @@ import {
   isInsideMurmilloEnvelope,
   summarise,
 } from './distanceHarness'
-import { applyOverlay } from './reachHarness'
+import { applyOverlay, GEOMETRY_FAILURE, REACHED } from './reachHarness'
 import { percentile } from './balanceCohorts'
 import { advanceBattleTick, createBattle, MAX_BOUT_TICKS } from '../simulation/battle'
 import type { CombatStyleCatalog } from '../simulation/combatActions'
+import type { ContactCollector, ContactRecord } from '../simulation/contactDiagnostics'
 import type { FighterDefinition } from '../simulation/fighters'
 
 const catalog = () => structuredClone(COMBAT_STYLES) as unknown as CombatStyleCatalog
@@ -135,5 +136,89 @@ describe('distance harness engagement window', () => {
     acc.bouts = 1
     acc.unengagedBouts = 1
     expect(summarise(acc, percentile)).toBeUndefined()
+  })
+})
+
+describe('commitment frequency counts starts, not survivors', () => {
+  it('never reports fewer starts than contacts, and excludes a real population of pre-engagement starts', () => {
+    // The defect this pins, found by external review of the spec: a first
+    // version of the commitment metric derived "attempts" from
+    // `measure-reach.ts`'s contact buckets -- `reached` plus `geometryFailures`
+    // -- and compared them against a denominator of ENGAGED ticks only.
+    //
+    // Two things are wrong with that and this test pins both.
+    //
+    // The invariant: a contact record cannot exist without a start, so total
+    // starts must never fall below the contact-derived count. Asserted per bout
+    // rather than in aggregate, because that is where it is an invariant. It is
+    // deliberately NOT a strict inequality -- a first draft asserted `>` and
+    // failed on seed 20260815, where all four lunges happened to survive to
+    // phase 9. Starts exceeding survivors is a statistical tendency, not a law,
+    // and asserting it as a law would have been a flaky test dressed as a
+    // regression.
+    //
+    // The window: starts before engagement are a real and substantial
+    // population, and they belong in neither the numerator nor the denominator.
+    // Measured over the full 200-seed cohort this is ~11% of `fast vs heavy`
+    // lunges -- 508 inside the window against 569 over the whole bout -- so
+    // excluding them is not a rounding decision.
+    let startsBeforeEngagedTotal = 0
+    let startsWhileEngagedTotal = 0
+
+    for (let seed = 0; seed < 20; seed += 1) {
+      let battle = createBattle({
+        home: fighter('home', 'fast'), away: fighter('away', 'heavy'), seed: BASELINE_TEST_SEED + seed, combatStyles: catalog(),
+      })
+      const ids = [battle.descriptor.homeId, battle.descriptor.awayId]
+      const records: ContactRecord[] = []
+      const collector: ContactCollector = { record: (entry) => records.push(entry) }
+      let starts = 0
+
+      while (battle.phase === 'running' && battle.encounter.tick < MAX_BOUT_TICKS) {
+        const engaged = hasEngaged(battle.encounter.combatants, ids)
+        const previousTick = battle.encounter.tick
+        battle = advanceBattleTick(battle, undefined, collector)
+        for (const event of battle.events) {
+          if (event.tick !== previousTick + 1) continue
+          if (event.type !== 'action-started' || event.actionId !== 'fast-burst-lunge') continue
+          starts += 1
+          if (engaged) startsWhileEngagedTotal += 1
+          else startsBeforeEngagedTotal += 1
+        }
+      }
+
+      const contactDerived = records.filter(
+        (r) => r.actionId === 'fast-burst-lunge' && (REACHED.has(r.outcome) || GEOMETRY_FAILURE.has(r.outcome)),
+      ).length
+      expect(starts, `seed offset ${seed}`).toBeGreaterThanOrEqual(contactDerived)
+    }
+
+    expect(startsWhileEngagedTotal).toBeGreaterThan(0)
+    expect(startsBeforeEngagedTotal).toBeGreaterThan(0)
+  })
+
+  it('excludes starts from before the engaged window, which the denominator also excludes', () => {
+    // Numerator and denominator must describe one tick population. The earlier
+    // figure joined contact counts spanning the WHOLE bout to a denominator of
+    // engaged ticks only, so the opening exchange contributed a numerator with
+    // no denominator behind it. Here the same `hasEngaged` latch gates both.
+    let battle = createBattle({
+      home: fighter('home', 'fast'), away: fighter('away', 'heavy'), seed: BASELINE_TEST_SEED, combatStyles: catalog(),
+    })
+    const ids = [battle.descriptor.homeId, battle.descriptor.awayId]
+    let engagedTicks = 0
+    let sawUnengagedTick = false
+
+    while (battle.phase === 'running' && battle.encounter.tick < MAX_BOUT_TICKS) {
+      if (hasEngaged(battle.encounter.combatants, ids)) engagedTicks += 1
+      else sawUnengagedTick = true
+      battle = advanceBattleTick(battle)
+    }
+
+    // A duel opens at ~8.4 units, so there is always an approach to exclude --
+    // if this ever stopped being true the window would be doing nothing.
+    expect(sawUnengagedTick).toBe(true)
+    expect(engagedTicks).toBeGreaterThan(0)
+    expect(engagedTicks).toBeLessThan(battle.encounter.tick)
   })
 })

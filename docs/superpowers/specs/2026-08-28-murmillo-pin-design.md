@@ -557,9 +557,17 @@ Three clauses. All must hold.
 > In `fast vs heavy` and in `heavy vs fast`, each asserted separately,
 > **`fast-burst-lunge` `action-started` events per 1000 engaged ticks, per Fast
 > fighter**, counted only for starts whose tick falls inside the same latched
-> engaged window as the denominator, are at least **the bar frozen in PR-3**.
+> engaged window as the denominator, are at least **3.55**.
 
-- **The bar is NOT 4.0 and is not yet established.** Round-3 review found the
+- **Re-measured, and the bar is 3.55.** The counter now lives in
+  `measure-distance.ts`, which already runs the bouts, so both halves come from
+  one run; the shipped baseline is **3.76** in both orientations and the bar is
+  95% of it. Regressions in `distanceHarness.test.ts` pin the two properties that
+  failed before: starts never fall below the contact-derived count (asserted per
+  bout, where it is an invariant), and pre-engagement starts are a real
+  population that is excluded from both halves.
+- **The old 4.0 was wrong twice over, and the second correction runs against the
+  shipped content rather than for it.** Round-3 review found the
   numerator and denominator were measuring different things, and it is right.
   `measure-reach.ts:299-305` files a contact record under `reached` only when the
   outcome is in `REACHED`, geometry misses separately, other outcomes elsewhere —
@@ -572,13 +580,24 @@ Three clauses. All must hold.
   starts at 53% reaching geometry and five starts at 80% both report ~4.2. A
   candidate can cut commitment frequency by 38% and leave V green by making the
   survivors cleaner. That is the gate defeating its own purpose.
-- **So PR-3 counts `action-started` events**, keyed by Fast actor and ordered
-  matchup, regardless of what happens to the action afterwards, inside the same
-  latched window as the denominator, collected in one run rather than joined
-  across two JSON files as the 4.21 was. The shipped baseline is re-measured on
-  that definition and the bar frozen at 95% of it, with regressions proving that
-  geometry misses, pre-contact interruptions and pre-engagement starts can
-  neither vanish from nor inflate the count.
+- **Measured on the corrected definition, 200 seeds, per Fast fighter:**
+
+  | | starts inside the window | old contact-derived | rate per 1000 |
+  |---|---:|---:|---:|
+  | `fast vs heavy` | 508 | 569 | **3.76** |
+  | `heavy vs fast` | 492 | 552 | **3.76** |
+  | mirror | 1085 | 1079 | 5.45 |
+  | `fast vs technical` | 617 | 607 | 7.04 |
+  | `technical vs fast` | 568 | 542 | 6.60 |
+
+  Against the murmillo the corrected count is **lower** than the old derivation
+  by 11%, because ~61 lunges per 200 bouts start during the approach and the old
+  figure counted them while counting none of their ticks. Against every other
+  opponent the corrected count is slightly higher, since starts that never reach
+  phase 9 now register. **So the reduction against the murmillo is 31% versus the
+  mirror and 45% versus the hoplomachus** — larger than the 22% reported after the
+  double-count fix, and this is the first correction in this slice to move against
+  my own convenience rather than for it.
 - **Non-regression, not a target.** It does not ask the candidate to *improve*
   commitment frequency, only to not buy the escape with it.
 - **Why it exists, decided by the design owner, 2026-08-28.** Round-2 review
@@ -746,7 +765,17 @@ slice must close.
    murmillo.**~~ **Promoted to gate V and corrected on the way.** The 2.5x
    compared one retiarius against the mirror's two; per fighter it is 8.44
    against 10.62, a 21% reduction. See §5 gate V and §11.
-5. **`src/style.css:4` asks for Inter with no bundled `@font-face`**, so the
+5. **`encounter.test.ts`'s "informational pacing probe" has no explicit timeout
+   and will flake.** It runs 20 full bouts, takes ~900 ms unloaded, and carries
+   Vitest's default 5000 ms budget — an 18% margin against a 5.5x slowdown. It
+   timed out at 5184 ms during this slice's full run (with a 200-seed measurement
+   competing for the machine) and passes in isolation. `stateHash.test.ts` solves
+   the same problem with an explicit `30_000`. This matters beyond tidiness: the
+   brief's own §4.4 records that a red gate hides the gates behind it, and
+   `npm run check` stops at the first failure, so a flaky unit test costs the e2e
+   report. `src/simulation/**` is closed to this slice, so it is recorded rather
+   than fixed.
+6. **`src/style.css:4` asks for Inter with no bundled `@font-face`**, so the
    Linux screenshots render in whatever sans the runner image ships. Found while
    clearing the baseline debt; unrelated to combat; a slice of its own.
 
@@ -844,11 +873,11 @@ Measured, 200 seeds, equal-stat cohorts, engaged window:
 
 | | vs murmillo | mirror | vs hoplomachus |
 |---|---:|---:|---:|
-| lunge attempts per 1000 engaged ticks, **per Fast fighter** | **4.21** | 5.42 | 6.92 |
+| lunge starts per 1000 engaged ticks, **per Fast fighter** | **3.76** | 5.45 | 7.04 |
 | lunge share of all attack attempts | 49.9% | 51.0% | 53.3% |
 
-Against the murmillo the retiarius commits about **22% less often per unit of
-fight time** than in his mirror and 36% less than against the hoplomachus, while
+Against the murmillo the retiarius commits about **31% less often per unit of
+fight time** than in his mirror and 45% less than against the hoplomachus, while
 the *proportion* of his offence that is the lunge is flat. §1.2's withdrawal
 disposed of the geometry claim; it did not touch this, and the flat share is the
 wrong statistic for the question the playtest actually asked ("is that a
