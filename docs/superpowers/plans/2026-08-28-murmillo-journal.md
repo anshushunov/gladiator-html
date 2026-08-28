@@ -1313,3 +1313,155 @@ Phase 0 done and clean; going into phase 1, PR-2's disengage seam. PR #20 is
 **still open, not merged**, so the inherited `tests/__screenshots__/linux/**`
 exemption in `check-allowlist.sh` stays — it is not yet the moment it is marked
 for deletion at.
+
+
+---
+
+## 2026-08-29 — session 4, phase 1: PR-2, the disengage seam
+
+**Phase:** 1. The boundary went in first, as it must; then the seam; then the
+evidence. Nothing was declared done before the command that says so ran.
+
+### The boundary, and the entry that carries it
+
+`check-allowlist.sh` rebuilt for PR-2's claim — *adds a seam, changes nothing
+the seam observes* — and committed at `003b962`, **before** the work it judges.
+Four exemptions: the seam and its test, the two kernel files the collector has
+to be threaded through, the one signature change and its test, and the file
+itself.
+
+The load-bearing entry is what stays **closed**. `encounter.test.ts`,
+`battle.test.ts` and `stateHash.test.ts` all already assert the forced
+disengage; if threading a write-only collector had required editing any of them,
+the seam would not be inert. So the gate is set to fail rather than to let me
+quietly re-take a baseline. `measure-reach.ts` stays closed for the third PR
+running.
+
+Both sides checked, three rejections and one acceptance:
+`src/simulation/encounter.test.ts` rejected, `scripts/measure-reach.ts`
+rejected, an untracked `src/presentation/` file rejected, and the seam's own new
+path accepted.
+
+PR #20 is **still open** (`gh pr view 20` gives `state: OPEN`,
+`mergedAt: null`), so the inherited `tests/__screenshots__/linux/**` exemption
+stays. It is now annotated with the date it was last re-checked, so the next
+session does not have to re-derive whether the deletion is due.
+
+### What was built
+
+`src/simulation/disengageDiagnostics.ts`, on `contactDiagnostics.ts`'s model:
+never read back inside a tick, never in `EncounterState`, never in the event
+log. The kernel writes flat phase-2 samples — `stamped`, `held`, `cleared` — and
+a pure `assembleDisengageEpisodes` regroups them into one record per episode.
+
+The split is deliberate. A stateful collector would have to assemble episodes
+inside the kernel's write path, where it is hard to test and easy to get quietly
+wrong; a flat stream plus a pure regrouping puts every interesting rule — the
+pairing, the censoring, the two impossible states — in a function that can be
+called with six hand-written samples.
+
+`held` exists for one reason: a censored episode still needs an end separation,
+and the only honest one is the last reading taken while it was open. It costs
+nothing, because phase 2 already computes that distance every tick to feed the
+predicate.
+
+`hasFastForcedDisengageEnded` widens from `boolean` to
+`DisengagePredicateExit | undefined`. That is the only signature changed. The
+reason set is frozen in the diagnostics module rather than beside the predicate
+that reports it, and `censored` is excluded from what a predicate may return
+**by type** — round-2 review's finding was that a seam faithfully reporting
+whatever reason a future predicate invents reopens the hole one level up, and a
+type is a stronger answer than a comment.
+
+**No new field on `FighterCombatState`.** Both endpoints are read in phase 2
+from state the kernel already has, so nothing is stored and the nine digests do
+not move. That was the whole point of the round-2 re-split.
+
+### The evidence, all of it commands rather than reasoning
+
+- `tsc --noEmit` — clean.
+- Full suite — **823 passed, 40 files.** It was 811 across 39 before; the
+  difference is exactly the 10 tests in the new file and 2 added to
+  `combatDecision.test.ts`. The arithmetic is stated because "the suite is
+  green" without a number is how a silently-skipped file hides.
+- The nine `stateHash.test.ts` digests — **unchanged**, `brutus/drusus:b0fa2d92`
+  through `nerva/magnus:a32fab50`.
+- `measure-reach --seeds 200 --gate` — not merely "matches the journal", which
+  only records a handful of the figures it prints. The same command was run
+  against the pre-seam tree (`git checkout 003b962 -- src/simulation scripts`)
+  and the two outputs **diff to nothing: byte-identical.** That is a stronger
+  check than the acceptance list asked for and it was cheap, so there was no
+  reason to run the weaker one.
+- `check:allowlist` green against `git merge-base main HEAD`.
+
+The seam's own test file adds a local version of the inertness proof: the same
+bout rolled tick by tick, hashed with and without a collector attached, plus an
+assertion that the collector was actually fed — or the first assertion is a
+tautology about two runs that both did nothing.
+
+### Where I was wrong, and how I found out
+
+**The corroboration test was half-vacuous and looked complete.** It ran against
+`aquila vs magnus` — the Fast home fighter against the murmillo, the obvious
+choice — and asserted that every `range` episode's end separation clears 3.35
+and every `cap` episode ran the full 37 ticks. It passed. Then I printed the
+population instead of trusting it: **six episodes, all six `cap`.** The `range`
+clause never executed once. It would have passed just as happily with that
+branch broken.
+
+That is the sixth instrument failure in this slice and the second in this
+session, and it has the same shape as gate V's: an assertion that reads as a
+statement about a population, run against a population that does not contain the
+case. Fixed by moving to the Fast mirror (`aquila vs drusus`: 3 `range`, 2
+`cap`, and two forced actors, so the interleaving is exercised too) and by
+asserting the coverage itself — the set of observed reasons must equal
+`{range, cap}`, so the loop fails loudly instead of going vacuous if a
+population empties.
+
+Worth writing down separately: **`aquila vs magnus` producing six episodes and
+zero range exits is the slice's subject matter, found by accident while
+debugging a test.** The retiarius, against the murmillo, does not once open the
+range back out in that bout. The 200-seed figure already said 1.6%; this is what
+1.6% looks like from inside a single fight.
+
+**Censoring is real and I nearly wrote it as a defensive branch.** Swept 60
+seeds by 9 pairings — 540 bouts, 1889 episodes — and **17 episodes (0.9%) are
+still open when the bout ends**, one of them zero ticks long because it was
+stamped on the final tick. Both hand-written unit tests correspond to states the
+simulation actually reaches, and one real bout (seed 20260836) is pinned as a
+regression. Had I not swept, "keep censored episodes" would have been an
+untested branch justified by a paragraph.
+
+### One design choice that is not forced, and is written here because a gate reads it
+
+When a fighter reaches the exit distance on the *same* tick the cap fires, the
+predicate reports `range`. The answer is unchanged either way — the boolean
+version returned `true` — so this only moves the label. It is the right way
+round: that fighter did open the ground, and reporting the episode as a pin
+would understate the escape in the gate this seam feeds. Pinned by its own test
+so a later PR has to argue with it rather than flip it silently.
+
+### Numbers this session produced, at 200 seeds
+
+From the unchanged reach gate, for the record and for PR-3 to build on:
+`fast forced disengage: n=2415, ticks med=37, separation gained med=0.78,
+p10=-0.05, cleared within one tick 2.9%, exits range=785 cap=1570 censored=60`.
+The 785 range exits are the journal's 9 + 6 + 577 + 100 + 93 from the
+per-matchup table, which is the determinism check passing as a side effect.
+
+### Where I stopped / next session
+
+PR-2 is built, green and committed on `fix/murmillo-pin` (`003b962` boundary,
+`8609a38` seam). It is **not** opened as a GitHub PR and not merged — the
+brief's stop condition 1.
+
+Out for review with `codex`; the result is not in this entry. If it returns a
+confirmed blocker after three rounds, that is stop condition 5 and the design
+owner's call.
+
+Standing, unchanged: PR #20 open and unmerged; the human "does it read as a
+retiarius" gate still unpassed and still needing two people who did not write
+the combat; debt 5 (`encounter.test.ts`'s untimed pacing probe) still unpaid,
+since `src/simulation/**` was open to this PR only for the seam. The new file's
+three bout-driving tests carry an explicit `30_000` for exactly that reason,
+rather than sitting at 20% of the default budget the way debt 5 does.
