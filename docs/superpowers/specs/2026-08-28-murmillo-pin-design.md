@@ -1,9 +1,13 @@
 # The Murmillo Pin — Design
 
-**Status:** third revision, 2026-08-28, after two rounds of external review
-(codex `gpt-5.6-sol`, and one late report from opencode `deepseek-v4-pro`). §11's
-open question is resolved — signature-attack frequency is **in scope**, and gate
-V is the result. Round 3 has not yet been run against this revision. Rewritten in §2.1, §4, §5 and §6 rather than patched: the review
+**Status:** fifth revision, 2026-08-28, after **three** rounds of external review
+(codex `gpt-5.6-sol` throughout; opencode `deepseek-v4-pro` from round 2).
+
+**Not fit to implement, and the review budget is spent.** Round 3 returned two
+blockers, both confirmed and both fixed here — but the fixes have not been
+reviewed, and the brief allows three rounds. §10.7 states the decision that is
+now the design owner's. Gate V's bar is withdrawn pending re-measurement on a
+definition that matches what it claims to assert. Rewritten in §2.1, §4, §5 and §6 rather than patched: the review
 invalidated the instrument the central gates were to be built on, and a document
 assembled by amendment would have kept the old gates visible beside the new
 ones.
@@ -405,9 +409,25 @@ and none of them stated:**
 
 - an **episode** is one stamped-to-cleared forced disengage, including those still
   open when the bout ends;
-- a **success** is an episode whose exit reason is in the frozen success set
-  (`range`, and `progress` if a pursuit-relative predicate is adopted) *and* whose
-  recorded endpoints satisfy that reason's condition;
+- a **success** is an episode that **opened at least 0.75 units of separation,
+  measured from the seam's recorded endpoints**, and whose exit reason is in the
+  frozen success set. Both, and the ground condition is the binding one.
+
+  **Round-3 review broke the previous definition, which required only that the
+  reason be corroborated by ground `> 0`.** Its construction: of 100 episodes,
+  25 successes made of 12 epsilon-gain exits and 13 opening ≥0.75, plus 38 capped
+  failures opening ≥0.75 and 37 opening less. Run against
+  `balanceCohorts.percentile`, P reads 25%, Q's success-only median reads 0.80,
+  Q's all-episode median reads 0.80, and Q2 passes if the epsilon exits take
+  eight ticks. **Every gate green while half the claimed escapes opened a
+  millimetre.** Worse, those premature exits free Fast to attack sooner, so they
+  *help* gate V rather than colliding with it.
+
+  Fixing it also closes the coupling round-3 review identified as the answer to
+  this spec's own second question: with success defined by a label, the mutable
+  predicate chose Q's success-only population, making it a comparator that moves
+  with the change. Defined by ground, the population is objective and the
+  coupling is removed rather than admitted;
 - `cap` and `censored` are **non-successes**. Where each belongs is stated per
   gate rather than left to the implementation, because the existing gate E keeps
   censored records in its denominators (`measure-reach.ts:484` reads the full
@@ -456,6 +476,10 @@ Three clauses. All must hold.
   measures ground from recorded positions rather than from a share, so a
   candidate cannot buy P by making every matchup worse. Crediting P1 for that
   protection was wrong and the credit is moved.
+- **And P's numerator is now a measurement, not a label.** Since a success must
+  open ≥0.75 units by the seam's own endpoints, a candidate cannot manufacture
+  the rate by naming exits differently — which is what round 3 showed it could
+  still do.
 - **Fails today:** 1.6% against 25%, and against a lowest-other of 31.7%.
 
 ### Q. The ground must actually be opened, per pair and not pooled
@@ -531,12 +555,32 @@ Three clauses. All must hold.
 ### V. The retiarius must not stop committing *(the decision that put it here)*
 
 > In `fast vs heavy` and in `heavy vs fast`, each asserted separately,
-> `fast-burst-lunge` **attempts per 1000 engaged ticks** are at least **4.0**.
+> **`fast-burst-lunge` `action-started` events per 1000 engaged ticks, per Fast
+> fighter**, counted only for starts whose tick falls inside the same latched
+> engaged window as the denominator, are at least **the bar frozen in PR-3**.
 
-- **Source:** the shipped content's own measurement, 4.21 against the murmillo at
-  200 seeds, floored at 4.0 — a non-regression bar, not a target. It does not ask
-  the candidate to *improve* commitment frequency, only to not buy the escape
-  with it.
+- **The bar is NOT 4.0 and is not yet established.** Round-3 review found the
+  numerator and denominator were measuring different things, and it is right.
+  `measure-reach.ts:299-305` files a contact record under `reached` only when the
+  outcome is in `REACHED`, geometry misses separately, other outcomes elsewhere —
+  and an attack interrupted before phase 9 produces **no record at all**. My 4.21
+  was `reached + geometryFailures`, which is neither "attempts" nor anything with
+  a name. Worse, those contacts are collected over the **whole bout** while the
+  denominator counts only **engaged** ticks, so the opening exchange lands in the
+  numerator with none of its ticks in the denominator.
+- **And the gap is exploitable in exactly the direction V exists to stop.** Eight
+  starts at 53% reaching geometry and five starts at 80% both report ~4.2. A
+  candidate can cut commitment frequency by 38% and leave V green by making the
+  survivors cleaner. That is the gate defeating its own purpose.
+- **So PR-3 counts `action-started` events**, keyed by Fast actor and ordered
+  matchup, regardless of what happens to the action afterwards, inside the same
+  latched window as the denominator, collected in one run rather than joined
+  across two JSON files as the 4.21 was. The shipped baseline is re-measured on
+  that definition and the bar frozen at 95% of it, with regressions proving that
+  geometry misses, pre-contact interruptions and pre-engagement starts can
+  neither vanish from nor inflate the count.
+- **Non-regression, not a target.** It does not ask the candidate to *improve*
+  commitment frequency, only to not buy the escape with it.
 - **Why it exists, decided by the design owner, 2026-08-28.** Round-2 review
   showed the commissioned question — "is that a retiarius or a spammer?" — was
   about frequency, and that a previous revision closed it with the wrong
@@ -565,12 +609,13 @@ Three clauses. All must hold.
   attacking. Without V, every other gate here can go green while the retiarius
   commits even less often than he does today — the precise shape of "green for
   the wrong reason" this document exists to prevent.
-- **Measured with the engaged window from `measure-distance.ts`** and attempt
-  counts from `measure-reach.ts`, so the denominator is the same tick population
-  gates P–R use.
-- **Passes today** at 4.21, and it is thin by design: this is the gate most
-  likely to fail a candidate that fixes the escape by keeping Fast out of the
-  fight, which is exactly the candidate that should fail.
+- **Both halves come from one run**, which the 4.21 did not: that figure joined
+  attempt counts from `measure-reach.ts` to engaged ticks from
+  `measure-distance.ts` by hand, across two JSON files, which is how the
+  window mismatch survived being noticed.
+- **Thin by design:** this is the gate most likely to fail a candidate that fixes
+  the escape by keeping Fast out of the fight, which is exactly the candidate that
+  should fail.
 - **Named risk:** V and P pull directly against each other. If no candidate
   satisfies both, that is a design finding to report under §9, not a bar to
   lower.
@@ -767,6 +812,27 @@ claim about a test I had not opened.
 | 15 | major | The signed error bound still models locomotion only; phases 9–10 apply contact push up to 0.70 units after movement, which can dominate and reverse it. | **Confirmed, and it ends four rounds of me being wrong about one paragraph.** `encounter.ts:2364-2372` runs contact then accumulated push after phases 7–8; `heavy-cleave.pushDistance` is 0.70, six times my whole interval. Every bound and sign is deleted. The claim is now exactly "the ground-gain baseline is unestablished". |
 | 16 | major | The flat lunge *share* answers a mix question, not the commissioned frequency question: 4.21 lunge attempts per 1000 engaged ticks against 10.83 in the mirror is a ~61% collapse the share hides. | **Confirmed, and it is the sharpest finding in either round.** I computed that rate myself, filed it in §8 as an unrelated debt, and then used the share to close the question. It does not close it. **Escalated to the design owner rather than answered here** — see §11. |
 | 17 | minor | Gate U names "a per-pair figure" while the instrument reports several. | **Confirmed.** U now names `pinnedShare` and `insideEnvelopeShare`, engaged window, five Fast matchups, and lists what is excluded. |
+
+## 10.7 External review, round 3 — the last round the process allows
+
+| # | sev | finding | disposition |
+|---|---|---|---|
+| 20 | blocker | Gate V's numerator and denominator measure different populations. `measure-reach.ts:299-305` files contacts by outcome and records nothing for an attack interrupted before phase 9, so "attempts" was `reached + geometryFailures`; and contacts are collected over the whole bout while engaged ticks start at engagement. Eight starts at 53% geometry success and five at 80% both report ~4.2, so commitment can fall 38% with V green. | **Confirmed.** V now counts `action-started` events per Fast actor inside the latched engaged window, both halves from one run. **Its bar is withdrawn** — 4.21 was not a measurement of what V asserts — and is re-frozen in PR-3 at 95% of a re-measured baseline. |
+| 21 | blocker | P accepted any positive ground as success while Q constrained only medians, and the "frozen minimum gain" had no number. A 100-episode construction — 12 epsilon successes, 13 real ones, 38 capped-but-good, 37 capped-and-bad — passes P at 25%, both Q medians at 0.80 and Q2, with half the successes opening nothing. Those premature exits also *help* V. | **Confirmed, and reproduced against `balanceCohorts.percentile` rather than taken on trust.** A success is now defined by ground — ≥0.75 units from the seam's endpoints — with the label secondary. This also removes the coupling review named as the answer to question 2: with success defined by a label, the mutable predicate was choosing Q's success-only population. |
+
+**Round 3 also confirmed two things that needed confirming.** The four-PR
+ordering is buildable, with a concrete construction: a caller-owned collector
+holding pending episodes outside `EncounterState`, the predicate returning
+`ExitReason | undefined` to preserve truthiness, and `stateHash.test.ts:57-80`
+never passing the collector — so the nine digests hold and only boolean-specific
+unit assertions need updating. And §1.2's geometry withdrawal is correct and
+should not be reinstated.
+
+**The process budget is now spent.** The brief allows three review rounds; three
+have run, and round 3 returned two blockers. They are fixed above, but *the
+fixes are unreviewed* — the fourth round the brief does not provide for is the
+one that would check them. That is the brief's stop condition, and it goes to the
+design owner rather than being decided here.
 
 ## 11. Signature-attack frequency: decided, in scope
 
