@@ -45,28 +45,43 @@
 // at its recorded end separation -- and a label the endpoints contradict fails
 // the run.
 //
-// WHAT "INERT" MEANS HERE, STATED PRECISELY BECAUSE REVIEW ASKED TWICE.
-// `record` is invoked synchronously inside phase 2, exactly as
-// `contactDiagnostics.ts` is invoked inside phase 9 and `decisionDiagnostics`
-// inside phase 4 -- so a collector whose `record` throws aborts the tick, and
-// the guarantee is "inert for a collector that returns". Two things bound that:
+// WHAT "INERT" MEANS HERE, AND WHAT IT DOES NOT. `record` is invoked
+// synchronously inside phase 2, exactly as `contactDiagnostics.ts` is invoked
+// inside phase 9 and `decisionDiagnostics` inside phase 4. Three rounds of
+// external review pushed on this and the third one was right, so the claim is
+// stated as narrowly as the measurement supports:
+//
+//   **Inert for a collector that returns AND does not write to state it
+//   captured from outside the tick.**
+//
+// The second clause is not hypothetical and is not hedging. Measured: a
+// collector that returns normally but mutates `previous.encounter.combatants[
+// id].position` from inside `record` moves the bout's digest from `7e5009f3`
+// to `c13df37` and its length from 1175 ticks to 1687. `transitionExpiredPhases`
+// shallow-copies the combatant map, so those position objects stay shared and
+// every later phase reads the mutation. Two earlier revisions of this comment
+// claimed more than that -- first "inert", then "inert for a collector that
+// returns" -- and both were false.
+//
+// What IS guaranteed, and is worth having:
 //
 //   - the sample handed to `record` is **only primitives** -- a tick, two ids,
-//     a number, a string reason. No combatant, no position vector, no array the
-//     kernel will read again. So a collector cannot perturb a later phase by
-//     mutating what it was given, only by throwing;
+//     a number, a string reason. Nothing reachable from the kernel is passed
+//     out, so a collector has to go looking for state to break it;
 //   - when no collector is attached, nothing is built at all. The call sites
 //     use `collector?.record({...})`, and optional chaining does not evaluate
 //     its argument list on the nullish path, so the sample object is never
 //     allocated; the stamp branch, which computed no distance before this seam
 //     existed, is additionally behind an explicit `if`.
 //
-// Handing samples back through `EncounterTransition` instead of a callback
-// would remove the throwing case entirely. It is not done here because it
-// would make this the only one of three diagnostics collectors with a
-// different shape, in a PR whose whole claim is that it changes nothing -- if
-// the callback pattern is wrong it is wrong in three places and is its own
-// change, recorded as a debt rather than smuggled in here.
+// The same hostile collector perturbs the merged `contactDiagnostics` seam
+// identically (digest `7e5009f3` to `1499c999`), so this is a property of the
+// kernel's callback pattern rather than something this seam introduced. That
+// makes it a debt shared by three modules, not a licence: the fix is to hand
+// samples back on `EncounterTransition` for all three, which changes a kernel
+// type and belongs in its own diff rather than in one whose claim is that it
+// changes nothing. It is recorded as such, and the decision is the design
+// owner's.
 
 import type { CombatantId } from './encounter'
 
@@ -264,6 +279,18 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
   }
 
   for (const sample of samples) {
+    // Before any branching on kind or on target changes. Round 3 of external
+    // review found that checking this inside the held/cleared branch left two
+    // holes: a `stamped` sample skipped it entirely and could open an episode
+    // with a `NaN` start separation that later emitted as measurable, and a
+    // sample that both retargeted and went non-finite took the
+    // `target-changed` path and was never validated at all.
+    if (sample.targetId !== undefined && !Number.isFinite(sample.separation)) {
+      // A resolved target and a non-finite distance between two finite
+      // positions is not an ordinary state, it is a broken one.
+      throw new Error(`disengage diagnostics: ${sample.actorId} reported a non-finite separation to ${sample.targetId} at tick ${sample.tick}`)
+    }
+
     const current = open.get(sample.actorId)
 
     if (sample.kind === 'stamped') {
@@ -292,10 +319,6 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
       spoil(current, sample.tick, 'no-target')
     } else if (current.targetId !== undefined && sample.targetId !== current.targetId) {
       spoil(current, sample.tick, 'target-changed')
-    } else if (!Number.isFinite(sample.separation)) {
-      // A resolved target and an infinite distance between two finite
-      // positions is not an ordinary state, it is a broken one.
-      throw new Error(`disengage diagnostics: ${sample.actorId} reported a non-finite separation to ${sample.targetId} at tick ${sample.tick}`)
     }
 
     if (sample.kind === 'held') {

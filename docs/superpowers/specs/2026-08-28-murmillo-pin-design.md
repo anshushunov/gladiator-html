@@ -778,6 +778,35 @@ slice must close.
 6. **`src/style.css:4` asks for Inter with no bundled `@font-face`**, so the
    Linux screenshots render in whatever sans the runner image ships. Found while
    clearing the baseline debt; unrelated to combat; a slice of its own.
+7. **All three diagnostics collectors invoke caller-owned code inside the phase
+   pipeline, and a collector that returns normally can still perturb the tick.**
+   Raised in every round of PR-2's external review and confirmed by measurement
+   in round 3, not accepted on argument: a collector that mutates
+   `previous.encounter.combatants[id].position` from inside `record` moves
+   `aquila/drusus`'s digest from `7e5009f3` to `c13df37` and its length from
+   1175 ticks to 1687. `transitionExpiredPhases` shallow-copies the combatant
+   map, so the position objects stay shared and every later phase reads the
+   mutation.
+
+   **This is not PR-2's defect and PR-2's claim is still too strong.** The same
+   hostile collector perturbs the merged `contactDiagnostics.ts` seam
+   identically (`7e5009f3` → `1499c999`), so the weakness is in the callback
+   pattern §4.0 told PR-2 to copy, shared by `contactDiagnostics`,
+   `decisionDiagnostics` and `disengageDiagnostics`. The reviewer's phrasing is
+   the right one to keep: *existing collectors having the same weakness is
+   precedent for debt, not protection for the claim.*
+
+   The fix is to return requested samples on `EncounterTransition` and let the
+   caller consume them after the kernel returns, for all three collectors
+   together. That changes a kernel type and re-shapes two merged modules, which
+   cannot honestly happen inside a diff whose claim is that it changes nothing.
+   PR-2 therefore states what it can defend — *inert for a collector that
+   returns and does not write to state it captured* — and leaves the
+   disposition to the design owner.
+
+   Acceptance for whichever fix is chosen, so it is not re-litigated: a
+   regression whose returning collector captures the pre-tick state, mutates it
+   from inside `record`, and shows the returned transition unchanged.
 
 ## 9. Risks
 

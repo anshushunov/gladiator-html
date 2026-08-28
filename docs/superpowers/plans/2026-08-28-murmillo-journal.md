@@ -1465,3 +1465,151 @@ the combat; debt 5 (`encounter.test.ts`'s untimed pacing probe) still unpaid,
 since `src/simulation/**` was open to this PR only for the seam. The new file's
 three bout-driving tests carry an explicit `30_000` for exactly that reason,
 rather than sitting at 20% of the default budget the way debt 5 does.
+
+
+---
+
+## 2026-08-29 — session 4, phase 1 continued: three rounds of review on PR-2
+
+**Phase:** 1, review. Three rounds with `codex`, the maximum the process allows.
+Six findings across them, **all six confirmed against the source** — none
+rejected as wrong, one rejected as a blocker *for this PR* with the reasoning
+written down and the substance accepted.
+
+The pattern is worth naming before the details: **each round found a defect in
+code I had not opened, or in a claim I had not tested.** That is now three
+slices running.
+
+### Round 1 — blocker, major, two minors
+
+**The blocker was mine for reasoning from the wrong file.** `recordDisengage`
+raised on a non-finite separation, copying `recordContact`'s posture on `NaN`,
+and I justified it with "`TARGET_RETENTION_RADIUS` is 20 units against an arena
+a little under 9 across". That sentence is true of the duel adapter.
+`advanceEncounterTick` is the **generic kernel**. `retainTarget`
+(`combatDecision.ts:98`) drops a target the instant it is defeated, and in a
+multi-combatant encounter the bout carries on.
+
+Measured instead of argued, 40 seeds of a three-fighter free-for-all:
+
+| state | seeds affected |
+|---|---:|
+| a fighter with **no target** during an open episode | **12 of 40** |
+| a fighter **retargeted** during an open episode | 3 of 40 (8–21 samples each) |
+
+`BASELINE_TEST_SEED` is one of the twelve. The old kernel would have thrown on
+the first free-for-all anybody attached a collector to. A transition that
+completed without a collector threw with one — the seam was not inert, in
+exactly the case it claimed to be.
+
+The major was the other half: samples carried only `actorId`, so an episode
+could start against one opponent and end against another and the difference be
+reported as ground opened. Seeds 20260829, 20260835 and 20260837 do exactly
+that.
+
+The two minors were both real. The start-separation test asserted only that the
+numbers sat between 0 and 3.35 and near the lunge's range — **all of which a
+post-retreat separation also satisfies**, so it would have gone on passing with
+the one-tick window defect restored, which is the entire defect the file exists
+to fix. And the "inherited, not reopened" paragraph in `check-allowlist.sh` was
+a paragraph: measured from `merge-base main HEAD`, an inherited change and a
+fresh one are indistinguishable, so the list happily allowed PR-2 to edit the
+distance instrument.
+
+### Round 2 — my own fix was the major
+
+Moving validation out of the kernel was right. Making it **throw** was not: one
+ordinary free-for-all episode destroyed every valid episode in the same run. On
+a 200-seed gate that is 2414 good episodes lost to one.
+
+The fix that survived: measurement validity is orthogonal to why a disengage
+ended, so it gets its own vocabulary rather than a fifth exit reason.
+`assembleDisengageEpisodes` returns `{ episodes, unmeasurable }`, and **every
+stamped episode lands in exactly one of the two** — asserted directly, because
+that is the property a rate's denominator rests on. The frozen set stays frozen.
+
+The minor: the seam was not *allocation*-inert. State and events were, but
+`recordDisengage(collector, sample)` builds its argument before the function can
+discard it. Now `collector?.record({...})` — optional chaining does not evaluate
+its argument list on the nullish path — and the stamp branch, which computed no
+distance at all before this seam, sits behind an explicit `if`.
+
+### Round 3 — the blocker I had argued away, and the measurement that settled it
+
+Round 2's blocker said the kernel invokes caller-owned code synchronously in
+phase 2. I accepted the throwing half, showed the mutation half was false *for
+this seam* — every sample field is a primitive, and there is now a test saying
+so — and narrowed the claim to "inert for a collector that returns".
+
+**Round 3 said that was still too strong, and it was right.** A collector can
+stop being handed state and go looking for it. So I measured it rather than
+conceding or arguing:
+
+| run | digest | ticks |
+|---|---|---:|
+| no collector | `7e5009f3` | 1175 |
+| benign collector | `7e5009f3` | 1175 |
+| **returning collector that mutates `previous...position`** | **`c13df37`** | **1687** |
+
+`transitionExpiredPhases` shallow-copies the combatant map, so those position
+objects stay shared and every later phase reads the mutation. 164 mutations, a
+different bout, and `record` returned normally every time.
+
+Two revisions of that comment claimed more than the code delivered — first
+"inert", then "inert for a collector that returns". Both false. The header now
+says what the measurement supports: **inert for a collector that returns and
+does not write to state it captured.**
+
+**Then the second measurement, which is the one that decides the disposition.**
+The identical hostile collector, pointed at the *merged* `contactDiagnostics`
+seam: `7e5009f3` → `1499c999`. So this is a property of the callback pattern
+§4.0 told PR-2 to model itself on, shared by all three collectors, and not
+something this seam introduced.
+
+The reviewer's own sentence is the right one to keep, and I am not going to
+soften it: *existing collectors having the same weakness is precedent for debt,
+not protection for this claim.* Both things are true at once — the claim was too
+strong, and the fix is a kernel-type change across three modules that cannot
+honestly live in a diff whose claim is that it changes nothing.
+
+Round 3's minor was also correct and is fixed: the non-finite check sat inside
+the held/cleared branch, so a `stamped` sample skipped it entirely and could
+open an episode with a `NaN` start separation, and a sample that both retargeted
+and went non-finite took the `target-changed` path and was never validated. The
+check moved above all branching, and the test now covers all three kinds instead
+of naming three and asserting one.
+
+### Acceptance, re-run after every round
+
+- `tsc --noEmit` clean.
+- Full suite **832 passed, 40 files** — 811 before this session; the difference
+  is 19 tests in the new file and 2 in `combatDecision.test.ts`.
+- The nine `stateHash.test.ts` digests unchanged, `brutus/drusus:b0fa2d92`
+  through `nerva/magnus:a32fab50`.
+- `measure-reach --seeds 200 --gate` **byte-identical** to the same command run
+  on the pre-seam tree, after every round.
+- Both `check:allowlist` passes green, four negative controls.
+
+### Where I stopped / next session
+
+**This is the brief's stop condition 5.** Three rounds have run — the maximum —
+and the third returned a blocker that is confirmed by measurement. It is fixed
+in the only way PR-2 can fix it, by narrowing the claim to what is true, and the
+real fix is recorded as debt 7 in the spec with its acceptance criterion
+attached so it is not re-litigated.
+
+**The decision is the design owner's**, and it is a real fork, not a formality:
+
+1. accept PR-2 as it stands, with the narrowed claim and debt 7 open;
+2. widen this slice to re-shape all three collectors onto
+   `EncounterTransition` first, which changes a kernel type and re-baselines
+   nothing but touches two merged modules;
+3. open debt 7 as its own slice before PR-3 builds on the seam.
+
+Nothing further should be built on the seam until that is chosen.
+
+Standing: PR #20 open and unmerged, so the inherited
+`tests/__screenshots__/linux/**` exemption stays. PR-2 is committed on
+`fix/murmillo-pin` and is **not** opened as a GitHub PR and not merged. The
+human "does it read as a retiarius" gate is still unpassed and still needs two
+people who did not write the combat.

@@ -187,11 +187,29 @@ describe('assembleDisengageEpisodes', () => {
 
   // Still fatal, and deliberately: a resolved target with an infinite distance
   // between two finite positions is a broken kernel, not an ordinary state.
-  it('raises on a finite target reporting a non-finite separation', () => {
+  //
+  // All three kinds, because round 3 of external review found that a version
+  // of this test asserting only the middle case gave its name to a check that
+  // did not cover the other two -- a `stamped` sample skipped validation
+  // entirely and could open an episode with a `NaN` start separation, and a
+  // sample that both retargeted and went non-finite took the `target-changed`
+  // branch instead.
+  it('raises on a resolved target reporting a non-finite separation, whichever sample carries it', () => {
+    expect(() => assembleDisengageEpisodes([{ kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: Number.NaN }])).toThrow(
+      /non-finite separation/,
+    )
+
     expect(() =>
       assembleDisengageEpisodes([
         { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
         { kind: 'cleared', tick: 6, actorId: actor, targetId: foe, separation: Number.NaN, reason: 'range' },
+      ]),
+    ).toThrow(/non-finite separation/)
+
+    expect(() =>
+      assembleDisengageEpisodes([
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
+        { kind: 'held', tick: 6, actorId: actor, targetId: otherFoe, separation: Infinity },
       ]),
     ).toThrow(/non-finite separation/)
   })
@@ -214,12 +232,15 @@ describe('the disengage seam against a real bout', () => {
     expect(samples.length).toBeGreaterThan(0)
   }, 30_000)
 
-  // The bound on what a collector can do, made checkable instead of asserted.
-  // `record` runs synchronously inside phase 2, so a collector could in
-  // principle perturb a later phase by mutating something it was handed --
-  // except that it is handed nothing mutable. Every field is a primitive, so
-  // the only way a collector can affect the tick is by throwing, which is the
-  // narrowed claim the module header states.
+  // One of the two bounds on what a collector can do, and NOT the whole story:
+  // review round 3 was right that a payload-shape assertion does not establish
+  // inertness, because a collector can go looking for state instead of being
+  // handed it. Measured, and recorded as a debt rather than tested here as a
+  // guarantee: a returning collector that mutates `previous.encounter.
+  // combatants[id].position` moves this bout's digest from `7e5009f3` to
+  // `c13df37`. What this test does pin is the narrower fact the module header
+  // claims -- the kernel passes nothing reachable out, so breaking the tick
+  // takes deliberate reaching rather than an accident with a shared reference.
   it('hands the collector nothing it could mutate', () => {
     const samples: DisengageSample[] = []
     runBout({ record: (sample) => samples.push(sample) })
