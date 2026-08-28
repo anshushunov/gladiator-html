@@ -1101,3 +1101,70 @@ Also standing: PR #20 green through e2e, unmerged per §8.1. `opencode` failed
 four times across two models and never produced a report, so this spec has had
 one external reviewer rather than two — recorded in the spec's §10.1 because it
 makes the gate weaker than the previous slice's.
+
+
+---
+
+## 2026-08-28 — session 3, round 3: the budget is spent
+
+**Phase:** F, third and final round.
+
+codex returned **two blockers**, both confirmed, both about gates I had just
+written in response to round 2. The spec is at revision 5; the fixes are in;
+the fixes are unreviewed.
+
+### Gate V measured something other than what it said
+
+`measure-reach.ts:299-305` files a contact under `reached` only when the outcome
+is in `REACHED`, geometry misses in their own bucket, and an attack interrupted
+before phase 9 leaves **no record at all**. My "attempts" was
+`reached + geometryFailures`. That is not attempts, and it is not anything with a
+name. On top of it, the contacts span the whole bout while the denominator counts
+only engaged ticks — I joined two JSON files by hand and the window mismatch rode
+straight through.
+
+The exploit runs the way V exists to stop: eight starts at 53% geometry success
+and five starts at 80% both report ~4.2. Commitment can fall **38%** with V green.
+V's bar is withdrawn and re-measured in PR-3 on `action-started` counts.
+
+### Gate P could still be fed epsilon
+
+I required a success's ground to be `> 0` and never gave the "frozen minimum
+gain" a number. codex's 100-episode construction — 12 epsilon successes, 13 real,
+38 capped-but-good, 37 capped-and-bad — passes P at 25%, both Q medians at 0.80,
+and Q2. **I reproduced it against `balanceCohorts.percentile` rather than taking
+it on trust, and it passes exactly as described.** Half the claimed escapes open a
+millimetre, and those premature exits *help* gate V instead of colliding with it.
+
+Success is now a ground condition — ≥0.75 units from the seam's endpoints — with
+the exit label secondary. That incidentally answers the brief's second question
+better than my own P2 discussion did: with success defined by a label, the mutable
+predicate was choosing Q's success-only population, so Q had a coupled comparator
+I had not spotted.
+
+### And a number I gave the design owner was inflated twofold
+
+`fast vs fast` has **two** retiarii and `measure-reach.ts:301` aggregates by
+`actionId` without regard to actor. So the mirror's 10.83 lunges per 1000 ticks
+counts both of them. Per fighter it is 5.42, and the reduction against the
+murmillo is **22%**, not the 61% I reported — the same error made the "2.5× fewer
+attacks" debt a 21% one. Gate V's bar does not depend on the comparison that was
+wrong, but the scoping decision was taken against it, so it was reported rather
+than quietly amended.
+
+Fifth time in this slice a number has been quoted at a precision or a
+normalisation it did not have. Fifth time it favoured the claim.
+
+### Where I stopped / next session
+
+**This is the brief's §8.2.** Three review rounds have run — the maximum — and the
+third returned confirmed blockers. They are fixed, and the fix is unreviewed,
+which is exactly the state §8.2 reserves for the design owner. Nothing further
+should be built on this spec until that is decided.
+
+opencode's round-3 report had not returned when this was written.
+
+Standing: PR #20 green through e2e, unmerged. `fix/murmillo-pin` holds the
+distance instrument (809/809 tests, `tsc` clean), the boundary committed ahead of
+the work it judges, and the spec at revision 5 with seven gates, one of whose
+bars is deliberately withdrawn. No content has been touched.
