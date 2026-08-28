@@ -6,9 +6,10 @@ returned two blockers that invalidated the instrument the central gates were to
 be built on, and a document assembled by amendment would have kept the old gates
 visible beside the new ones.
 
-The review's findings and their disposition are in §10. Two of its three
-blockers are confirmed as stated; the third is confirmed as a defect and
-downgraded, with the direction established rather than assumed.
+The review's findings and their disposition are in §10. **All three blockers are
+confirmed.** The third was downgraded in a first pass and then restored, because
+the bound I used to downgrade it covered only the error term that favoured my own
+finding.
 
 **Entry point:** `docs/reviews/2026-08-27-retiarius-reach-playtest.md`, whose
 closing finding was:
@@ -205,21 +206,34 @@ was not.
 part of the same blocker and downgraded here because its direction is
 establishable:
 
-The episode's *start* is sound. The field is stamped inside the advance into
-tick `S`; the harness first sees it at the top of the iteration where
-`encounter.tick === S` and takes the start separation from the state at `S`;
-`ticks` counts from `S` as well. Thirty-seven movements measured, thirty-seven
-ticks reported — self-consistent.
+The window is **shifted by one tick, not mis-counted**. The field is stamped in
+phase 2 of the advance into tick `S`, and that same advance moves the fighter
+under `disengage` (phase 2 stamps, phase 4 skips forced actors, phases 7–8 move).
+The harness first sees the field at the top of the iteration where
+`encounter.tick === S`, so its start separation is the state at `S` — *after*
+that first forced retreat. At the other end the kernel clears the field in phase
+2 of the advance into `E` and sets `nextDecisionTick: tick`, so phase 4 and
+phases 7–8 run **ordinary** decision and movement in that same advance, and the
+harness samples after all of it.
 
-The *end* is not. The kernel clears the field in phase 2 of the advance into tick
-`E` and sets `nextDecisionTick: tick`, so ordinary decision and movement run
-inside that same advance, and the harness samples after all of it. **One ordinary
-movement is counted as ground the disengage opened**, with uncontrolled sign.
+So the reported `ticks` is right — `E − S` movements measured, `E − S` reported —
+but the measured window is `[S, E]` while the real one is `[S−1, E−1]`. The gain
+**drops one forced retreat at the front and picks up one ordinary movement at the
+back.**
 
-Magnitude: one tick is 0.045 units of retreat against 0.023 of murmillo advance,
-so at most ~0.022 net. The 0.659 baseline does not reach 0.75 either way, and the
-completion-rate statistic — a count of episodes — is untouched. **The finding in
-§2 survives; the instrument still has to be exact before it becomes a gate.**
+**A first revision of this section bounded that error at ~0.022 units and
+concluded the 0.659 baseline "does not reach 0.75 either way". That was wrong,
+and wrong in my own favour:** 0.022 is only the forced-retreat term. The ordinary
+movement at the back has uncontrolled sign and a magnitude up to ~0.068, so the
+total bound is roughly **±0.09**. The true median could sit at ~0.75 — on the
+bar, not clearly below it.
+
+The consequence is worth stating plainly rather than softening. **The
+ground-gained half of §2's finding is not established to the precision the gate
+needs.** What is untouched is the completion rate — 1.6% against 31.7% and 67.2%
+— because that is a count of episodes and a one-tick window shift cannot move a
+40-fold ratio. §2's headline stands on the completion rate; gate Q's baseline
+must be re-measured on PR-2's seam before Q is frozen.
 
 **What PR-2 must build.** A write-only diagnostic seam on the model of
 `src/simulation/contactDiagnostics.ts`, which the previous slice added for
@@ -351,8 +365,12 @@ the relationship the floor cannot express.
 
 - **Source:** gate E's own existing floor, `DISENGAGE_GAIN_FLOOR`, applied per
   pair instead of pooled. The number is not new and is not chosen here.
-- **Fails today:** 0.659, which §4.0 establishes is understated by at most ~0.022
-  and therefore fails either way.
+- **Baseline NOT yet established to gate precision.** 0.659 as measured, but
+  §4.0 shows the window is shifted by one tick and the error bound is ~±0.09, so
+  the true median may sit on the bar. **Q's baseline is re-measured on PR-2's
+  seam before Q is frozen**, and this bullet is the reminder that it has not
+  been. The 0.75 bar itself is not in question -- it is gate E's existing
+  `DISENGAGE_GAIN_FLOOR` -- only the shipped-content figure it is compared to.
 - **Why both P and Q:** each alone is satisfiable the wrong way, and the review
   supplied the arithmetic for one of them. Ground alone is bought by raising the
   cap from 37 to about **42** — five ticks, at the measured net rate of ~0.018
@@ -554,7 +572,7 @@ checked against source before disposition, and the checking moved one of them.
 |---|---|---|---|
 | 1 | blocker | The exit-reason classifier infers `range` from duration against the mutable constant it judges (`measure-reach.ts:281`). Cap 43 + early exit at 42 ⇒ every episode labelled `range`, gate P ≈ 100%, nobody reaches 3.35. | **Confirmed as stated.** §4.0 written; PR-2 added to build a seam that returns the reason. |
 | 2 | blocker | The permitted change surface cannot implement the hypothesis: no start separation in `FighterCombatState`, none in the predicate signature. | **Confirmed as stated.** §6 amended to admit the episode state and wiring. |
-| 3 | blocker | The harness mis-measures the episode window at both ends, so "the direction and size of the 0.659 baseline are not established". | **Confirmed as a defect, downgraded to major, direction established.** The start is self-consistent — stamp tick and start separation are both read at tick `S`. The exit is not: the kernel clears in phase 2 and ordinary movement runs in the same advance, so one ordinary movement is counted as disengage ground. Bounded at ~0.022 units, which does not reach the 0.75 bar either way, and the completion-rate statistic is a count of episodes and is untouched. Fixed in PR-2 regardless. |
+| 3 | blocker | The harness mis-measures the episode window at both ends, so "the direction and size of the 0.659 baseline are not established". | **Confirmed, and on re-checking the reviewer was more right than my first disposition allowed.** I initially downgraded this to major on a ~0.022-unit bound. That bound covered only the forced-retreat term I dropped at the front and ignored the ordinary movement picked up at the back, whose sign is uncontrolled and whose magnitude reaches ~0.068 — a total of ~±0.09, enough to put the true median on the 0.75 bar. **Kept as a blocker for gate Q, whose baseline is now explicitly unestablished until PR-2's seam re-measures it.** It does not touch the completion rate, which is a count of episodes and carries §2's headline. Recorded because I got the arithmetic wrong in the direction that favoured my own finding, which is the failure mode this document is about. |
 | 4 | major | §2.1's independence claim is false; P and Q are calibrated against columns the change moves. | **Confirmed.** §2.1 rewritten, gate P split into an absolute floor and an explicit relationship. The reviewer's refinement — keep the floor so a ratio cannot pass by degrading its denominator — is better than the bare ratio and is what P1/P2 implement. |
 | 5 | major | The hypothesis is not falsifiable: R excludes only one-tick exits, U permits any distance change after an explanation. | **Confirmed in part.** Gate Q2 added for the triviality hole. U left as a report rather than a bar: §1 shows the statistic ranks the counter below the thing it counters, so a threshold on it would be a threshold on the wrong quantity — but the 5-point trigger is now a stated stopping criterion rather than an explanation quota. |
 | 6 | major | The §1.2 withdrawal disposes of the geometry claim but not of the commissioned "is he still a retiarius" question; no gate bounds lunge attempts or offensive share. | **Confirmed that it was left open, and then answered by measurement rather than by a gate.** Lunge share of the retiarius' attack attempts at 200 seeds: **49.9%** vs the murmillo, 51.0% in the mirror, 53.3% vs the hoplomachus — flat within 3.4 points. He has not abandoned his signature attack against anyone; the playtest's 2095→786 was a before/after across the content change, not a per-opponent split, and it does not survive being asked per pair. No gate added. What the measurement *did* surface is unrelated and unclaimed: he attacks **2.5× less often per engaged tick** against the murmillo (8.44 against 21.24 in the mirror). Recorded in §8 as a debt. |
@@ -562,5 +580,7 @@ checked against source before disposition, and the checking moved one of them.
 | 8 | minor | R at 8% per matchup must be additive to pooled E at 5%, not a replacement. | **Confirmed and stated in R.** |
 | 9 | minor | P and Q pool the two orientations despite the protocol promising per-ordered-matchup. | **Confirmed.** P1, P2 and Q now assert each orientation separately. |
 
-Nothing was rejected. The one finding whose *direction* was checked and adjusted
-is #3, and adjusting it did not save the instrument — it fails on #1 anyway.
+Nothing was rejected, and the one finding I tried to downgrade was restored on
+re-checking. The pattern is worth naming: three times in this slice a number has
+been quoted at a precision it did not have, and every time the imprecision ran in
+the direction of the claim being made.
