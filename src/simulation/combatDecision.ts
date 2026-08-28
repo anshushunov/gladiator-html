@@ -36,6 +36,10 @@ import {
   type DefenseActionDefinition,
   type ReactionRecord,
 } from './combatActions'
+// Type-only, so this leaves no runtime edge and no cycle: the diagnostics
+// module is where the exit-reason set is frozen, deliberately outside the
+// mutable predicate that reports it.
+import type { DisengagePredicateExit } from './disengageDiagnostics'
 import { clampToArena, distanceBetween, intentDisplacement, TICKS_PER_SECOND } from './movement'
 import type { CombatArenaDefinition, LocomotionIntent, Vec2 } from './movement'
 import type { Archetype, MatchupComparison } from './fighters'
@@ -1009,9 +1013,29 @@ export const FAST_FORCED_DISENGAGE_MAX_TICKS = 37
  * lands inside its own `contactRange`, so a `<=` test would be satisfied on
  * the very tick the forcing starts and the whole mechanic -- Fast's signature
  * "disengage before retaliation" -- would never run for more than one tick.
+ *
+ * RETURNS THE REASON, NOT A BOOLEAN, and this is the only signature this PR
+ * changes. `measure-reach.ts:281` currently deduces the reason from the
+ * episode's duration against `FAST_FORCED_DISENGAGE_MAX_TICKS` -- the very
+ * constant the content PR makes mutable -- so the only thing that can report
+ * the reason honestly is the branch that took it. See
+ * `disengageDiagnostics.ts` for why the reason set is frozen there rather than
+ * here.
+ *
+ * The truthiness is preserved EXACTLY: `undefined` wherever this returned
+ * `false`, a non-empty reason string wherever it returned `true`. Every
+ * existing `if (hasFastForcedDisengageEnded(...))` call site keeps its meaning
+ * untouched, which is what lets this PR claim it changed no behaviour.
+ *
+ * Order of the two tests is load-bearing for the *label*, not for the answer:
+ * an episode that reaches the exit distance on the same tick the cap fires is
+ * reported as `range`, because the fighter did open the ground. Reversing it
+ * would report the same episode as a pin.
  */
-export function hasFastForcedDisengageEnded(distanceToTarget: number, ticksSinceForced: number): boolean {
-  return distanceToTarget >= FAST_FORCED_DISENGAGE_END_RANGE || ticksSinceForced >= FAST_FORCED_DISENGAGE_MAX_TICKS
+export function hasFastForcedDisengageEnded(distanceToTarget: number, ticksSinceForced: number): DisengagePredicateExit | undefined {
+  if (distanceToTarget >= FAST_FORCED_DISENGAGE_END_RANGE) return 'range'
+  if (ticksSinceForced >= FAST_FORCED_DISENGAGE_MAX_TICKS) return 'cap'
+  return undefined
 }
 
 /** Technical's forced parry-counter begins on the next tick only within this range. */

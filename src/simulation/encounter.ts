@@ -69,6 +69,7 @@ import {
 } from './combatDecision'
 import type { ContactCollector, ContactOutcome } from './contactDiagnostics'
 import type { DecisionCollector, DecisionRecord } from './decisionDiagnostics'
+import type { DisengageCollector, DisengageSample } from './disengageDiagnostics'
 import { DISPOSITION_IDS, dispositionModifiers, isDispositionId, type DispositionId } from './disposition'
 import type { FighterDefinition } from './fighters'
 import { compareArchetypes, comparisonDamageMultiplier, validateFighterDefinition } from './fighters'
@@ -932,6 +933,7 @@ function completeForcedStateTransitions(
   combatantIds: readonly CombatantId[],
   tick: number,
   cursor: EventIdCursor,
+  disengageCollector?: DisengageCollector,
 ): { combatants: Record<CombatantId, FighterCombatState>; events: EncounterEvent[] } {
   const next: Record<CombatantId, FighterCombatState> = { ...combatants }
   const events: EncounterEvent[] = []
@@ -950,23 +952,64 @@ function completeForcedStateTransitions(
     if (justEndedBurstLunge) {
       const forced = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
       next[id] = { ...forced, forcedDisengageStartTick: tick }
+      recordDisengage(disengageCollector, { kind: 'stamped', tick, actorId: id, separation: separationToTarget(combatant, combatants) })
       continue
     }
 
     if (combatant.forcedDisengageStartTick === undefined) continue
 
-    const target = combatant.targetId ? combatants[combatant.targetId] : undefined
-    const distanceToTarget = target ? distanceBetween(combatant.position, target.position) : Infinity
+    const distanceToTarget = separationToTarget(combatant, combatants)
     const ticksSinceForced = tick - combatant.forcedDisengageStartTick
 
-    if (hasFastForcedDisengageEnded(distanceToTarget, ticksSinceForced)) {
+    // The reason is taken from the branch that fired, and the SAME number the
+    // predicate judged is what gets recorded. Nothing downstream re-derives
+    // either one; see `disengageDiagnostics.ts` for the inference this
+    // replaces.
+    const exit = hasFastForcedDisengageEnded(distanceToTarget, ticksSinceForced)
+    if (exit) {
       next[id] = { ...combatant, forcedDisengageStartTick: undefined, nextDecisionTick: tick }
+      recordDisengage(disengageCollector, { kind: 'cleared', tick, actorId: id, separation: distanceToTarget, reason: exit })
     } else {
       next[id] = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
+      recordDisengage(disengageCollector, { kind: 'held', tick, actorId: id, separation: distanceToTarget })
     }
   }
 
   return { combatants: next, events }
+}
+
+/**
+ * Root-to-root separation on the phase-2 state, before this tick's movement.
+ * `Infinity` with no target, which is the value the exit predicate has always
+ * been handed in that case and is preserved here exactly -- extracted from the
+ * clear branch rather than rewritten, so both ends of an episode are measured
+ * by one expression and cannot drift apart.
+ */
+function separationToTarget(self: FighterCombatState, snapshot: Readonly<Record<CombatantId, FighterCombatState>>): number {
+  const target = self.targetId ? snapshot[self.targetId] : undefined
+  return target ? distanceBetween(self.position, target.position) : Infinity
+}
+
+/**
+ * Write-only, and inert unless a collector was passed -- the shipped runtime
+ * and every test that does not ask for diagnostics never reach the body.
+ *
+ * Throws rather than record a non-finite separation, on exactly the reasoning
+ * `recordContact` gives for `NaN`: `Infinity` would sail through a finiteness
+ * check written as two comparisons and then read as an enormous successful
+ * escape, poisoning the gate this seam exists to feed. It means "this fighter
+ * had no target in phase 2", which is unreachable while a bout is running --
+ * `TARGET_RETENTION_RADIUS` is 20 units against an arena a little under 9
+ * across, so a target is never lost to distance -- and if that ever stops
+ * being true the measurement should stop rather than quietly report it as a
+ * win.
+ */
+function recordDisengage(collector: DisengageCollector | undefined, sample: DisengageSample): void {
+  if (!collector) return
+  if (!Number.isFinite(sample.separation)) {
+    throw new Error(`disengage diagnostics: ${sample.actorId} had no target in phase 2 of tick ${sample.tick}`)
+  }
+  collector.record(sample)
 }
 
 /**
@@ -2287,7 +2330,12 @@ function resolveNoHostilePairsCompletion(state: EncounterState): EncounterTransi
  * identity, empty event batch) -- a finished encounter is inert. Never
  * mutates `previous` or anything reachable from it.
  */
-export function advanceEncounterTick(previous: EncounterState, collector?: DecisionCollector, contactCollector?: ContactCollector): EncounterTransition {
+export function advanceEncounterTick(
+  previous: EncounterState,
+  collector?: DecisionCollector,
+  contactCollector?: ContactCollector,
+  disengageCollector?: DisengageCollector,
+): EncounterTransition {
   if (previous.phase !== 'running') {
     return { state: previous, events: [] }
   }
@@ -2304,7 +2352,7 @@ export function advanceEncounterTick(previous: EncounterState, collector?: Decis
   combatants = cleanup.combatants
   events.push(...cleanup.events)
 
-  const forcedTransitions = completeForcedStateTransitions(previous.combatants, combatants, previous.combatantIds, tick, cursor)
+  const forcedTransitions = completeForcedStateTransitions(previous.combatants, combatants, previous.combatantIds, tick, cursor, disengageCollector)
   combatants = forcedTransitions.combatants
   events.push(...forcedTransitions.events)
 
