@@ -7,9 +7,9 @@ assembled by amendment would have kept the old gates visible beside the new
 ones.
 
 The review's findings and their disposition are in §10. **All three blockers are
-confirmed.** The third was downgraded in a first pass and then restored, because
-the bound I used to downgrade it covered only the error term that favoured my own
-finding.
+confirmed.** The third took three passes to get right: downgraded, restored, then
+sign-corrected — and the correction runs against this document's own case. §10.1
+records that only one of the two commissioned reviewers ever produced a report.
 
 **Entry point:** `docs/reviews/2026-08-27-retiarius-reach-playtest.md`, whose
 closing finding was:
@@ -18,7 +18,7 @@ closing finding was:
 > ignore it
 
 **Working history:** `docs/superpowers/plans/2026-08-28-murmillo-journal.md`,
-which records every measurement below as it was taken, including the two that
+which records every measurement below as it was taken, including the ones that
 reversed under checking.
 
 ---
@@ -124,10 +124,13 @@ What is true:
   that produced four bad comparators in the previous slice.
 - **The margin is forty-fold**, not a few points.
 - **The mechanism is arithmetic, and it closes.** 37 ticks at 2.7 units/second is
-  1.67 units of travel; the murmillo spends the same 37 ticks closing 0.86; the
-  difference is 0.81 and the measured net is 0.659, the remainder being facing
-  and the ticks he is not advancing. Covering the ~1.9 units from a pin out to
-  3.35 at that net rate needs roughly **185 ticks** against a cap of **37**.
+  1.67 units of travel; the murmillo spends the same 37 ticks closing 0.86,
+  leaving ~0.81 before facing losses and the ticks he is not advancing — which is
+  the order of the measured 0.659–0.77. Covering the ~1.9 units from a pin out to
+  3.35 at that net rate needs roughly **185 ticks** against a cap of **37**. The
+  arithmetic supports the completion-rate finding; it is deliberately not quoted
+  to three figures, because §4.0 shows the measured gain is not established to
+  that precision.
 
 What is **not** true, and is the correction:
 
