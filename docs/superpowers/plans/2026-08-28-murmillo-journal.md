@@ -1039,3 +1039,65 @@ Also accepted: R only excludes one-tick exits so a two-tick trivial escape passe
 (major); keep pooled E *and* add per-matchup R rather than replacing (minor);
 assert P and Q per ordered matchup rather than pooling the two orientations
 (minor).
+
+
+---
+
+## 2026-08-28 — session 3, review rounds 1 and 2
+
+Full findings and disposition live in the spec's §10 and §10.5; this entry
+records only what the journal is for — what I got wrong and how I found out.
+
+**Round 1:** three blockers, all confirmed. The gates rested on an inference
+(`measure-reach.ts:281` deduces the exit reason from duration against the very
+constant it judges), and §6's change surface forbade §3's own hypothesis (no
+start separation anywhere in `FighterCombatState` or the predicate signature).
+
+**Round 2:** two blockers, five majors, none rejected. The seam I wrote to fix
+round 1's first blocker **reopened the same hole one level up** — it took the
+reason from the mutable predicate and let PR-4 invent new ones. And PR-2 as I
+scoped it was impossible: `stateHash.test.ts:57-80` hashes the whole
+`BattleState` every tick across nine pairings, so the field I wanted to add would
+move nine frozen digests while the PR claimed nothing moved. I had not opened
+that test.
+
+### The paragraph I got wrong four times
+
+The disengage window's measurement error, in order: ~0.022 (only the term that
+helped); ~±0.09 "may sit on the bar"; a signed −0.11..0 concluding the
+measurement *understates* the gain; and finally — round 2 — **no interval at
+all**, because every version modelled locomotion and the harness samples after
+phases 9–10, where `heavy-cleave` pushes **0.70 units**, six times my whole
+bound.
+
+Four attempts, four wrong, every one in the direction of my own claim. The brief
+says this project's instruments fail flatteringly; it turns out so do mine, and
+the only thing that caught it each time was someone else reading the code.
+
+### The finding I had in my hand and used the wrong statistic to dismiss
+
+Round 2's sharpest: I closed the commissioned "is he still a retiarius" question
+with the lunge **share** (49.9 / 51.0 / 53.3%, flat). The question was about
+**frequency**, and the rate was in my own table — **4.21** lunge attempts per
+1000 engaged ticks against the murmillo versus **10.83** in the mirror, a 61%
+collapse. I computed it, filed it in §8 as an unrelated debt, and then answered
+a different question with a different number.
+
+It matters here specifically: a longer forced disengage reduces attack incidence
+further, so every gate in §5 could pass while the signature attack gets rarer.
+
+### Where I stopped / next session
+
+Spec is at revision 3 and is **not fit to implement**. §11 holds the one open
+question, and it is the design owner's: is signature-attack frequency in this
+slice or explicitly out of it? §5 is incomplete until that is answered and PR-4
+must not start.
+
+Round 3 of a maximum three is not yet dispatched, deliberately — sending a spec
+whose §5 is known-incomplete would spend the last round on a document I already
+know is unfinished.
+
+Also standing: PR #20 green through e2e, unmerged per §8.1. `opencode` failed
+four times across two models and never produced a report, so this spec has had
+one external reviewer rather than two — recorded in the spec's §10.1 because it
+makes the gate weaker than the previous slice's.
