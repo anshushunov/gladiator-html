@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { COMBAT_STYLES } from '../content/combatStyles'
 import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
+import { combatant, freeArena } from '../testSupport/combatFixtures'
 import { canonicalHash } from '../testSupport/stateHash'
-import { advanceBattleTick, createBattle, MAX_BOUT_TICKS } from './battle'
+import { advanceBattleTick, createBattle, MAX_BOUT_TICKS, type BattleState } from './battle'
 import { FAST_FORCED_DISENGAGE_END_RANGE, FAST_FORCED_DISENGAGE_MAX_TICKS } from './combatDecision'
 import { assembleDisengageEpisodes, type DisengageCollector, type DisengageEpisode, type DisengageSample } from './disengageDiagnostics'
-import type { CombatantId } from './encounter'
+import { advanceEncounterTick, createEncounter, type CombatantId } from './encounter'
+import { distanceBetween } from './movement'
 
 const home = (id: string) => homeRoster.find((fighter) => fighter.id === id)!
 const away = (id: string) => opponents.find((fighter) => fighter.id === id)!
@@ -43,18 +45,20 @@ function collectEpisodes(seed?: number): DisengageEpisode[] {
 
 const actor = 'home' as CombatantId
 const other = 'away' as CombatantId
+const foe = 'foe' as CombatantId
+const otherFoe = 'other-foe' as CombatantId
 
 describe('assembleDisengageEpisodes', () => {
   it('pairs a stamp with its clear and reports the endpoints, elapsed ticks and reason', () => {
     const episodes = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 100, actorId: actor, separation: 1.8 },
-      { kind: 'held', tick: 101, actorId: actor, separation: 2.1 },
-      { kind: 'held', tick: 102, actorId: actor, separation: 2.9 },
-      { kind: 'cleared', tick: 103, actorId: actor, separation: 3.4, reason: 'range' },
+      { kind: 'stamped', tick: 100, actorId: actor, targetId: foe, separation: 1.8 },
+      { kind: 'held', tick: 101, actorId: actor, targetId: foe, separation: 2.1 },
+      { kind: 'held', tick: 102, actorId: actor, targetId: foe, separation: 2.9 },
+      { kind: 'cleared', tick: 103, actorId: actor, targetId: foe, separation: 3.4, reason: 'range' },
     ])
 
     expect(episodes).toEqual<DisengageEpisode[]>([
-      { actorId: actor, startTick: 100, endTick: 103, ticks: 3, startSeparation: 1.8, endSeparation: 3.4, reason: 'range' },
+      { actorId: actor, targetId: foe, startTick: 100, endTick: 103, ticks: 3, startSeparation: 1.8, endSeparation: 3.4, reason: 'range' },
     ])
   })
 
@@ -64,31 +68,31 @@ describe('assembleDisengageEpisodes', () => {
   // exists to measure.
   it('keeps an episode still open at the end of the bout, as `censored`, with its last observed endpoint', () => {
     const episodes = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 40, actorId: actor, separation: 1.6 },
-      { kind: 'held', tick: 41, actorId: actor, separation: 1.9 },
-      { kind: 'held', tick: 42, actorId: actor, separation: 2.2 },
+      { kind: 'stamped', tick: 40, actorId: actor, targetId: foe, separation: 1.6 },
+      { kind: 'held', tick: 41, actorId: actor, targetId: foe, separation: 1.9 },
+      { kind: 'held', tick: 42, actorId: actor, targetId: foe, separation: 2.2 },
     ])
 
     expect(episodes).toEqual<DisengageEpisode[]>([
-      { actorId: actor, startTick: 40, endTick: 42, ticks: 2, startSeparation: 1.6, endSeparation: 2.2, reason: 'censored' },
+      { actorId: actor, targetId: foe, startTick: 40, endTick: 42, ticks: 2, startSeparation: 1.6, endSeparation: 2.2, reason: 'censored' },
     ])
   })
 
   it('censors an episode stamped on the very last tick as a zero-tick episode rather than dropping it', () => {
-    const episodes = assembleDisengageEpisodes([{ kind: 'stamped', tick: 900, actorId: actor, separation: 1.55 }])
+    const episodes = assembleDisengageEpisodes([{ kind: 'stamped', tick: 900, actorId: actor, targetId: foe, separation: 1.55 }])
 
     expect(episodes).toEqual<DisengageEpisode[]>([
-      { actorId: actor, startTick: 900, endTick: 900, ticks: 0, startSeparation: 1.55, endSeparation: 1.55, reason: 'censored' },
+      { actorId: actor, targetId: foe, startTick: 900, endTick: 900, ticks: 0, startSeparation: 1.55, endSeparation: 1.55, reason: 'censored' },
     ])
   })
 
   it('keeps two fighters’ interleaved episodes apart and orders the output deterministically', () => {
     const episodes = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 10, actorId: other, separation: 2.0 },
-      { kind: 'stamped', tick: 11, actorId: actor, separation: 1.7 },
-      { kind: 'held', tick: 11, actorId: other, separation: 2.4 },
-      { kind: 'cleared', tick: 12, actorId: other, separation: 3.4, reason: 'range' },
-      { kind: 'cleared', tick: 48, actorId: actor, separation: 1.2, reason: 'cap' },
+      { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 2.0 },
+      { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.7 },
+      { kind: 'held', tick: 11, actorId: other, targetId: foe, separation: 2.4 },
+      { kind: 'cleared', tick: 12, actorId: other, targetId: foe, separation: 3.4, reason: 'range' },
+      { kind: 'cleared', tick: 48, actorId: actor, targetId: foe, separation: 1.2, reason: 'cap' },
     ])
 
     expect(episodes.map((episode) => [episode.actorId, episode.startTick, episode.ticks, episode.reason])).toEqual([
@@ -102,7 +106,7 @@ describe('assembleDisengageEpisodes', () => {
   // precisely so that a later PR making one reachable stops the run instead of
   // silently emitting an episode with the wrong endpoints.
   it('raises on a clear with no open episode rather than inventing a start', () => {
-    expect(() => assembleDisengageEpisodes([{ kind: 'cleared', tick: 5, actorId: actor, separation: 3.4, reason: 'range' }])).toThrow(
+    expect(() => assembleDisengageEpisodes([{ kind: 'cleared', tick: 5, actorId: actor, targetId: foe, separation: 3.4, reason: 'range' }])).toThrow(
       /no open episode/,
     )
   })
@@ -110,10 +114,45 @@ describe('assembleDisengageEpisodes', () => {
   it('raises on a second stamp before the first was cleared', () => {
     expect(() =>
       assembleDisengageEpisodes([
-        { kind: 'stamped', tick: 5, actorId: actor, separation: 1.7 },
-        { kind: 'stamped', tick: 6, actorId: actor, separation: 1.9 },
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
+        { kind: 'stamped', tick: 6, actorId: actor, targetId: foe, separation: 1.9 },
       ]),
     ).toThrow(/still open/)
+  })
+
+  // External review's finding, and the sharpest one: grouping by `actorId`
+  // alone lets an episode start against one opponent and end against another,
+  // and the difference gets reported as ground opened. Unreachable in a duel;
+  // perfectly reachable in the generic kernel, where phase 3 can retarget a
+  // fighter mid-episode.
+  //
+  // Note the shape of the numbers: 1.7 to 3.4 against a *different* fighter
+  // would read as a textbook 1.7-unit successful escape. Emitting it would be
+  // worse than raising.
+  it('raises rather than subtract separations taken against two different opponents', () => {
+    expect(() =>
+      assembleDisengageEpisodes([
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
+        { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 2.0 },
+        { kind: 'cleared', tick: 7, actorId: actor, targetId: otherFoe, separation: 3.4, reason: 'range' },
+      ]),
+    ).toThrow(/switched target/)
+  })
+
+  // The other half of the same review finding. The kernel deliberately does
+  // NOT raise on this -- doing so made an attached collector able to turn a
+  // legitimate targetless transition into an exception, which is the opposite
+  // of inert -- so the rejection has to live here, after the tick.
+  it('raises on an episode with no target rather than treating an infinite separation as an escape', () => {
+    expect(() => assembleDisengageEpisodes([{ kind: 'stamped', tick: 5, actorId: actor, targetId: undefined, separation: Infinity }])).toThrow(
+      /cannot be measured/,
+    )
+    expect(() =>
+      assembleDisengageEpisodes([
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
+        { kind: 'cleared', tick: 6, actorId: actor, targetId: undefined, separation: Infinity, reason: 'range' },
+      ]),
+    ).toThrow(/cannot be measured/)
   })
 })
 
@@ -181,23 +220,130 @@ describe('the disengage seam against a real bout', () => {
     expect(censored[0].ticks).toBeLessThan(FAST_FORCED_DISENGAGE_MAX_TICKS)
   }, 30_000)
 
-  // The window the seam exists to correct. An episode is stamped the instant a
-  // burst lunge's recovery ends, and phase 2 runs before that tick's movement,
-  // so the start separation must still be the range the lunge left the fighter
-  // at -- never the range after a first forced retreat, which is what a
-  // harness reading state after `advanceBattleTick` sees.
-  it('reads the start separation before the first forced retreat, not after it', () => {
-    const starts = collectEpisodes().map((episode) => episode.startSeparation)
+  // The window the seam exists to correct, tested by DIFFERENCE rather than by
+  // plausibility.
+  //
+  // A first version of this asserted only that the start separations sat
+  // between 0 and 3.35 and near the lunge's contact range. External review
+  // pointed out that a post-retreat separation satisfies all three, so the test
+  // would have gone on passing with the one-tick window defect restored --
+  // which is the entire defect this file exists to fix.
+  //
+  // This compares the recorded number against the two states it must be
+  // distinguished from: the state before the advance (which it must equal
+  // exactly, since phases 1-2 move nobody, so that state IS the phase-2 state)
+  // and the state after the advance (which is what a harness reading
+  // `advanceBattleTick`'s result sees, and which includes this tick's
+  // movement, contact and push).
+  it('records the phase-2 separation, not the one visible after the advance', () => {
+    interface Observation {
+      kind: DisengageSample['kind']
+      recorded: number
+      beforeAdvance: number
+      afterAdvance: number
+    }
 
-    // Read from the catalog, never a literal: a future reach change must make
-    // this assertion move rather than quietly go vacuous.
-    const lunge = COMBAT_STYLES.attacks['fast-burst-lunge'].contactRange
-    expect(Math.max(...starts)).toBeLessThan(FAST_FORCED_DISENGAGE_END_RANGE)
-    expect(Math.min(...starts)).toBeGreaterThan(0)
-    // A lunge that connected leaves the pair inside its contact range plus one
-    // tick of pushback; the loose bound is deliberate, since a lunge that
-    // missed on geometry can end further out. What is being pinned is that
-    // these are lunge-range numbers and not post-retreat ones.
-    expect(Math.min(...starts)).toBeLessThan(lunge.max + 1)
+    const separationIn = (state: BattleState, a: CombatantId, b: CombatantId) =>
+      distanceBetween(state.encounter.combatants[a].position, state.encounter.combatants[b].position)
+
+    const observations: Observation[] = []
+    let battle = createBattle({ home: home('aquila'), away: away('drusus'), seed: BASELINE_TEST_SEED, combatStyles: COMBAT_STYLES })
+    for (let i = 0; i < MAX_BOUT_TICKS && battle.encounter.phase !== 'finished'; i += 1) {
+      const beforeAdvance = battle
+      const captured: DisengageSample[] = []
+      battle = advanceBattleTick(battle, undefined, undefined, { record: (sample) => captured.push(sample) })
+      for (const sample of captured) {
+        observations.push({
+          kind: sample.kind,
+          recorded: sample.separation,
+          beforeAdvance: separationIn(beforeAdvance, sample.actorId, sample.targetId!),
+          afterAdvance: separationIn(battle, sample.actorId, sample.targetId!),
+        })
+      }
+    }
+
+    expect(observations.length).toBeGreaterThan(0)
+    for (const observation of observations) {
+      expect(observation.recorded).toBe(observation.beforeAdvance)
+    }
+
+    // ...and the two states are genuinely different, or the assertion above is
+    // a statement about a tick in which nothing happened. This is the part
+    // that would have failed on the old, undiscriminating version.
+    const moved = observations.filter((observation) => observation.afterAdvance !== observation.recorded)
+    expect(moved.length).toBeGreaterThan(observations.length / 2)
+
+    // The clear end specifically: phase 4's ordinary decision and phases 7-8's
+    // ordinary movement run in the SAME advance that cleared the field, so a
+    // harness sampling after it is not reading the exit separation at all.
+    const clears = observations.filter((observation) => observation.kind === 'cleared')
+    expect(clears.length).toBeGreaterThan(0)
+    expect(clears.some((observation) => observation.afterAdvance !== observation.recorded)).toBe(true)
+  }, 30_000)
+})
+
+// `advanceEncounterTick` is the GENERIC kernel, not the duel adapter, and the
+// first version of this seam was reviewed against the duel and justified with
+// a fact about the duel's arena. Both of the states below were argued to be
+// unreachable; both turn out to be ordinary in a three-fighter free-for-all,
+// measured across 40 seeds:
+//
+//   - a fighter with NO target during an open episode: 12 of 40 seeds;
+//   - a fighter RETARGETED during an open episode: 3 of 40 seeds
+//     (20260829, 20260835, 20260837), 8 to 21 samples each.
+//
+// The baseline seed is one of the twelve. So the old kernel, which raised on a
+// non-finite separation, would have thrown on the very first FFA anyone
+// attached a collector to.
+describe('the disengage seam outside the duel', () => {
+  const threeWayFfa = (seed: number) => ({
+    seed,
+    combatants: [
+      combatant('a', 'fa', { archetype: 'fast' as const, startPosition: { x: -2, z: 0 } }),
+      combatant('b', 'fb', { archetype: 'heavy' as const, startPosition: { x: 2, z: 0 } }),
+      combatant('c', 'fc', { archetype: 'technical' as const, startPosition: { x: 0, z: 3 } }),
+    ],
+    arena: freeArena,
+    hostility: { mode: 'free-for-all' as const },
+    combatStyles: COMBAT_STYLES,
+  })
+
+  function runFfa(seed: number, collector?: DisengageCollector): string {
+    const created = createEncounter(threeWayFfa(seed))
+    let state = created.state
+    let rolling = canonicalHash({ state, events: created.events })
+    for (let i = 0; i < MAX_BOUT_TICKS && state.phase === 'running'; i += 1) {
+      const transition = advanceEncounterTick(state, undefined, undefined, collector)
+      state = transition.state
+      rolling = canonicalHash({ rolling, state, events: transition.events })
+    }
+    return rolling
+  }
+
+  it('is inert in a multi-combatant encounter, including on the ticks where a fighter has no target', () => {
+    const samples: DisengageSample[] = []
+
+    expect(runFfa(BASELINE_TEST_SEED, { record: (sample) => samples.push(sample) })).toBe(runFfa(BASELINE_TEST_SEED))
+
+    // The case the kernel used to raise on. It has to be present, or this test
+    // proves only that two ordinary runs agree.
+    expect(samples.some((sample) => sample.targetId === undefined)).toBe(true)
+  }, 30_000)
+
+  it('rejects, after the tick, the episode the kernel recorded with no target', () => {
+    const samples: DisengageSample[] = []
+    runFfa(BASELINE_TEST_SEED, { record: (sample) => samples.push(sample) })
+
+    expect(() => assembleDisengageEpisodes(samples)).toThrow(/cannot be measured/)
+  }, 30_000)
+
+  it('rejects a real episode whose target changed while it was open', () => {
+    const samples: DisengageSample[] = []
+    runFfa(20260837, { record: (sample) => samples.push(sample) })
+
+    // Not a synthetic stream: this seed retargets the Fast fighter 21 times
+    // inside open episodes. Assembling it before the fix produced episodes
+    // whose two endpoints were measured against two different opponents.
+    expect(() => assembleDisengageEpisodes(samples)).toThrow(/switched target/)
   }, 30_000)
 })

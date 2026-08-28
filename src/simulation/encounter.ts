@@ -952,26 +952,26 @@ function completeForcedStateTransitions(
     if (justEndedBurstLunge) {
       const forced = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
       next[id] = { ...forced, forcedDisengageStartTick: tick }
-      recordDisengage(disengageCollector, { kind: 'stamped', tick, actorId: id, separation: separationToTarget(combatant, combatants) })
+      recordDisengage(disengageCollector, { kind: 'stamped', tick, actorId: id, ...phaseTwoSeparation(combatant, combatants) })
       continue
     }
 
     if (combatant.forcedDisengageStartTick === undefined) continue
 
-    const distanceToTarget = separationToTarget(combatant, combatants)
+    const { targetId, separation } = phaseTwoSeparation(combatant, combatants)
     const ticksSinceForced = tick - combatant.forcedDisengageStartTick
 
     // The reason is taken from the branch that fired, and the SAME number the
     // predicate judged is what gets recorded. Nothing downstream re-derives
     // either one; see `disengageDiagnostics.ts` for the inference this
     // replaces.
-    const exit = hasFastForcedDisengageEnded(distanceToTarget, ticksSinceForced)
+    const exit = hasFastForcedDisengageEnded(separation, ticksSinceForced)
     if (exit) {
       next[id] = { ...combatant, forcedDisengageStartTick: undefined, nextDecisionTick: tick }
-      recordDisengage(disengageCollector, { kind: 'cleared', tick, actorId: id, separation: distanceToTarget, reason: exit })
+      recordDisengage(disengageCollector, { kind: 'cleared', tick, actorId: id, targetId, separation, reason: exit })
     } else {
       next[id] = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
-      recordDisengage(disengageCollector, { kind: 'held', tick, actorId: id, separation: distanceToTarget })
+      recordDisengage(disengageCollector, { kind: 'held', tick, actorId: id, targetId, separation })
     }
   }
 
@@ -979,37 +979,47 @@ function completeForcedStateTransitions(
 }
 
 /**
- * Root-to-root separation on the phase-2 state, before this tick's movement.
+ * Who the fighter was measured against in phase 2, and how far away they were,
+ * before this tick's movement.
+ *
  * `Infinity` with no target, which is the value the exit predicate has always
  * been handed in that case and is preserved here exactly -- extracted from the
  * clear branch rather than rewritten, so both ends of an episode are measured
- * by one expression and cannot drift apart.
+ * by one expression and cannot drift apart. The id is resolved from the
+ * snapshot rather than copied off `self.targetId`, so a target that is not in
+ * the snapshot reports `undefined` rather than an id whose separation is
+ * `Infinity`.
  */
-function separationToTarget(self: FighterCombatState, snapshot: Readonly<Record<CombatantId, FighterCombatState>>): number {
+function phaseTwoSeparation(
+  self: FighterCombatState,
+  snapshot: Readonly<Record<CombatantId, FighterCombatState>>,
+): { targetId: CombatantId | undefined; separation: number } {
   const target = self.targetId ? snapshot[self.targetId] : undefined
-  return target ? distanceBetween(self.position, target.position) : Infinity
+  return { targetId: target?.id, separation: target ? distanceBetween(self.position, target.position) : Infinity }
 }
 
 /**
  * Write-only, and inert unless a collector was passed -- the shipped runtime
  * and every test that does not ask for diagnostics never reach the body.
  *
- * Throws rather than record a non-finite separation, on exactly the reasoning
- * `recordContact` gives for `NaN`: `Infinity` would sail through a finiteness
- * check written as two comparisons and then read as an enormous successful
- * escape, poisoning the gate this seam exists to feed. It means "this fighter
- * had no target in phase 2", which is unreachable while a bout is running --
- * `TARGET_RETENTION_RADIUS` is 20 units against an arena a little under 9
- * across, so a target is never lost to distance -- and if that ever stops
- * being true the measurement should stop rather than quietly report it as a
- * win.
+ * IT VALIDATES NOTHING, DELIBERATELY. An earlier version raised here on a
+ * non-finite separation, copying `recordContact`'s posture on `NaN`, and
+ * external review found that this makes the seam non-inert in exactly the case
+ * it claims to be inert in: `targetId` is legitimately cleared when a target
+ * dies, turns non-hostile, or cannot be reacquired (`retainTarget`,
+ * combatDecision.ts), and in a generic multi-combatant encounter the encounter
+ * keeps running afterwards. Phase 2 then hands the predicate `Infinity`, which
+ * clears the forced state as a range exit -- a transition that completed
+ * without a collector and *threw* with one attached. The justification given
+ * for the raise ("the arena is under 9 units across") was true of the duel
+ * adapter and not of `advanceEncounterTick`, which is the generic kernel.
+ *
+ * So the kernel records what phase 2 saw and nothing else. Rejecting an
+ * unmeasurable episode is `assembleDisengageEpisodes`' job, after the tick,
+ * where raising cannot perturb a single thing the seam is supposed to observe.
  */
 function recordDisengage(collector: DisengageCollector | undefined, sample: DisengageSample): void {
-  if (!collector) return
-  if (!Number.isFinite(sample.separation)) {
-    throw new Error(`disengage diagnostics: ${sample.actorId} had no target in phase 2 of tick ${sample.tick}`)
-  }
-  collector.record(sample)
+  collector?.record(sample)
 }
 
 /**

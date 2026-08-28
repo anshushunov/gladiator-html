@@ -92,8 +92,12 @@
 # `scripts/measure-distance.ts` are PR-1's. That PR's claim was judged by the
 # previous revision of this file and its work is in the branch; these three lines
 # keep the gate from failing on a diff it has already passed. They are NOT an
-# invitation to keep editing the distance instrument in this PR, and nothing in
-# PR-2 touches it.
+# invitation to keep editing the distance instrument in this PR — and after
+# external review that sentence is enforced rather than asserted: a second pass
+# at the bottom of this file re-measures the inherited paths from PR-2's own
+# boundary commit and fails if any of them moved. The first pass cannot do it,
+# because against `merge-base main HEAD` an inherited change and a fresh one
+# look exactly alike.
 #
 # `tests/__screenshots__/linux/**` is exempt only because this branch is stacked
 # on `test/relinux-baselines` (PR #20), which re-captures two stale baselines on
@@ -133,9 +137,40 @@ BASE="${1:?base sha required}"
 FORBIDDEN='^(src/|scripts/|tests/|\.github/workflows/|index\.html$|playwright\.config\.ts$|package(-lock)?\.json$)'
 EXEMPT='^(src/simulation/disengageDiagnostics(\.test)?\.ts$|src/simulation/(encounter|battle)\.ts$|src/simulation/combatDecision(\.test)?\.ts$|src/testSupport/distanceHarness(\.test)?\.ts$|scripts/measure-distance\.ts$|scripts/check-allowlist\.sh$|tests/__screenshots__/linux/)'
 # Committed + staged + unstaged + untracked, and both sides of every rename.
-CHANGED="$( { git diff --name-status -z --find-renames "$BASE" HEAD; git diff --name-status -z --find-renames HEAD; git diff --name-status -z --find-renames --cached; } \
-  | tr '\0' '\n' | grep -vE '^[A-Z][0-9]*$' | sort -u )"
+changed_since() {
+  { git diff --name-status -z --find-renames "$1" HEAD; git diff --name-status -z --find-renames HEAD; git diff --name-status -z --find-renames --cached; } \
+    | tr '\0' '\n' | grep -vE '^[A-Z][0-9]*$' | sort -u
+}
+CHANGED="$(changed_since "$BASE")"
 UNTRACKED="$(git ls-files --others --exclude-standard)"
 VIOLATIONS="$(printf '%s\n%s\n' "$CHANGED" "$UNTRACKED" | grep -v '^$' | grep -E "$FORBIDDEN" | grep -vE "$EXEMPT" || true)"
 if [ -n "$VIOLATIONS" ]; then echo "Forbidden for this slice:" >&2; echo "$VIOLATIONS" >&2; exit 1; fi
+
+# --- Second pass: the inherited exemptions are inherited, not reopened -------
+#
+# Added after external review, which pointed out that the first pass cannot
+# tell "these paths arrived in the branch before this PR" from "this PR edited
+# them". Both look identical against `merge-base main HEAD`, so the comment
+# above claiming they are frozen was a comment and not a check. This is the
+# check: measured from PR-2's own boundary commit, the three inherited paths
+# must not move at all.
+#
+# The negative control for this pass is the same as for the first -- touch
+# `src/testSupport/distanceHarness.ts` and it must be rejected here, even
+# though the first pass exempts it.
+PR2_BOUNDARY='003b962'
+INHERITED='^(src/testSupport/distanceHarness(\.test)?\.ts$|scripts/measure-distance\.ts$|tests/__screenshots__/linux/)'
+if git rev-parse --verify --quiet "$PR2_BOUNDARY^{commit}" >/dev/null; then
+  REOPENED="$(printf '%s\n%s\n' "$(changed_since "$PR2_BOUNDARY")" "$UNTRACKED" | grep -v '^$' | grep -E "$INHERITED" || true)"
+  if [ -n "$REOPENED" ]; then
+    echo "Inherited from an earlier PR, not editable by this one:" >&2
+    echo "$REOPENED" >&2
+    exit 1
+  fi
+else
+  # Loud, not skipped. A pass that silently disappears when its anchor does is
+  # worse than no pass at all -- it reports green while checking nothing.
+  echo "PR-2 boundary commit $PR2_BOUNDARY is not in this history; the inherited-paths pass cannot run" >&2
+  exit 1
+fi
 echo "allowlist ok"
