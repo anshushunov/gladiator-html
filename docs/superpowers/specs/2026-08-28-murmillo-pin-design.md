@@ -540,10 +540,25 @@ Three clauses. All must hold.
 - **Why it exists, decided by the design owner, 2026-08-28.** Round-2 review
   showed the commissioned question — "is that a retiarius or a spammer?" — was
   about frequency, and that a previous revision closed it with the wrong
-  statistic. The lunge *share* of his attack attempts is flat at 49.9 / 51.0 /
-  53.3%, but the share is a ratio and its denominator collapses: he attacks 8.44
-  times per 1000 engaged ticks against the murmillo against 21.24 in the mirror,
-  so the lunge rate is **4.21 against 10.83 — 61% lower**. The flat share hid it.
+  statistic: the lunge *share* of his attack attempts is flat at 49.9 / 51.0 /
+  53.3%, and a share is a ratio that hides its denominator.
+- **The size of the effect, corrected — and the first number given was inflated
+  about twofold.** `fast vs fast` contains **two** retiarii, and
+  `measure-reach.ts:301` aggregates contact records by `actionId` without regard
+  to actor, so the mirror's raw rate counts both of them. Per Fast fighter:
+
+  | | lunge attempts / 1000 engaged ticks | all attacks / 1000 |
+  |---|---:|---:|
+  | vs murmillo (`fast vs heavy` / `heavy vs fast`) | **4.21 / 4.22** | 8.44 / 8.34 |
+  | mirror, per fighter | 5.42 | 10.62 |
+  | vs hoplomachus | 6.92 / 6.30 | 12.98 / 12.61 |
+
+  So the reduction against the murmillo is about **22% against the mirror** and
+  **36% against the hoplomachus** — not the 61% a first pass reported by
+  comparing one retiarius against two. The finding is smaller than claimed and
+  still real, and V's bar does not depend on it: 4.0 is a floor under the
+  matchup's **own** measured 4.21, so the comparison that was wrong is not the
+  comparison the gate makes.
 - **Why it belongs in *this* slice rather than the next one.** The mechanism this
   slice proposes makes the number worse by construction: a longer or more
   successful forced disengage is more time spent retreating and less spent
@@ -682,12 +697,10 @@ slice must close.
    patched key already exist, which is right for catching a `rootTravl` typo and
    wrong for measuring "give this style an intent it does not have". Any such
    candidate must be measured by editing content.
-4. **The retiarius attacks 2.5x less often per engaged tick against the
-   murmillo** -- 8.44 attempts per 1000 ticks against 21.24 in the mirror and
-   12.98 against the hoplomachus -- while the *share* of those attempts that are
-   the lunge is flat at 49.9 / 51.0 / 53.3%. Surfaced while answering review
-   finding #6. It is a real per-pair asymmetry, it is nobody's claim yet, and it
-   is not this slice's target without a design decision.
+4. ~~**The retiarius attacks 2.5x less often per engaged tick against the
+   murmillo.**~~ **Promoted to gate V and corrected on the way.** The 2.5x
+   compared one retiarius against the mirror's two; per fighter it is 8.44
+   against 10.62, a 21% reduction. See §5 gate V and §11.
 5. **`src/style.css:4` asks for Inter with no bundled `@font-face`**, so the
    Linux screenshots render in whatever sans the runner image ships. Found while
    clearing the baseline debt; unrelated to combat; a slice of its own.
@@ -765,14 +778,21 @@ Measured, 200 seeds, equal-stat cohorts, engaged window:
 
 | | vs murmillo | mirror | vs hoplomachus |
 |---|---:|---:|---:|
-| lunge attempts per 1000 engaged ticks | **4.21** | 10.83 | 6.92 |
+| lunge attempts per 1000 engaged ticks, **per Fast fighter** | **4.21** | 5.42 | 6.92 |
 | lunge share of all attack attempts | 49.9% | 51.0% | 53.3% |
 
-Against the murmillo the retiarius commits **61% less often per unit of fight
-time** than in his mirror, while the *proportion* of his offence that is the
-lunge is flat. §1.2's withdrawal disposed of the geometry claim; it did not touch
-this, and the flat share is the wrong statistic for the question the playtest
-actually asked ("is that a retiarius or a spammer?").
+Against the murmillo the retiarius commits about **22% less often per unit of
+fight time** than in his mirror and 36% less than against the hoplomachus, while
+the *proportion* of his offence that is the lunge is flat. §1.2's withdrawal
+disposed of the geometry claim; it did not touch this, and the flat share is the
+wrong statistic for the question the playtest actually asked ("is that a
+retiarius or a spammer?").
+
+**The mirror column is per fighter and a first pass reported it raw.** The mirror
+has two retiarii and the harness aggregates by action rather than by actor, so
+the uncorrected figure was 10.83 and the reduction looked like 61%. It is 22%.
+Recorded because that inflated number is what the scoping decision was taken
+against, and the decision was re-confirmed on the corrected one.
 
 It matters to this slice specifically because **a longer or more persistent
 forced disengage reduces attack incidence further.** Every gate in §5 can pass
