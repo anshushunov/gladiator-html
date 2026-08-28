@@ -1245,3 +1245,71 @@ problem with an explicit `30_000`, and the brief's §4.4 is precisely about what
 red gate costs: `npm run check` stops at the first failure, so this one would
 have eaten the e2e report. `src/simulation/**` is closed to this slice, so it is
 written down, not fixed.
+
+
+---
+
+## 2026-08-29 — session 4, phase 0: the premise, looked at rather than computed
+
+**Phase:** 0. The whole slice rests on one inference — that "the retiarius fights
+too close to the murmillo" is not a defect, because the hoplomachus spends
+**81.1%** of the same matchup inside 1.70 against the retiarius' **54.3%** and
+*wins* it 55.0%. Every number saying so comes from the same family of
+instruments. Nothing said whether it reads that way on screen.
+
+### What was recorded
+
+`npm run review:clips`, clip 1 (`brutus` murmillo vs `drusus` retiarius) and
+clip 2 (`brutus` murmillo vs `cassius` hoplomachus), `--config=everything`, at
+the shipped seed 20260815 and again at `--seed=99`. Two seeds rather than one
+deliberately: a single bout per matchup is exactly the sample size §5.3 of the
+brief says may not be quoted, and this decision could cancel the slice.
+
+Four bouts, 1827 / 2159 / 1985 / 1393 ticks. Frames pulled at a fixed 3–4 s
+stride with Playwright's own bundled ffmpeg (`ms-playwright/ffmpeg-1011`); the
+machine has no other ffmpeg and its build has `fps` disabled, so frames were
+seeked one at a time rather than filtered.
+
+### What is visible
+
+Same crop, same camera, same scale in both matchups, so "a body width" means
+the same thing in each.
+
+| | frames sampled | frames with visible daylight between the two |
+|---|---:|---:|
+| murmillo vs **retiarius**, seed 20260815 | 10 | 4 (t=2, 8, 17, 29 s) |
+| murmillo vs **retiarius**, seed 99 | 6 | 2–3 (t=7, 11, and 15 marginal) |
+| murmillo vs **hoplomachus**, seed 20260815 | 9 | 1 (t=2 s, the approach) |
+| murmillo vs **hoplomachus**, seed 99 | 6 | 0 clear; 2 at roughly half a body |
+
+The hoplomachus locks up against the murmillo at the first exchange and
+essentially never comes off him again: shields overlapping, spear and gladius
+crossed, both bodies inside one shield width for the whole bout. The retiarius
+does the opposite at intervals — he closes, and then there are frames where he
+is a clear body-width off, trident out, with floor visible between them.
+
+**Answer to the brief's one question: no.** The retiarius does not look more
+pinned than the hoplomachus. If anything the reading runs the other way, and it
+runs the same way on both seeds. The premise holds and the slice targets
+mechanics, as decided.
+
+### What this is not
+
+It is not the human gate. `design.md` requires two people who did not write the
+combat, and `record-review-clips.ts` says in its own header that visual
+acceptance cannot be delegated to a text-only model. This was a falsification
+attempt — the one reading that would have cancelled the slice — and it failed to
+falsify. The gate is still unpassed and PR-2 still does not merge itself.
+
+It is also stills, not motion. That cuts *against* the retiarius reading rather
+than for it: what stills lose is his lunge-and-retreat rhythm, which is the part
+that reads as *not* pinned. And a caveat that no frame count can settle — the
+trident is long, so a body-width of daylight is still inside his threat range.
+"Not pinned" here means the bodies separate, not that the murmillo is safe.
+
+### Where I stopped / next session
+
+Phase 0 done and clean; going into phase 1, PR-2's disengage seam. PR #20 is
+**still open, not merged**, so the inherited `tests/__screenshots__/linux/**`
+exemption in `check-allowlist.sh` stays — it is not yet the moment it is marked
+for deletion at.
