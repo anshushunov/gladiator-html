@@ -772,3 +772,81 @@ hypothesis depends on it: if the answer is "the counter is working", the slice
 becomes the instrument plus a per-pair re-expression of gate E and stops there;
 if the answer is "the matchup is broken", the candidates are C1–C3 with the
 target restated as the two success rates rather than as time-at-distance.
+
+---
+
+## 2026-08-28 — session 3 continued: the decision, and half my finding withdrawn
+
+**Design owner's call, 2026-08-28:** *fix the mechanics, not the distance.* Time
+spent inside the murmillo's envelope becomes an observation the slice reports;
+it is not a criterion. The slice targets the mechanics that fail.
+
+I then went to collect the 200-seed per-pair numbers to write the spec against,
+and **one of the two mechanics I had just reported is not a finding at all.**
+
+### Withdrawn: the lunge's geometry failures are not murmillo-specific
+
+I reported 48.0% against the murmillo versus 27.9% against the hoplomachus and
+41.9% in the mirror. Those were 50-seed numbers. At 200:
+
+| the retiarius' committed attack | geometry failures |
+|---|---:|
+| `fast vs heavy` | **47.3%** |
+| `fast vs fast` | **47.0%** |
+| `fast vs technical` | 29.0% |
+
+The mirror is the same as the murmillo, so the murmillo is not what causes it.
+The pattern is "against anyone who moves": the hoplomachus holds his measure
+(`hold-range` 12, `backstep` 12, `advance` 6) and is the only opponent the lunge
+reliably reaches.
+
+And the comparator finishes it off. In that same `fast vs heavy` matchup the
+hoplomachus' own committed attack, measured against the same murmillo, fails on
+geometry **54.7%** of the time — worse than the retiarius' 47.3%. Gate G's
+`fast`-free comparator is 45.4% pooled. So the retiarius whiffs less than the
+type he is being asked to resemble, in the exact matchup where I claimed he
+whiffs pathologically.
+
+**That is the fifth time in this slice's history a finding has flattered the
+finder and a direction check has reversed it**, and the third time today. The
+brief's §4.2 exists for precisely this and it keeps earning its place. The cause
+was mine and it is dull: I quoted a 50-seed draft as though it were a result,
+in a document that has a rule against exactly that.
+
+### What survives, and it survives every check I can put to it
+
+**The forced disengage, and only the forced disengage.**
+
+| the retiarius' own escape | vs murmillo | vs hoplomachus | mirror |
+|---|---:|---:|---:|
+| episodes | 948 | 608 | 859 |
+| reaching the 3.35 exit | **1.6%** | 31.7% | 67.2% |
+| median ground opened | **0.659** | 0.954 | 0.833 |
+
+Why this one holds where the other did not:
+
+- **It needs no comparator.** All three columns are the same mechanic belonging
+  to the same archetype, measured across his three opponents. Nothing in it can
+  be coupled to the thing it judges, which is the defect class every other
+  criterion in this slice's history has fallen into.
+- **The margin is not marginal.** Forty-fold, not a few points.
+- **The mechanism is arithmetic and checks out.** 37 ticks of retreat at 2.7 u/s
+  is 1.67 units of travel; the murmillo closes 0.86 of it; the measured net is
+  0.659. The exit sits ~1.9 units away, so at that net rate it needs about 185
+  ticks against a cap of 37.
+- **The constant was derived, not measured.** `combatDecision.ts:969` records
+  its own provenance: "the authored 2.4 sits 0.95 above the authored lunge's
+  contact max of 1.45, and the same gap above 2.40 is 3.35." An arithmetic
+  identity. Nobody asked whether a fighter being chased can cover it.
+
+So the slice has one target, not two, and the design owner's decision applies to
+it unchanged.
+
+### Where I stopped / next session
+
+Correction recorded. Next: the spec (phase E), targeting the forced disengage
+alone, with the withdrawn lunge finding written into it explicitly so the next
+reader does not rediscover it as news.
+
+PR #20 still pending in CI, now past an hour — the e2e step is running, and
+allowlist, unit tests and build have all passed on it. **Do not merge.**
