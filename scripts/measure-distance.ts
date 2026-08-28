@@ -54,18 +54,45 @@
 // the murmillo it had replaced.
 //
 // ---------------------------------------------------------------------------
-// THERE IS NO `--gate` HERE YET, DELIBERATELY
+// `--gate` ARRIVED IN PR-3, WHICH IS WHY IT WAS NOT HERE BEFORE
 // ---------------------------------------------------------------------------
 //
-// The slice's gates are frozen in its spec, before implementation, against
-// baselines this instrument has not produced yet. Shipping a `--gate` in the
-// same change that first measures the numbers would be choosing the bars after
-// seeing the results, which is the one thing the brief's risk profile forbids
-// outright. The gate arrives in the spec's own change, with each threshold
-// naming its source.
+// An earlier revision of this header said there was no `--gate` here yet,
+// deliberately: the slice's gates are frozen in its spec, before
+// implementation, against baselines this instrument had not produced. Shipping
+// a `--gate` in the same change that first measured the numbers would have been
+// choosing the bars after seeing the results.
+//
+// The bars are now frozen in the spec and the instrument is unchanged since it
+// produced them, so the gate lands here in a diff that measures nothing new:
+//
+//   * **Gate V**, the commitment-frequency floor. `fast-burst-lunge`
+//     `action-started` events per 1000 engaged ticks per Fast fighter, at least
+//     **3.55** in `fast vs heavy` and in `heavy vs fast` separately. The bar is
+//     95% of the shipped 3.76, measured in both orientations. It is a
+//     non-regression, not a target: it does not ask a candidate to improve
+//     commitment, only to not buy the escape with it. Without V, every other
+//     gate in the slice can go green while the retiarius commits even less
+//     often than he does today.
+//
+//   * **Gate U**, the stopping criterion, via `--baseline`. Exactly two fields
+//     govern it -- `pinnedShare` and `insideEnvelopeShare`, engaged window, in
+//     each of the five ordered matchups containing a Fast fighter. An absolute
+//     move of more than **5 percentage points** in either field, in any of the
+//     five, stops the work and goes back to the design owner. Everything else
+//     this script prints is context and is explicitly excluded, because leaving
+//     the binding field unnamed lets a reader pick whichever one suited.
+//
+//     U is not a threshold on the quantity itself, deliberately: the spec's §1
+//     shows that share ranks the counter above the thing it counters, so a
+//     threshold on it would be a threshold on the wrong quantity. It is here
+//     because a large movement means the candidate changed the matchup rather
+//     than the mechanic, and that is a different slice.
 //
 // Usage:
 //   node node_modules/vite-node/vite-node.mjs scripts/measure-distance.ts -- --seeds 200
+//   node node_modules/vite-node/vite-node.mjs scripts/measure-distance.ts -- --seeds 200 --gate
+//   node node_modules/vite-node/vite-node.mjs scripts/measure-distance.ts -- --seeds 200 --gate --baseline docs/superpowers/plans/2026-08-29-distance-baseline.json
 //   node node_modules/vite-node/vite-node.mjs scripts/measure-distance.ts -- --seeds 50 --overlay /tmp/candidate.json --json /tmp/out.json
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -88,16 +115,18 @@ import type { Archetype, FighterDefinition } from '../src/simulation/fighters'
 
 const STYLES: readonly Archetype[] = ['heavy', 'fast', 'technical']
 
-interface Args { seeds: number; overlay?: string; json?: string }
+interface Args { seeds: number; overlay?: string; json?: string; gate: boolean; baseline?: string }
 
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { seeds: 200 }
+  const args: Args = { seeds: 200, gate: false }
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i]
     const value = argv[i + 1]
     if (flag === '--seeds') { args.seeds = Number(value); i += 1 }
     else if (flag === '--overlay') { args.overlay = value; i += 1 }
     else if (flag === '--json') { args.json = value; i += 1 }
+    else if (flag === '--baseline') { args.baseline = value; i += 1 }
+    else if (flag === '--gate') { args.gate = true }
     else if (flag.startsWith('--')) throw new Error(`unknown flag ${flag}`)
   }
   if (!Number.isInteger(args.seeds) || args.seeds < 1) throw new Error(`--seeds must be a positive integer, got ${String(args.seeds)}`)
@@ -356,6 +385,79 @@ console.log('\nTHE SAME SUBJECT AGAINST EVERY OPPONENT (what the playtest claime
 for (const away of STYLES) {
   const m = byLabel.get(matchupLabel(SUBJECT, away)) as MatchupResult
   console.log(line(m.label, summarise(m.engaged, percentile), m))
+}
+
+// ---------------------------------------------------------------------------
+// Gate
+// ---------------------------------------------------------------------------
+
+/** Spec §5 V: 95% of the shipped 3.76, measured in both orientations on the corrected definition. */
+const LUNGE_RATE_FLOOR = 3.55
+/** Spec §5 U: an absolute move of more than this many points in either governed field stops the work. */
+const U_TOLERANCE_POINTS = 5
+
+const lungeRate = (m: MatchupResult): number => {
+  const ticks = m.engaged.separations.length
+  return m.fastFighters > 0 && ticks > 0 ? (m.lungeStarts / m.fastFighters / ticks) * 1000 : Number.NaN
+}
+
+const FAST_MATCHUPS = matchups.filter((m) => m.home === SUBJECT || m.away === SUBJECT)
+
+if (args.gate) {
+  const failures: string[] = []
+  const check = (ok: boolean, description: string) => { if (!ok) failures.push(description) }
+
+  // GATE V -- the retiarius must not stop committing. Asserted per orientation
+  // rather than pooled, and per Fast fighter rather than per bout: the mirror
+  // contains TWO retiarii and aggregating by action id across actors reported
+  // its rate at twice the truth, which is how a 22% reduction was first
+  // published as 61%.
+  //
+  // Both halves come from this one run. The figure this replaces joined attempt
+  // counts from `measure-reach.ts` to engaged ticks from here by hand, across
+  // two JSON files, which is how a whole-bout numerator over an engaged-window
+  // denominator survived being noticed.
+  for (const m of [byLabel.get(matchupLabel(SUBJECT, 'heavy')), byLabel.get(matchupLabel('heavy', SUBJECT))]) {
+    if (!m) continue
+    const rate = lungeRate(m)
+    check(rate >= LUNGE_RATE_FLOOR, `V: ${m.label} lunge starts ${fixed(rate)} per 1000 engaged ticks per fighter, below ${LUNGE_RATE_FLOOR}`)
+  }
+
+  // GATE U -- reported always, gated only against a recorded baseline. Without
+  // `--baseline` there is nothing to compare to, and saying so out loud beats
+  // silently passing a clause that never ran.
+  if (args.baseline === undefined) {
+    console.log('\nU: no --baseline given, so the stopping criterion did not run (it compares two runs, not one)')
+  } else {
+    const recorded = JSON.parse(readFileSync(args.baseline, 'utf8')) as {
+      perMatchup: { label: string; engaged: { pinnedShare: number; insideEnvelopeShare: number } | null }[]
+    }
+    const before = new Map(recorded.perMatchup.map((row) => [row.label, row.engaged]))
+    for (const m of FAST_MATCHUPS) {
+      const now = summarise(m.engaged, percentile)
+      const then = before.get(m.label)
+      if (!now || !then) {
+        check(false, `U: ${m.label} is missing from one side of the comparison, so the stopping criterion cannot be evaluated`)
+        continue
+      }
+      // The two governed fields, named here and nowhere else. `median`, `p10`,
+      // `p90`, `lungeBandShare`, `beyondShare`, the `all` window and the win
+      // rates are reported above and excluded on purpose.
+      for (const field of ['pinnedShare', 'insideEnvelopeShare'] as const) {
+        const movement = Math.abs(now[field] - then[field]) * 100
+        check(movement <= U_TOLERANCE_POINTS,
+          `U: ${m.label} ${field} moved ${movement.toFixed(1)} points (${pct(then[field])} -> ${pct(now[field])}), above ${U_TOLERANCE_POINTS} -- STOP and take this to the design owner`)
+      }
+    }
+  }
+
+  console.log('\nGATE')
+  if (failures.length === 0) {
+    console.log('all distance gates pass')
+  } else {
+    for (const failure of failures) console.error(`FAIL ${failure}`)
+    process.exit(1)
+  }
 }
 
 if (args.json) {

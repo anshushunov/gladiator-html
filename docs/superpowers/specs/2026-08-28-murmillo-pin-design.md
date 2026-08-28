@@ -452,8 +452,26 @@ Three clauses. All must hold.
 > `technical vs fast`, `fast vs fast`.
 >
 > **P3.** **Each** of those three comparator matchups is itself at least **80%**
-> of its own pre-change measured share — 31.7%, 31.7% and 67.2% respectively, so
-> 25.4%, 25.4% and 53.8%.
+> of its own pre-change measured share — **26.0%, 29.7% and 42.5%** respectively,
+> so **20.8%, 23.7% and 34.0%**.
+
+**P3's floors were re-derived in PR-3, and the old ones would have failed the
+authored build.** They read 25.4 / 25.4 / 53.8 — 80% of 31.7, 31.7 and 67.2 —
+and those three shares counted every episode that **reached the exit range**,
+because they were measured before round-3 review made a success also require
+0.75 units of ground. Two rounds changed two things and neither was re-derived
+against the other.
+
+Measured on PR-2's seam under the definition the gate actually uses, 200 seeds:
+**26.0%, 29.7%, 42.5%**. The mirror is where the two definitions diverge most,
+and the reason is itself the finding: **222 of its 588 range exits — 37.8% —
+opened less than 0.75 units.** Round-3's epsilon-success construction was never
+hypothetical; it is more than a third of the shipped mirror.
+
+So the rule is frozen and unchanged, and only its inputs moved: the absolute
+floors are lower because the population they floor is smaller, not because the
+gate was loosened. Truncated to three decimals so a re-run's last digit cannot
+flip a gate.
 
 - **Source of 25%:** the mechanic's own measured performance against its other
   opponents on the shipped content. 25% sits below the lower of the two,
@@ -496,11 +514,25 @@ Three clauses. All must hold.
   all-episode median is then carried by the failures, and a success-only median
   by a small fast subset. Asserting both makes P, Q and Q2 describe the same
   fight rather than three disjoint slices of it.
-- **Baseline NOT established.** 0.659 as measured, and §4.0 now withdraws every
-  error bound and sign I attached to it: the harness samples after phases 9–10,
-  where a single `heavy-cleave` push of 0.70 dwarfs any locomotion arithmetic.
-  Q's baseline is measured on PR-2's seam before Q is frozen. The 0.75 bar itself
-  is not in question — only the shipped figure it is compared to.
+- **Baseline established in PR-3, on the seam.** It was withheld until then:
+  0.659 was measured by a harness sampling after phases 9–10, where a single
+  `heavy-cleave` push of 0.70 dwarfs any locomotion arithmetic, and §4.0
+  withdraws every error bound and sign attached to it. The 0.75 bar itself was
+  never in question — only the shipped figure it is compared to.
+
+  Read in phase 2 at both ends, 200 seeds:
+
+  | | median ground, successes | median ground, all decided | episodes | successes |
+  |---|---:|---:|---:|---:|
+  | `fast vs heavy` | 1.00 | **0.72** ✘ | 475 | 6 |
+  | `heavy vs fast` | 1.13 | **0.75** ✔ | 474 | 5 |
+
+  So **Q fails today in one orientation and passes in the other, by 0.03 and by
+  nothing**, and the success-only medians clear the bar comfortably in both —
+  which is exactly the split the two-population form of Q was added to expose.
+  The honest reading is not "the ground is nearly fine": five and six successes
+  out of ~475 is the ground being opened by almost nobody, and the all-episode
+  median is what carries that.
 
 ### Q2. The escape must not become trivial to complete
 
@@ -641,9 +673,17 @@ Three clauses. All must hold.
 
 ### S. The reach claim of the previous slice does not regress
 
-> `measure-reach.ts --seeds 200 --gate` continues to pass. The A–G clauses and
-> their thresholds are frozen; PR-3 may add clauses to that file and may not
-> alter one of these.
+> The **A–G clauses and their thresholds are frozen** and continue to pass on
+> every run. PR-3 may add clauses to that file and may not alter one of these.
+
+**Wording corrected a second time, in PR-3.** This clause read "`measure-reach.ts
+--seeds 200 --gate` continues to pass", which was written before this slice's own
+clauses joined the same flag — and P and Q are defect detectors that are
+*supposed* to fail until PR-4 lands. Taken literally, S would have been violated
+by the criteria working. `measure-reach.ts` now reports the two groups
+separately, so "the A–G group passes" is a thing a run actually prints, and a red
+gate says which kind of red it is instead of leaving a reader to guess whether
+nothing is wrong yet or the previous slice regressed.
 
 - **Source:** the previous slice's frozen gates. Baseline: all pass, with
   retiarius whole-type 63.3% against a `fast`-free hoplomachus at 71.9%.

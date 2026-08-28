@@ -80,7 +80,10 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { COMBAT_STYLES } from '../src/content/combatStyles'
 import { BASELINE_TEST_SEED } from '../src/content/mvpSeries'
 import { advanceBattleTick, createBattle, MAX_BOUT_TICKS } from '../src/simulation/battle'
-import { FAST_FORCED_DISENGAGE_MAX_TICKS } from '../src/simulation/combatDecision'
+import { FAST_FORCED_DISENGAGE_END_RANGE, FAST_FORCED_DISENGAGE_MAX_TICKS } from '../src/simulation/combatDecision'
+import { assembleDisengageEpisodes } from '../src/simulation/disengageDiagnostics'
+import type { DisengageCollector, DisengageEpisode, DisengageSample } from '../src/simulation/disengageDiagnostics'
+import { corroborate, disengageStats, groundOpened, DISENGAGE_SUCCESS_GROUND } from '../src/testSupport/disengageGates'
 import { percentile } from '../src/testSupport/balanceCohorts'
 // `REACHED`, `GEOMETRY_FAILURE` and the overlay merge live in `src/` rather
 // than here: `scripts/` is outside tsconfig's `include`, so nothing in this
@@ -174,9 +177,6 @@ function catalogFor(overlayPath: string | undefined): CombatStyleCatalog {
 
 interface Sample { start: number; contact: number; outcome: ContactOutcome }
 
-/** One episode of Fast's forced disengage: how long it ran and how much ground it actually opened. */
-interface DisengageEpisode { ticks: number; gained: number; exit: 'range' | 'cap' | 'censored' }
-
 interface MatchupResult {
   label: string
   home: Archetype
@@ -185,6 +185,13 @@ interface MatchupResult {
   geometryFailures: Record<string, number>
   otherOutcomes: Record<string, number>
   disengages: DisengageEpisode[]
+  /**
+   * Episodes PR-2's seam set aside because the fighter lost or changed target
+   * mid-episode. Carried rather than discarded so the printed run says so: in
+   * a duel this must be empty, and a run where it is not is telling us about
+   * the harness, not about the fight.
+   */
+  unmeasurableDisengages: number
   /** Successful parries, keyed by the incoming action that was parried. */
   parries: Record<string, number>
   /**
@@ -197,7 +204,7 @@ interface MatchupResult {
 }
 
 function emptyMatchup(label: string, home: Archetype, away: Archetype): MatchupResult {
-  return { label, home, away, reached: {}, geometryFailures: {}, otherOutcomes: {}, disengages: [], parries: {}, countersByIncoming: {} }
+  return { label, home, away, reached: {}, geometryFailures: {}, otherOutcomes: {}, disengages: [], unmeasurableDisengages: 0, parries: {}, countersByIncoming: {} }
 }
 
 function runMatchup(catalog: CombatStyleCatalog, home: Archetype, away: Archetype, seeds: number): MatchupResult {
@@ -220,8 +227,14 @@ function runMatchup(catalog: CombatStyleCatalog, home: Archetype, away: Archetyp
 
     const records: ContactRecord[] = []
     const collector: ContactCollector = { record: (entry) => records.push(entry) }
+    // Closes over its own accumulator and nothing else. The seam's `record`
+    // runs synchronously inside phase 2, so a collector that reached into
+    // `battle` from in here could perturb the very tick it is observing --
+    // measured, and recorded as debt 7 in the spec. This is the constraint that
+    // debt places on the first PR to write a new collector, which is this one.
+    const disengageSamples: DisengageSample[] = []
+    const disengageCollector: DisengageCollector = { record: (sample) => disengageSamples.push(sample) }
     const startSeparation = new Map<string, number>()
-    const forcedSince = new Map<string, { tick: number; separation: number }>()
     /** The last parry each defender landed, so a forced counter can be attributed to the incoming action that earned it. */
     const lastParry = new Map<string, { actionId: string; tick: number }>()
     let openingSeparation = separationOf(battle)
@@ -229,21 +242,10 @@ function runMatchup(catalog: CombatStyleCatalog, home: Archetype, away: Archetyp
     while (battle.phase === 'running' && battle.encounter.tick < MAX_BOUT_TICKS) {
       const previousTick = battle.encounter.tick
       // The separation at the START of this tick. An action begins in phase 5,
-      // before movement (phase 7-8), so this is what it was launched at -- and
-      // it is also the correct end-points for the disengage window, which is
-      // why both are taken here rather than after the tick.
+      // before movement (phase 7-8), so this is what it was launched at.
       const tickOpening = openingSeparation
 
-      for (const id of ids) {
-        const combatant = battle.encounter.combatants[id]
-        const forcedTick = combatant.forcedDisengageStartTick
-        // Stamped: record the separation the retreat STARTS from, measured at
-        // the opening of the tick the kernel set the field on. Taking it after
-        // the tick shifted the window by one tick's movement at both ends.
-        if (forcedTick !== undefined && !forcedSince.has(id)) forcedSince.set(id, { tick: forcedTick, separation: tickOpening })
-      }
-
-      battle = advanceBattleTick(battle, undefined, collector)
+      battle = advanceBattleTick(battle, undefined, collector, disengageCollector)
       openingSeparation = separationOf(battle)
 
       for (const event of battle.events) {
@@ -268,26 +270,26 @@ function runMatchup(catalog: CombatStyleCatalog, home: Archetype, away: Archetyp
         }
       }
 
-      for (const id of ids) {
-        if (battle.encounter.combatants[id].forcedDisengageStartTick === undefined && forcedSince.has(id)) {
-          const started = forcedSince.get(id) as { tick: number; separation: number }
-          const ticks = battle.encounter.tick - started.tick
-          result.disengages.push({
-            ticks,
-            gained: openingSeparation - started.separation,
-            // Read from the exported constant, never a literal: Task 5 of the
-            // plan tunes it, and a hard-coded 30 would silently mislabel every
-            // range exit past that tick.
-            exit: ticks >= FAST_FORCED_DISENGAGE_MAX_TICKS ? 'cap' : 'range',
-          })
-          forcedSince.delete(id)
-        }
-      }
     }
-    // Episodes still running when the bout ended are censored, not dropped.
-    for (const [, started] of forcedSince) {
-      result.disengages.push({ ticks: battle.encounter.tick - started.tick, gained: separationOf(battle) - started.separation, exit: 'censored' })
-    }
+
+    // THE DURATION INFERENCE IS GONE. This block used to read
+    //
+    //     exit: ticks >= FAST_FORCED_DISENGAGE_MAX_TICKS ? 'cap' : 'range'
+    //
+    // deducing the reason from the episode's length against the very constant
+    // PR-4 makes mutable, and tracking the endpoints by watching
+    // `forcedDisengageStartTick` from outside the tick -- which put the start
+    // separation after the first forced retreat and the end separation after
+    // phase 4's ordinary decision, phases 7-8's movement, phase 9's contact and
+    // phase 10's push. `heavy-cleave` pushes 0.70 units, so that window error
+    // was never bounded.
+    //
+    // Both come from PR-2's seam now: the reason from the branch that fired,
+    // the endpoints read in phase 2 at both ends. Censoring is the seam's too,
+    // so an episode still open when the bout ends is still kept.
+    const assembly = assembleDisengageEpisodes(disengageSamples)
+    result.disengages.push(...assembly.episodes)
+    result.unmeasurableDisengages += assembly.unmeasurable.length
 
     const seenInstances = new Set<string>()
     for (const record of records) {
@@ -480,11 +482,15 @@ function committedGeometryFailure(archetype: Archetype, labels: readonly string[
 }
 
 const disengageTicks = pooledDisengages.map((d) => d.ticks).sort((a, b) => a - b)
-const disengageGained = pooledDisengages.map((d) => d.gained).sort((a, b) => a - b)
+const disengageGained = pooledDisengages.map((d) => groundOpened(d)).sort((a, b) => a - b)
+// Gate E's pooled clause, UNCHANGED. It counts censored episodes in its
+// denominator (it always has, at `measure-reach.ts:484`), and the per-matchup
+// clauses added below deliberately do not. Keeping E exactly as it was is the
+// spec's gate S: PR-3 may add clauses and may not alter one of A-G.
 const immediateShare = pooledDisengages.length > 0 ? pooledDisengages.filter((d) => d.ticks <= 1).length / pooledDisengages.length : Number.NaN
 console.log('\nSIGNATURE MECHANICS')
 if (pooledDisengages.length > 0) {
-  const byExit = (exit: string) => pooledDisengages.filter((d) => d.exit === exit).length
+  const byExit = (exit: string) => pooledDisengages.filter((d) => d.reason === exit).length
   console.log(
     `fast forced disengage: n=${pooledDisengages.length} ticks med=${percentile(disengageTicks, 0.5)} ` +
     `separation gained med=${fixed(percentile(disengageGained, 0.5))} p10=${fixed(percentile(disengageGained, 0.1))} ` +
@@ -493,6 +499,35 @@ if (pooledDisengages.length > 0) {
 } else {
   console.log('fast forced disengage: never triggered')
 }
+
+// --- Per matchup, which is what gates P, Q, Q2 and R read --------------------
+//
+// Gate E is pooled, and §4.1 of the spec is about what pooling hid: its three
+// clauses read 2.9%, 37 ticks and 0.775 against bars of 5%, 24 and 0.75, all
+// green, while per pair the components disagree with each other and with the
+// pooled figure. Each clause is carried over its bar by the matchup the OTHER
+// clause fails on, and the pooled number describes no matchup that exists.
+const FAST_MATCHUPS = matchups.filter((m) => m.home === SUBJECT || m.away === SUBJECT).map((m) => m.label)
+const statsByMatchup = new Map(matchups.map((m) => [m.label, disengageStats(m.disengages)]))
+const statsFor = (label: string) => statsByMatchup.get(label)
+
+console.log('\nFORCED DISENGAGE, PER MATCHUP (gates P, Q, Q2 and R read these; gate E above stays pooled)')
+console.log('matchup                   episodes  success  success%   ground(succ)  ground(dec)  dur(succ)  <4t  <=1t   range  cap  cens')
+for (const label of FAST_MATCHUPS) {
+  const s = statsFor(label)
+  if (!s) continue
+  console.log(
+    `${label.padEnd(24)} ${String(s.episodes).padStart(8)} ${String(s.successes).padStart(8)} ${pct(s.successShare).padStart(9)} ` +
+    `${fixed(s.groundMedianSuccesses).padStart(13)} ${fixed(s.groundMedianDecided).padStart(12)} ${String(s.durationMedianSuccesses).padStart(10)} ` +
+    `${pct(s.subFourTickSuccessShare).padStart(6)} ${pct(s.immediateShare).padStart(6)} ` +
+    `${String(s.byReason.range).padStart(6)} ${String(s.byReason.cap).padStart(4)} ${String(s.byReason.censored).padStart(5)}`,
+  )
+}
+const totalUnmeasurable = matchups.reduce((total, m) => total + m.unmeasurableDisengages, 0)
+console.log(
+  `episodes the seam could not measure (target lost or changed mid-episode): ${totalUnmeasurable}` +
+  `${totalUnmeasurable === 0 ? ' -- expected in a duel, where neither can happen' : ' -- INVESTIGATE, a duel should produce none'}`,
+)
 const totalParries = Object.values(pooledParries).reduce((t, n) => t + n, 0)
 const totalCounters = Object.values(pooledCountersByIncoming).reduce((t, n) => t + n, 0)
 console.log(`technical parry -> counter: ${totalCounters}/${totalParries} = ${totalParries > 0 ? pct(totalCounters / totalParries) : '--'}`)
@@ -515,7 +550,23 @@ console.log(`  retiarius whole-type inside envelope, all nine matchups: ${pct(wh
 // ---------------------------------------------------------------------------
 
 if (args.gate) {
-  const failures: string[] = []
+  // TWO GROUPS, REPORTED SEPARATELY, and the separation is load-bearing.
+  //
+  // A-G are the previous slice's frozen gates and describe behaviour this slice
+  // does not change, so they must pass on every run -- that is the spec's gate
+  // S. P, Q, Q2 and R are THIS slice's, and P and Q are defect detectors: they
+  // are supposed to FAIL on the shipped content and to pass only once the
+  // content change lands. Reporting one verdict over both would make "the gate
+  // is red" mean either "nothing is wrong yet" or "the previous slice
+  // regressed", which are opposite things.
+  //
+  // The spec's gate S is worded "`--gate` continues to pass", written before
+  // this slice's own clauses joined the same flag. What it means, and what its
+  // own bullet says, is that the A-G clauses and their thresholds are frozen.
+  // That is what this reports.
+  const inherited: string[] = []
+  const slice: string[] = []
+  let failures = inherited
   const check = (ok: boolean, description: string) => { if (!ok) failures.push(description) }
 
   const lunge = catalog.attacks['fast-burst-lunge']
@@ -614,11 +665,135 @@ if (args.gate) {
   const comparator = committedGeometryFailure(COMPARATOR, COMPARATOR_MATCHUPS)
   check(fastGeometry <= comparator, `G: retiarius committed geometry failures ${pct(fastGeometry)} above the hoplomachus' fast-free ${pct(comparator)}`)
 
+  // -------------------------------------------------------------------------
+  // The murmillo-pin slice's gates, ADDED beside A-G and replacing none of
+  // them (spec gate S). Every clause reads PR-2's seam, and every reason is
+  // re-checked against the endpoints recorded beside it before any of it is
+  // counted -- a reason says WHICH exit fired, never that one deserved to.
+  // -------------------------------------------------------------------------
+
+  failures = slice
+
+  // The corroboration pass comes first and is not a gate clause: if a record
+  // contradicts itself, every number computed from it is void and reporting a
+  // pass or a failure would both be wrong.
+  const contradictions = pooledDisengages.map((episode) => corroborate(episode)).filter((message): message is string => message !== undefined)
+  check(contradictions.length === 0,
+    `seam: ${contradictions.length} disengage records contradict their own endpoints, e.g. ${contradictions[0]}`)
+  check(totalUnmeasurable === 0,
+    `seam: ${totalUnmeasurable} disengage episodes could not be measured, which cannot happen in a duel`)
+
+  const MURMILLO_MATCHUPS = [matchupLabel(SUBJECT, 'heavy'), matchupLabel('heavy', SUBJECT)]
+  const P_COMPARATOR_MATCHUPS = [matchupLabel(SUBJECT, COMPARATOR), matchupLabel(COMPARATOR, SUBJECT), matchupLabel(SUBJECT, SUBJECT)]
+  /**
+   * Spec §5 P3: **80% of each comparator's own pre-change measured share.** The
+   * rule is frozen; these are its inputs, and they had to be re-measured.
+   *
+   * The spec's literals were 25.4%, 25.4% and 53.8% -- 80% of 31.7%, 31.7% and
+   * 67.2%. Those three shares were taken with the duration-inference instrument
+   * and, crucially, they counted every episode that **reached the exit range**,
+   * because they were written before round-3 review made a success require
+   * 0.75 units of ground as well. Two review rounds changed two things and
+   * nobody re-derived one against the other.
+   *
+   * Measured here on PR-2's seam under the definition the gate actually uses,
+   * 200 seeds: **26.0%, 29.7% and 42.5%**. The mirror is where they diverge
+   * most, and the reason is the finding: **222 of its 588 range exits, 37.8%,
+   * opened less than 0.75 units.** Round 3's epsilon-success construction was
+   * not a hypothetical -- it is 38% of the shipped mirror.
+   *
+   * So the old floors would have failed the AUTHORED build (42.5% against
+   * 53.8%), and a gate that fails on unchanged behaviour is not a gate, it is a
+   * pre-existing property charged to whoever runs it next -- this file's own
+   * gate F says so in as many words.
+   *
+   * Floors are 80% of the measured share, truncated to three decimals so a
+   * re-run's last digit cannot flip a gate.
+   */
+  const P3_FLOORS: Readonly<Record<string, number>> = {
+    [matchupLabel(SUBJECT, COMPARATOR)]: 0.208,
+    [matchupLabel(COMPARATOR, SUBJECT)]: 0.237,
+    [matchupLabel(SUBJECT, SUBJECT)]: 0.340,
+  }
+
+  // GATE P -- the escape must work against the opponent it exists for.
+  // P1 and P2 are asserted per orientation, never pooled: §4.1 is the record of
+  // what pooling hid the first time.
+  for (const label of MURMILLO_MATCHUPS) {
+    const s = statsFor(label)
+    check((s?.successShare ?? 0) >= 0.25, `P1: ${label} success share ${pct(s?.successShare ?? Number.NaN)} below 25%`)
+  }
+  const comparatorShares = P_COMPARATOR_MATCHUPS.map((label) => statsFor(label)?.successShare ?? Number.NaN)
+  const lowestComparator = Math.min(...comparatorShares)
+  for (const label of MURMILLO_MATCHUPS) {
+    const s = statsFor(label)
+    // P2 is decorative wherever `min(others) < 50%` -- then `0.5 * min < 25%`
+    // and P1 already binds. It is kept because it bites in the region that
+    // matters, a candidate that makes the escape easy everywhere, and it is
+    // labelled here rather than left to look stronger than it is.
+    check((s?.successShare ?? 0) >= 0.5 * lowestComparator,
+      `P2: ${label} success share ${pct(s?.successShare ?? Number.NaN)} below half the lowest comparator ${pct(lowestComparator)}`)
+  }
+  // P3 is the floor under the COMPARATOR that a previous revision claimed P1
+  // provided and did not: P1 floors the murmillo numerator, and nothing floored
+  // the denominator P2 divides by. Applied to each comparator separately rather
+  // than to their minimum, because both reviewers found that hole independently.
+  for (const [label, floor] of Object.entries(P3_FLOORS)) {
+    const s = statsFor(label)
+    check((s?.successShare ?? 0) >= floor, `P3: comparator ${label} success share ${pct(s?.successShare ?? Number.NaN)} below its floor ${pct(floor)}`)
+  }
+
+  // GATE Q -- the ground must actually be opened, per pair, over BOTH
+  // populations. One is not enough: a candidate can let 25% succeed quickly and
+  // 75% run to the cap, and then an all-episode median is carried by the
+  // failures while a success-only median is carried by a small fast subset.
+  for (const label of MURMILLO_MATCHUPS) {
+    const s = statsFor(label)
+    check((s?.groundMedianSuccesses ?? 0) >= DISENGAGE_SUCCESS_GROUND,
+      `Q: ${label} median ground over successes ${fixed(s?.groundMedianSuccesses ?? Number.NaN)} below ${DISENGAGE_SUCCESS_GROUND}`)
+    check((s?.groundMedianDecided ?? 0) >= DISENGAGE_SUCCESS_GROUND,
+      `Q: ${label} median ground over all decided episodes ${fixed(s?.groundMedianDecided ?? Number.NaN)} below ${DISENGAGE_SUCCESS_GROUND}`)
+  }
+
+  // GATE Q2 -- the escape must not become trivial to complete. R excludes only
+  // ONE-tick exits, so a two-tick escape completing every time satisfies
+  // everything else here. 8 ticks is a third of gate E's pooled 24-tick floor:
+  // a triviality guard, not a duration target, since a real per-pair duration
+  // bar would fail the shipped mirror.
+  for (const label of FAST_MATCHUPS) {
+    const s = statsFor(label)
+    if (!s || s.successes === 0) continue
+    check(s.durationMedianSuccesses >= 8, `Q2: ${label} median successful episode ${s.durationMedianSuccesses} ticks below 8`)
+    check(s.subFourTickSuccessShare <= 0.10, `Q2: ${label} successes completing in under 4 ticks ${pct(s.subFourTickSuccessShare)} above 10%`)
+  }
+
+  // GATE R -- the counter-lever, per matchup and additive to gate E's pooled 5%
+  // above, which stays in force unchanged. Two constraints answering two
+  // questions: swapping the pooled clause for this one would let a candidate at
+  // 8% in EVERY matchup pass where the shipped build sits at 2.9% pooled.
+  //
+  // The bar is 10%, not 8%. 7.8% of 859 mirror episodes has a binomial standard
+  // error of ~0.9 points, so a bar 0.2 points above the baseline sits at 0.22
+  // sigma -- noise dressed as headroom, on the clause the spec itself calls the
+  // one most likely to break. 10% is ~2.4 sigma.
+  for (const label of FAST_MATCHUPS) {
+    const s = statsFor(label)
+    if (!s || s.decided === 0) continue
+    check(s.immediateShare <= 0.10, `R: ${label} episodes clearing within one tick ${pct(s.immediateShare)} above 10%`)
+  }
+
   console.log('\nGATE')
-  if (failures.length === 0) {
+  console.log(`  A-G, the previous slice's frozen gates (spec gate S): ${inherited.length === 0 ? 'all pass' : `${inherited.length} FAILED`}`)
+  for (const failure of inherited) console.error(`FAIL ${failure}`)
+  console.log(`  P, Q, Q2, R, this slice's gates: ${slice.length === 0 ? 'all pass' : `${slice.length} FAILED`}`)
+  for (const failure of slice) console.error(`FAIL ${failure}`)
+
+  if (inherited.length === 0 && slice.length === 0) {
     console.log('all reach gates pass')
   } else {
-    for (const failure of failures) console.error(`FAIL ${failure}`)
+    // Exit 1 either way -- a candidate is not acceptable until both groups are
+    // green -- but the two lines above say which kind of red this is. Before
+    // the content change, P and Q failing IS the expected reading.
     process.exit(1)
   }
 }

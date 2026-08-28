@@ -1698,3 +1698,111 @@ have to appear in its denominators rather than being quietly skipped.
 Standing: PR #20 open and unmerged, so the inherited
 `tests/__screenshots__/linux/**` exemption stays. Debts 5 and 7 unpaid. The
 human review gate still needs two people who did not write the combat.
+
+
+---
+
+## 2026-08-29 — session 4, phase 2: PR-3, the criteria
+
+**Phase:** 2. Boundary first (`568e740`), then the work. `src/simulation/**` is
+**closed again** — PR-2 opened four files there to build the seam, PR-3 consumes
+it and must not touch it, and the second allowlist pass is anchored at PR-2's
+tip so it can tell an inherited change from a fresh one.
+
+### What was built
+
+- `src/testSupport/disengageGates.ts` — what a success *is*, kept out of the
+  script for the reason PR-1 kept `distanceHarness.ts` in `src/`: `scripts/` is
+  outside tsconfig's `include` and Vitest cannot reach it, so gate arithmetic
+  living there is gate arithmetic nobody tests. 14 regressions.
+- `measure-reach.ts` — the duration inference is **gone**. Both endpoints and
+  the reason come from PR-2's seam; every reason is re-checked against the
+  endpoints recorded beside it before anything is counted; the disengage report
+  is per matchup, which is what §4.1 says pooling hid. Gates P, Q, Q2 and R
+  added beside A–G, replacing none.
+- `measure-distance.ts` — the `--gate` its own header said was deliberately
+  missing, for gate V, plus gate U's stopping criterion via `--baseline`. The
+  shipped baseline is committed as
+  `docs/superpowers/plans/2026-08-29-distance-baseline.json`, so PR-4 is judged
+  against a recorded run rather than a remembered one.
+
+### The gate now says which kind of red it is
+
+A–G describe behaviour this slice does not change and must pass on every run.
+P and Q are **defect detectors and are supposed to fail** until the content
+lands. One verdict over both would make "the gate is red" mean either "nothing
+is wrong yet" or "the previous slice regressed" — opposite things. Two groups,
+reported separately.
+
+That also fixed gate S, whose headline read "`--gate` continues to pass". Taken
+literally, **S would have been violated by the criteria working.** Its own
+bullet always said the narrower and correct thing; the headline is now the same.
+
+### The measurement, 200 seeds, on the seam
+
+| matchup | episodes | successes | success% | ground (succ) | ground (decided) | ≤1 tick |
+|---|---:|---:|---:|---:|---:|---:|
+| `heavy vs fast` | 474 | 5 | **1.1%** | 1.13 | **0.75** | 0.0% |
+| `fast vs heavy` | 475 | 6 | **1.3%** | 1.00 | **0.72** | 0.0% |
+| `fast vs fast` | 861 | 366 | 42.5% | 1.36 | 0.93 | 7.9% |
+| `fast vs technical` | 315 | 82 | 26.0% | 1.10 | 1.06 | 0.0% |
+| `technical vs fast` | 293 | 87 | 29.7% | 1.08 | 1.02 | 0.0% |
+
+Gate state on the shipped content: **A–G all pass. V passes** (3.76 and 3.76
+against a bar of 3.55, reproduced exactly). **Q2 and R pass. P1, P2 and Q fail**
+— which is the defect, stated in numbers the slice can now hold a candidate to.
+
+Gate Q's baseline is established for the first time here, and it is not the
+0.659 the spec carried: **0.72 and 0.75**, read in phase 2 at both ends. So Q
+fails in one orientation by 0.03 and passes in the other by nothing, while the
+success-only medians clear the bar comfortably in both. The honest reading is
+not "the ground is nearly fine" — five and six successes out of ~475 is the
+ground being opened by almost nobody, and the all-episode median is what carries
+that.
+
+### Where I was wrong: P3's floors would have failed the authored build
+
+P3 asks that each comparator matchup stay at 80% of its own pre-change measured
+share, and the spec carried 25.4 / 25.4 / **53.8%** — 80% of 31.7, 31.7 and
+67.2. Run against the seam, `fast vs fast` reads **42.5%**, so the shipped
+content failed P3 with no candidate in sight. By this file's own standard — the
+one gate F states in as many words — a gate that fails on unchanged behaviour is
+not a gate, it is a pre-existing property charged to whoever runs it next.
+
+**The cause is two review rounds that never met.** Round 2 installed P3's
+floors, computed from shares that counted every episode which *reached the exit
+range*. Round 3 then made a success also require 0.75 units of ground. Neither
+was re-derived against the other, and the gap only shows when both run at once,
+which is here.
+
+The reason the mirror moves furthest is the finding worth keeping: **222 of its
+588 range exits — 37.8% — opened less than 0.75 units.** Round-3's
+epsilon-success construction was never hypothetical. It is more than a third of
+the shipped mirror.
+
+The rule is frozen and unchanged; only its inputs were re-measured, to 26.0 /
+29.7 / 42.5%, giving floors of 20.8 / 23.7 / 34.0%. **The absolute floors are
+lower because the population they floor is smaller, not because the gate was
+loosened** — and that sentence is in the spec too, because "we re-derived the
+bar and now it passes" is exactly the shape of a gate being quietly weakened,
+and the only defence is showing which half moved.
+
+### Acceptance
+
+- `tsc --noEmit` clean.
+- Full suite **846 passed, 41 files** — 832 before, plus the 14 in
+  `disengageGates.test.ts`.
+- `check:allowlist` green on both passes, four negative controls.
+- Nine `stateHash.test.ts` digests unchanged, which with `src/simulation/**` and
+  `src/content/**` both closed they must be — and if they had not been,
+  something being measured had also moved.
+
+### Where I stopped / next session
+
+PR-3 done. Next is **PR-4, the content**: the start-separation field on
+`FighterCombatState`, a pursuit-relative exit predicate, and the digests
+re-baselined in the diff that legitimately earns them. It is judged by criteria
+three earlier diffs wrote, and it has to move P1 from 1.1–1.3% to ≥25% and Q's
+decided median from 0.72 to ≥0.75 **without** dropping V below 3.55 or moving
+`pinnedShare`/`insideEnvelopeShare` by more than 5 points — V and P pull directly
+against each other, which §9 names as the most likely place the work stops.
