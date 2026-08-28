@@ -2,9 +2,9 @@
 
 **Status:** second revision, 2026-08-28, after external review (codex
 `gpt-5.6-sol`). Rewritten in §2.1, §4, §5 and §6 rather than patched: the review
-returned two blockers that invalidated the instrument the central gates were to
-be built on, and a document assembled by amendment would have kept the old gates
-visible beside the new ones.
+invalidated the instrument the central gates were to be built on, and a document
+assembled by amendment would have kept the old gates visible beside the new
+ones.
 
 The review's findings and their disposition are in §10. **All three blockers are
 confirmed.** The third was downgraded in a first pass and then restored, because
