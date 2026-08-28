@@ -1,7 +1,8 @@
 # The Murmillo Pin — Design
 
-**Status:** second revision, 2026-08-28, after external review (codex
-`gpt-5.6-sol`). Rewritten in §2.1, §4, §5 and §6 rather than patched: the review
+**Status:** third revision, 2026-08-28, after two rounds of external review
+(codex `gpt-5.6-sol`). **Not fit to implement**: §11 records an open design
+question that round 2 surfaced and this document cannot answer. Rewritten in §2.1, §4, §5 and §6 rather than patched: the review
 invalidated the instrument the central gates were to be built on, and a document
 assembled by amendment would have kept the old gates visible beside the new
 ones.
@@ -232,40 +233,27 @@ but the measured window is `[S, E]` while the real one is `[S−1, E−1]`. The 
 **drops one forced retreat at the front and picks up one ordinary movement at the
 back.**
 
-**A first revision of this section bounded that error at ~0.022 units and
-concluded the 0.659 baseline "does not reach 0.75 either way". That was wrong,
-and wrong in my own favour.** 0.022 is only the forced-retreat term I drop at the
-front; it ignores the ordinary movement I pick up at the back.
+**I have now got this paragraph wrong four times, each time in my own favour, and
+the fourth correction removes the claim entirely.**
 
-Signed, the error is
+The attempts: a ~0.022 bound covering only the term that helped; then ~±0.09 with
+"may sit on the bar"; then a signed interval of −0.11..0 concluding the
+measurement *understates* the gain. Round-2 review killed the third the same way
+the first two died — **the bound modelled locomotion only.** The harness samples
+after the whole tick, and `encounter.ts:2364-2372` runs phase 9 contact
+resolution and phase 10 accumulated push *after* movement. `heavy-cleave` authors
+`pushDistance` **0.70** (`combatStyles.ts:113`). A single cleave landing on either
+shifted endpoint moves the separation by six times my whole error interval, in
+whichever direction the contact went.
 
-```
-measured − true = (ordinary movement at the exit) − (first forced retreat)
-```
+So there is no interval and no sign. **The ground-gain baseline is unestablished,
+and that is the entire claim.** It is obtained from PR-2's phase-2 seam before
+gate Q is frozen or its number interpreted.
 
-The first forced retreat is Fast backing off at 2.7 u/s while the murmillo closes
-at 1.4, so about **+0.022** per tick. The ordinary movement depends on what
-weighted selection picks the instant the disengage lifts, and the extreme is
-`burst-in` — 4.0 u/s toward an opponent already closing, about **−0.09**. Fast
-authors `burst-in` at weight 14, the largest in its table
-(`combatStyles.ts:51-59`), so this is not a corner case.
-
-So `measured − true` runs from about **−0.11 to 0**, and therefore
-
-```
-true median ∈ [0.659, ~0.77]
-```
-
-**The measurement understates the ground opened, and the true figure brackets the
-0.75 bar rather than sitting below it.** That is the opposite of what my first
-revision claimed, and it is the direction that weakens my own case: measured
-correctly, gate Q may already pass on shipped content.
-
-Stated plainly rather than softened: **the ground-gained half of §2's finding is
-not established at all.** What survives untouched is the completion rate — 1.6%
-against 31.7% and 67.2% — because that counts episodes, and a one-tick window
-shift cannot move a forty-fold ratio. §2's headline rests on the completion rate
-alone until PR-2's seam re-measures the gain.
+The completion-rate finding is untouched and is kept separate for exactly this
+reason: the window defect shifts *when* endpoints are read, and cannot change
+*how many* episodes ended by reaching a range. 1.6% against 31.7% and 67.2%
+stands.
 
 **What PR-2 must build.** A write-only diagnostic seam on the model of
 `src/simulation/contactDiagnostics.ts`, which the previous slice added for
@@ -278,9 +266,20 @@ disengage episode, carrying
 - the separation at the instant it was cleared, read in phase 2 before ordinary
   movement resumes;
 - elapsed ticks;
-- **a stable exit-reason enum returned by the predicate itself** — `range`,
-  `cap`, and whatever a new predicate adds — never inferred from duration;
+- **a closed, frozen exit-reason enum** — exactly `range`, `cap`, `progress`,
+  `censored` — returned by the predicate itself and never inferred from
+  duration. **PR-4 may not add a reason, rename one, or move one between the
+  success and failure sets.** Round-2 review found that the previous wording
+  ("whatever a new predicate adds") reopened the hole one level up: a seam that
+  faithfully reports a reason the candidate invented is no better than a
+  duration inference;
 - episodes still open when the bout ends, marked `censored` rather than dropped.
+
+**And the gate checks the reason against the recorded endpoints, rather than
+trusting it.** A record labelled `range` must satisfy the range condition at its
+recorded end separation; a record labelled `progress` must satisfy the frozen
+minimum gain. A label the endpoints contradict fails the run loudly. The reason
+exists to say *which* success occurred; it is not evidence that one did.
 
 `npm test` passing unchanged with the seam in place is the evidence it is inert,
 which is the standard `contactDiagnostics.ts` was held to.
@@ -327,17 +326,37 @@ to the behaviour it judges. Both placements break the rule the split exists for.
    an instrument, changes nothing it measures.* `src/simulation/**`,
    `src/content/**` and `measure-reach.ts` all closed. **Merged state: done, on
    this branch.**
-2. **PR-2 — the diagnostic seam.** `src/simulation/` opened for a write-only
-   disengage collector and nothing else. Claim: *adds a seam, changes no
-   behaviour* — evidenced the way `contactDiagnostics.ts` was, by every frozen
-   hash and the whole suite passing unchanged. `src/content/**` closed;
-   `combatDecision.ts`'s constants and predicate closed.
+2. **PR-2 — the diagnostic seam, and *no new combatant state*.**
+   `src/simulation/` opened for a write-only disengage collector, plus the
+   predicate's return type widening from `boolean` to the frozen exit-reason
+   enum. Claim: *adds a seam, changes no behaviour* — evidenced the way
+   `contactDiagnostics.ts` was, by every frozen hash and the whole suite passing
+   unchanged. `src/content/**` closed; the predicate's constants and its
+   *decision* closed.
+
+   **Round-2 review found the previous version of this PR impossible, twice
+   over.** It said the predicate was closed while §4.0 and §6 required PR-2 to
+   change it, and it promised every frozen hash held while also adding a field to
+   `FighterCombatState` — and `stateHash.test.ts:57-80` rolls a hash of the
+   **whole** `BattleState` after every tick of nine pairings, so a new populated
+   field moves nine digests by construction. The claim and the content could not
+   both be true.
+
+   The split that works: the **collector** can read both endpoints in phase 2
+   without the kernel storing anything, so PR-2 needs no new state and keeps its
+   hashes. The **start-separation field** the pursuit-relative predicate needs is
+   real state, so it moves to PR-4, where behaviour changes anyway and the
+   digests are re-baselined in the diff that legitimately earns it.
 3. **PR-3 — the criteria.** `measure-reach.ts` opened to report per matchup and
    to assert §5, built on PR-2's seam. Gate E's pooled clauses are **kept
    unchanged and added to**, not replaced. Claim: *changes the criteria, changes
    nothing they judge.* Simulation and content both closed.
-4. **PR-4 — the content.** The change itself, judged by a boundary and by
-   criteria that three earlier merged diffs wrote.
+4. **PR-4 — the content.** The change itself, plus the start-separation field on
+   `FighterCombatState` and the predicate argument that reads it — judged by a
+   boundary and by criteria that three earlier merged diffs wrote. Every
+   whole-state digest it moves is re-baselined here with its reason, under the
+   determinism-artifact rule, and events, RNG consumption and terminal outcomes
+   are shown unchanged where behaviour was not meant to move.
 
 The ordering is the point in each case: no diff contains both a measurement and
 the thing it measures.
@@ -355,71 +374,88 @@ All at 200 seeds, equal-stat cohorts, seeds from `BASELINE_TEST_SEED`, nine
 ordered matchups. Every bar names its source. Baselines are the shipped content,
 measured before any candidate existed.
 
-**Every clause below reads its exit reason from PR-2's diagnostic seam. None may
-infer it from duration.** That sentence is the gate on the gates: a criterion
-built on `ticks >= MAX_TICKS` is void here regardless of what number it asserts.
+**Every clause below reads its exit reason from PR-2's diagnostic seam, and the
+gate re-checks that reason against the recorded endpoints.** A criterion built on
+`ticks >= MAX_TICKS`, or on a reason the endpoints contradict, is void here
+whatever number it asserts.
+
+**Definitions, frozen, because round-2 review found every one of them load-bearing
+and none of them stated:**
+
+- an **episode** is one stamped-to-cleared forced disengage, including those still
+  open when the bout ends;
+- a **success** is an episode whose exit reason is in the frozen success set
+  (`range`, and `progress` if a pursuit-relative predicate is adopted) *and* whose
+  recorded endpoints satisfy that reason's condition;
+- `cap` and `censored` are **non-successes** and stay in every denominator. An
+  implementation that drops censored records can flatter itself by running
+  failures past the end of the bout.
 
 ### P. The escape must work against the opponent it exists for *(the defect detector)*
 
-Two clauses, and both must hold. The first is an absolute floor; the second is
-the relationship the floor cannot express.
+Three clauses. All must hold.
 
 > **P1.** In `fast vs heavy` and in `heavy vs fast`, **each asserted separately**,
-> at least **25%** of Fast's forced-disengage episodes end with the seam's
-> success reason.
+> at least **25%** of episodes are successes.
 >
 > **P2.** In each of those two matchups, that share is at least **half** the
-> share measured in the same run for `fast vs technical`, `technical vs fast`,
-> `fast vs fast` — whichever of the three is **lowest**.
+> share measured in the same run for the lowest of `fast vs technical`,
+> `technical vs fast`, `fast vs fast`.
+>
+> **P3.** **Each** of those three comparator matchups is itself at least **80%**
+> of its own pre-change measured share — 31.7%, 31.7% and 67.2% respectively, so
+> 25.4%, 25.4% and 53.8%.
 
 - **Source of 25%:** the mechanic's own measured performance against its other
-  opponents on the shipped content — 31.7% against the hoplomachus, 67.2% in the
-  mirror. 25% sits below the lower, deliberately: this matchup is the hard one
-  and the gate must not demand parity with an unpursued escape.
-- **Why P2 exists, and why its comparator moves on purpose.** §2.1 records the
-  correction: `hasFastForcedDisengageEnded` is global to Fast, so the change
-  moves the hoplomachus and mirror columns too, and a frozen 25% would stop
-  encoding the standard it was derived from — a candidate taking the mirror to
-  99% while leaving the murmillo at 26% would pass. P2's comparator is measured
-  in the same run and therefore *does* move with the change. **That is
-  deliberate and it is the one case where it is correct**, because the property
-  asserted is the relationship itself, not a level. The usual objection — a
-  moving comparator can be satisfied by making the comparator worse — is what
-  P1 is for: the ratio cannot be met by degrading the denominator below 25%
-  absolute.
-- **Fails today:** 1.6% against 25%, and 1.6% against a lowest-other of 31.7%.
+  opponents on the shipped content. 25% sits below the lower of the two,
+  deliberately: this matchup is the hard one and the gate must not demand parity
+  with an unpursued escape.
+- **Why P3 exists, and it is round-2 review's finding, accepted whole.** A
+  previous revision claimed P1 was "the floor that stops the denominator being
+  degraded". **It is not — P1 floors the murmillo numerator; nothing floored the
+  comparator.** Driving any one of the three other matchups to zero would make
+  P2's `lowest` zero and P2 vacuous, so the moving-comparator defect survived with
+  a justification attached, which is precisely the shape this project keeps
+  producing. P3 is the floor that was claimed and missing, applied to **every**
+  comparator component separately rather than to their minimum.
+- **Why P2 keeps a live comparator at all.** §2.1: the predicate is global to
+  Fast, so a frozen 25% stops encoding the standard it came from. P2 asserts the
+  relationship; P1 and P3 stop it being met by degrading either side.
+- **Fails today:** 1.6% against 25%, and against a lowest-other of 31.7%.
 
 ### Q. The ground must actually be opened, per pair and not pooled
 
 > In `fast vs heavy` and in `heavy vs fast`, each asserted separately, the median
-> separation opened per episode — start to clear, both read in phase 2 from the
-> seam — is at least **0.75** units.
+> separation opened — start to clear, both read in phase 2 from the seam —
+> is at least **0.75** units, asserted **over successful episodes** and
+> **over all episodes** separately.
 
-- **Source:** gate E's own existing floor, `DISENGAGE_GAIN_FLOOR`, applied per
-  pair instead of pooled. The number is not new and is not chosen here.
-- **Baseline NOT yet established to gate precision.** 0.659 as measured, but
-  §4.0 shows the window is shifted by one tick and the error bound is ~±0.09, so
-  the true median may sit on the bar. **Q's baseline is re-measured on PR-2's
-  seam before Q is frozen**, and this bullet is the reminder that it has not
-  been. The 0.75 bar itself is not in question -- it is gate E's existing
-  `DISENGAGE_GAIN_FLOOR` -- only the shipped-content figure it is compared to.
-- **Why both P and Q:** each alone is satisfiable the wrong way, and the review
-  supplied the arithmetic for one of them. Ground alone is bought by raising the
-  cap from 37 to about **42** — five ticks, at the measured net rate of ~0.018
-  units/tick — which does nothing for P, since completion needs ~185. Completion
-  alone is bought by moving the exit close enough to be crossed immediately,
-  which R forbids.
+- **Source:** gate E's existing `DISENGAGE_GAIN_FLOOR`, applied per pair. Not new,
+  not chosen here.
+- **Both populations, because round-2 review showed one is not enough.** A
+  candidate can let 25% of episodes succeed quickly and 75% run to the cap; an
+  all-episode median is then carried by the failures, and a success-only median
+  by a small fast subset. Asserting both makes P, Q and Q2 describe the same
+  fight rather than three disjoint slices of it.
+- **Baseline NOT established.** 0.659 as measured, and §4.0 now withdraws every
+  error bound and sign I attached to it: the harness samples after phases 9–10,
+  where a single `heavy-cleave` push of 0.70 dwarfs any locomotion arithmetic.
+  Q's baseline is measured on PR-2's seam before Q is frozen. The 0.75 bar itself
+  is not in question — only the shipped figure it is compared to.
 
 ### Q2. The escape must not become trivial to complete
 
 > In every matchup containing a Fast fighter, the median episode duration is at
-> least **8** ticks.
+> least **8** ticks, asserted over **successful** episodes; and no more than
+> **10%** of successes complete in under 4 ticks.
 
-- **Source:** review's finding that R only excludes exits within *one* tick, so
-  a two-tick escape completing 100% of the time satisfies every other clause
-  here. 8 ticks is a third of gate E's existing 24-tick pooled duration floor,
-  chosen low deliberately — it is a triviality guard, not a duration target, and
-  a real duration bar per pair would fail the shipped mirror.
+- **Source:** review's finding that R excludes only *one*-tick exits, so a
+  two-tick escape completing every time satisfies everything else here. 8 ticks
+  is a third of gate E's existing 24-tick pooled floor — a triviality guard, not
+  a duration target, since a real per-pair duration bar would fail the shipped
+  mirror.
+- **Over successes, plus the sub-4-tick share**, because an all-episode median is
+  exactly the statistic a capped-failure population carries.
 - **Passes today** at 27–37 ticks per matchup.
 
 ### R. It must not become an instant escape anywhere *(the counter-lever)*
@@ -478,9 +514,17 @@ the relationship the floor cannot express.
 
 ### U. Time-at-distance is reported, not gated
 
-> `measure-distance.ts` is run before and after. A per-pair figure moving by more
-> than 5 points **stops the work** and is brought back to the design owner before
-> the candidate proceeds.
+> `measure-distance.ts` is run before and after at 200 seeds. **U is governed by
+> exactly two fields, in the engaged window, in each of the five ordered matchups
+> containing a Fast fighter: `pinnedShare` and `insideEnvelopeShare`.** An
+> absolute change of more than **5 percentage points** in either field, in any of
+> those five matchups, **stops the work** and is brought back to the design owner
+> before the candidate proceeds.
+>
+> `median`, `p10`, `p90`, `lungeBandShare`, `beyondShare`, the `all`-tick window
+> and the win rates are **reported and excluded** from U — they are context, and
+> leaving the binding field unnamed let a reader pick whichever one suited, which
+> is round-2 review's minor finding.
 
 - **A stopping criterion, not an explanation quota.** Review was right that "is
   explained in this document" let any movement through at the price of a
@@ -509,10 +553,12 @@ section is the written amendment design.md requires.
   (`combatDecision.ts:1013`) — including replacing the fixed-distance test with
   one that a pursuing opponent cannot deny, which is the hypothesis;
 - **the episode state the predicate needs to be pursuit-relative at all**, added
-  in PR-2 alongside the diagnostic seam: a start-separation field on
-  `FighterCombatState` beside the existing `forcedDisengageStartTick`
-  (`encounter.ts:215`), the wiring that stamps and clears it, and the predicate
-  signature that receives it — with serialization and invariant coverage;
+  **in PR-4, not PR-2**: a start-separation field on `FighterCombatState` beside
+  the existing `forcedDisengageStartTick` (`encounter.ts:215`), the wiring that
+  stamps and clears it, and the predicate signature that receives it — with
+  serialization and invariant coverage. It lands in PR-4 because it is real
+  combatant state and `stateHash.test.ts` hashes the whole `BattleState` every
+  tick, so no PR containing it can also claim the digests are untouched;
 - design.md's existing allowance, unchanged.
 
 **Why that third item is here, added after review.** A first revision listed only
@@ -526,8 +572,6 @@ class §3 identifies as the defect. A change surface that admits only the family
 of answers already known to fail is not a constraint, it is a guarantee of
 failure.
 
-The field is behaviour-neutral until the predicate reads it, so PR-2 can add it
-under the same "changes no behaviour" claim as the seam, evidenced the same way.
 The predicate must also state, before implementation, what it does when the
 target changes, when the target dies, and when arena correction moves a fighter
 without either of them walking.
@@ -619,6 +663,56 @@ precision it did not have, and every time the imprecision ran in the direction o
 the claim being made. Two of the four were caught by external review, one by
 re-reading my own arithmetic, and one by a reviewer that never managed to emit a
 valid report.
+
+## 10.5 External review, round 2 — findings and disposition
+
+Same reviewer, against the revision above. Two blockers, five majors, one minor.
+Every one checked against source; **none rejected**, and two required verifying a
+claim about a test I had not opened.
+
+| # | sev | finding | disposition |
+|---|---|---|---|
+| 11 | blocker | The seam closes the *duration* inference and not the *semantic* one: the reason comes from the mutable predicate, the spec permitted "whatever a new predicate adds", and P counted an undefined "success reason". Cap 43, exit at 42, return `range`. | **Confirmed by reading my own text.** The hole was reopened one level up. §4.0 now freezes a closed enum — `range`, `cap`, `progress`, `censored` — forbids PR-4 adding or relabelling, and requires the gate to re-check each reason against the recorded endpoints rather than trust it. |
+| 12 | blocker | PR-2 cannot satisfy its own boundary: §4.2 called the predicate closed while §4.0/§6 required changing it, and it promised frozen hashes while adding a `FighterCombatState` field. | **Confirmed, including the part I would not have found.** `stateHash.test.ts:57-80` rolls a hash of the **whole** `BattleState` after every tick of nine pairings, so a new populated field moves nine digests by construction. §4.2 restructured: the collector reads both endpoints in phase 2 and needs no new state, so PR-2 keeps its hashes; the start-separation field moves to PR-4, where behaviour changes anyway and the digests are earned. |
+| 13 | major | P2's comparator moves with the change and **P1 floors the numerator, not the denominator**, contrary to what §2.1 claimed. Zero out one comparator matchup and P2 is vacuous. | **Confirmed; a plain logic error in my own gate.** Gate P3 added: every comparator matchup must independently hold ≥80% of its pre-change share. The floor I claimed to have is now the floor I have. |
+| 14 | major | P, Q, Q2 and R need not describe the same episodes, and censor handling was unspecified. 25% succeeding at tick 2 with 75% capped passes all of them. | **Confirmed.** §5 now defines episode, success, and denominator; `cap` and `censored` count as non-successes; Q asserts over successes *and* all episodes; Q2 asserts over successes and adds a sub-4-tick ceiling. |
+| 15 | major | The signed error bound still models locomotion only; phases 9–10 apply contact push up to 0.70 units after movement, which can dominate and reverse it. | **Confirmed, and it ends four rounds of me being wrong about one paragraph.** `encounter.ts:2364-2372` runs contact then accumulated push after phases 7–8; `heavy-cleave.pushDistance` is 0.70, six times my whole interval. Every bound and sign is deleted. The claim is now exactly "the ground-gain baseline is unestablished". |
+| 16 | major | The flat lunge *share* answers a mix question, not the commissioned frequency question: 4.21 lunge attempts per 1000 engaged ticks against 10.83 in the mirror is a ~61% collapse the share hides. | **Confirmed, and it is the sharpest finding in either round.** I computed that rate myself, filed it in §8 as an unrelated debt, and then used the share to close the question. It does not close it. **Escalated to the design owner rather than answered here** — see §11. |
+| 17 | minor | Gate U names "a per-pair figure" while the instrument reports several. | **Confirmed.** U now names `pinnedShare` and `insideEnvelopeShare`, engaged window, five Fast matchups, and lists what is excluded. |
+
+## 11. Open, and blocking: is signature-attack frequency in this slice?
+
+Round-2 finding #16 is not an engineering question and this document will not
+answer it.
+
+Measured, 200 seeds, equal-stat cohorts, engaged window:
+
+| | vs murmillo | mirror | vs hoplomachus |
+|---|---:|---:|---:|
+| lunge attempts per 1000 engaged ticks | **4.21** | 10.83 | 6.92 |
+| lunge share of all attack attempts | 49.9% | 51.0% | 53.3% |
+
+Against the murmillo the retiarius commits **61% less often per unit of fight
+time** than in his mirror, while the *proportion* of his offence that is the
+lunge is flat. §1.2's withdrawal disposed of the geometry claim; it did not touch
+this, and the flat share is the wrong statistic for the question the playtest
+actually asked ("is that a retiarius or a spammer?").
+
+It matters to this slice specifically because **a longer or more persistent
+forced disengage reduces attack incidence further.** Every gate in §5 can pass
+while the signature attack gets rarer, which is the exact shape of "green for the
+wrong reason" this document exists to prevent.
+
+Two possible dispositions, and the choice is the design owner's:
+
+- **In scope:** add a frozen per-orientation floor on lunge attempts per 1000
+  engaged ticks against the murmillo, and accept that it constrains the candidate
+  space further — possibly out of existence, given §9's balance risk.
+- **Out of scope:** record explicitly that signature-attack frequency is not this
+  slice's concern, so that the next playtest is not surprised by it a second
+  time.
+
+Until this is decided, §5 is incomplete and PR-4 must not start.
 
 ### 10.1 The second reviewer produced nothing usable
 
