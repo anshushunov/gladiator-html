@@ -657,3 +657,118 @@ Next, in order:
 3. Then phase F review, and only then any content.
 
 **Nothing outside `docs/` has been touched by this slice.**
+
+---
+
+## 2026-08-28 — session 3, the instrument, and what it says
+
+**Phase:** D, and it produced a result that changes the question.
+
+### Built
+
+- `src/testSupport/distanceHarness.ts` — band edges from the patched catalog,
+  the engaged-window predicate, the accumulator. In `src/` because `scripts/` is
+  outside tsconfig's `include`, so nothing there is typechecked or Vitest-
+  reachable, and these are the parts that can be silently wrong.
+- `src/testSupport/distanceHarness.test.ts` — 10 regressions. The edge cases are
+  asserted individually (1.5999999 / 1.6 / 2.4 / 2.4000001), the overlay is
+  asserted to move the bands, and the engaged window is asserted to latch on the
+  *same tick* `balanceCohorts.runBout` records as `firstResolutionTick`.
+- `scripts/measure-distance.ts` — the instrument. No `--gate`: the bars belong
+  in the spec, frozen before implementation, and shipping a gate in the change
+  that first measures the numbers is choosing bars after seeing results.
+- `scripts/check-allowlist.sh` — rebuilt for this slice and **committed before
+  the instrument**, so the diff is judged by a boundary it did not write. Both
+  directions verified: `src/simulation/__probe.ts` and a whitespace change to
+  `scripts/measure-reach.ts` are both rejected; the tree is clean.
+
+`measure-reach.ts` is closed to this slice, which costs two improvements that
+are recorded as debts rather than taken: unifying the `equalStatFighter` fixture
+both scripts now copy, and reporting gate E's disengage figures per matchup.
+
+### The result, 200 seeds, engaged window
+
+| matchup | median | pinned <1.60 | ≤1.70 | home wins |
+|---|---:|---:|---:|---:|
+| `fast vs heavy` | 1.63 | 47.8% | **54.3%** | 36.0% |
+| `fast vs fast` | 2.26 | 22.2% | **26.3%** | 49.5% |
+| `fast vs technical` | 2.11 | 23.2% | **28.5%** | 72.0% |
+| `technical vs heavy` | 1.44 | 69.6% | **81.1%** | 55.0% |
+| `heavy vs technical` | 1.44 | 70.0% | 81.2% | 46.5% |
+| `heavy vs fast` | 1.62 | 48.1% | 54.8% | 64.5% |
+| `heavy vs heavy` | 1.32 | 79.9% | 90.5% | 50.0% |
+| `technical vs fast` | 2.13 | 22.1% | 27.4% | 31.5% |
+| `technical vs technical` | 1.72 | 34.7% | 46.7% | 51.0% |
+
+**The playtest's finding reproduces.** The retiarius fights the murmillo at a
+median of 1.63 and spends 54.3% of the engaged bout inside 1.70; against the
+hoplomachus it is 2.11 and 28.5%, against his mirror 2.26 and 26.3%. Roughly
+double, per pair, and now reproducible from committed code rather than from a
+document.
+
+**And the comparator says the opposite of what the slice assumed.** Gate C's
+shape applied to time — the retiarius against the murmillo, held against the
+hoplomachus against the murmillo — gives 54.3% against **81.1%**. The
+hoplomachus is inside the murmillo's envelope half again as much as the
+retiarius is, sits below his own committed floor 69.6% of the time against the
+retiarius' 47.8%, and **wins that matchup at 55.0%**.
+
+The counter triangle is `heavy → fast → technical → heavy`
+(`fighters.ts:17-21`), so technical beating heavy is the design working, and the
+measured win rates confirm the whole triangle sits in design.md's 55–75% band:
+`heavy vs fast` 64.5%, `fast vs technical` 72.0%, `technical vs heavy` 55.0%.
+Mirrors are 50.0 / 49.5 / 51.0, inside 45–55.
+
+**So "share of the bout inside the murmillo's envelope" cannot be this slice's
+acceptance criterion.** On that statistic the type that *beats* the murmillo
+scores worst. It measures how hard the murmillo drags people in, which is his
+type working, not a defect in theirs. I have put that sentence into the
+instrument's own output next to the numbers, because I nearly built a gate on
+them before checking which way the triangle points.
+
+### What this does to the question
+
+The brief's §8.3 asks to be told directly if the node turns out not to be in the
+murmillo. It is not, or not in the form the brief states it. The evidence:
+
+1. The murmillo drags **every** opponent inside — the hoplomachus hardest of all.
+2. The hoplomachus, in that same position, **wins**.
+3. The balance surface is in band everywhere.
+
+So "the murmillo walks inside the retiarius' reach and stays there" is true and
+is *also* true of the reference type, which is why it cannot by itself be the
+defect.
+
+**What survives as a genuine per-pair anomaly, and has no counterpart in the
+comparator, is not the distance. It is that both of the retiarius' signature
+mechanics have a near-zero success rate against this one opponent:**
+
+| mechanic | vs murmillo | vs hoplomachus | mirror |
+|---|---:|---:|---:|
+| committed attack: geometry failures | **48.0%** | 27.9% | 41.9% |
+| forced disengage: episodes reaching the exit | **1.6%** | 31.7% | 67.2% |
+| forced disengage: median ground opened | **0.659** | 0.954 | 0.833 |
+
+He commits about as often against the murmillo as against the hoplomachus
+(~148 attempts against ~147 at 50 seeds) and half of it hits air. He gives
+ground about 2.4 times a bout and it works twice in a hundred. Neither of those
+is "he fights too close" — and neither is visible in any gate the project owns,
+because the reach gates are contact-conditional and gate E is pooled.
+
+That is a sharper statement of the problem than the brief's, it is measured, and
+it points at different fixes. **It is also a design question rather than an
+engineering one from here**, which is why it goes to the user rather than into a
+spec: whether "the retiarius' signature attack and signature escape both fail
+against his counter" is the counter working or the matchup broken is exactly the
+call §8.3 and §8.5 reserve.
+
+### Where I stopped / next session
+
+Instrument committed and green. Full unit suite running. PR #20 still pending in
+CI — **check it, do not merge**.
+
+Blocked on the design call above before writing the spec, because the spec's
+hypothesis depends on it: if the answer is "the counter is working", the slice
+becomes the instrument plus a per-pair re-expression of gate E and stops there;
+if the answer is "the matchup is broken", the candidates are C1–C3 with the
+target restated as the two success rates rather than as time-at-distance.
