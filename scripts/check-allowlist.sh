@@ -1,104 +1,102 @@
 #!/usr/bin/env bash
 # scripts/check-allowlist.sh — the paths this slice may not touch.
 #
-# RE-SCOPED for the murmillo-pin slice's THIRD PR, the criteria (2026-08-29).
+# RE-SCOPED for the murmillo-pin slice's FOURTH PR, the content (2026-08-29).
 # Rebuilt from scratch, as every slice rebuilds it, because the shape follows
-# the claim. Committed BEFORE the work it judges, as both previous revisions
-# were.
+# the claim. Committed BEFORE the work it judges, as all three previous
+# revisions were.
 #
 # ---------------------------------------------------------------------------
-# THE CLAIM THIS LIST PROTECTS (PR-3)
+# THE CLAIM THIS LIST PROTECTS (PR-4)
 # ---------------------------------------------------------------------------
 #
-# This PR changes the criteria and changes nothing they judge.
+# This PR changes behaviour, and is judged by a boundary and by criteria that
+# three earlier diffs wrote.
 #
-# `measure-reach.ts` opens for the first time in this slice, to stop deducing
-# the disengage exit reason from the episode's duration and read it from PR-2's
-# seam instead, to report per matchup rather than pooled, and to assert the
-# spec's gates P, Q, Q2 and R. `measure-distance.ts` gains the `--gate` its own
-# header says it is deliberately missing, for gates V and U. Neither the
-# simulation nor the content moves, so every number these instruments produce
-# describes the same shipped build the previous baselines were taken of.
-#
-# EXEMPTIONS FOR THIS PR, four, and no others:
-#
-#   * `scripts/measure-reach.ts` — the criteria themselves. Closed for two PRs
-#     precisely so that it could be opened here, in a diff that changes no
-#     behaviour, rather than in the one whose numbers it produces.
-#   * `scripts/measure-distance.ts` — the same, for gates V and U.
-#   * `src/testSupport/disengageGates.ts` and its test — the classification the
-#     gates rest on (what counts as a success, per matchup, from seam records),
-#     kept in `src/` for the reason PR-1 kept `distanceHarness.ts` there: a
-#     script is outside tsconfig's `include` and Vitest cannot reach it, so
-#     gate arithmetic living only in `scripts/` is gate arithmetic nobody tests.
-#   * this file. A gate that cannot maintain itself cannot be enforced.
+# It is the first PR in the slice that is ALLOWED to move a frozen artifact, and
+# the list changes shape accordingly: instead of proving nothing moved, it has
+# to prove that what moved is behaviour and its determinism artifacts, and that
+# the yardsticks did not move with it.
 #
 # ---------------------------------------------------------------------------
-# WHAT IS NOT EXEMPT, AND WHY EACH ABSENCE IS DELIBERATE
+# THE LOAD-BEARING ENTRY: THE CRITERIA ARE CLOSED
 # ---------------------------------------------------------------------------
 #
-# `src/simulation/**` IS CLOSED AGAIN, and that is this revision's load-bearing
-# entry. PR-2 opened four files there to build the seam; PR-3 consumes the seam
-# and must not touch it. If asserting a criterion required editing the thing it
-# measures, the criterion would be describing a build made to satisfy it — the
-# defect this whole four-PR split exists to prevent. `disengageDiagnostics.ts`
-# in particular is frozen: its exit-reason set is frozen by the spec, and a gate
-# that could widen the set it reads is not a gate.
+# `scripts/measure-reach.ts`, `scripts/measure-distance.ts` and
+# `src/testSupport/disengageGates.ts` are CLOSED, and so is
+# `docs/superpowers/plans/2026-08-29-distance-baseline.json` — the recorded
+# shipped run that gate U's stopping criterion compares against, and the one
+# file in `docs/` this list protects, because a baseline a candidate may rewrite
+# is not a baseline.
 #
-# `src/content/**` is closed. The content change is PR-4 and is judged BY these
-# criteria; a diff containing both would be a criterion and its own subject.
+# This is the entry the whole four-PR split exists to make possible. PR-3 froze
+# the criteria on the shipped content while no candidate existed; if PR-4 could
+# reach them, every gate would be a gate the candidate helped write. A failing
+# gate here is a finding about the candidate, not an invitation to open this
+# file.
 #
-# `src/testSupport/distanceHarness.ts` and `reachHarness.ts` are closed. Both
-# are instruments whose numbers the gates read. `measure-distance.ts` already
-# counts lunge starts per Fast fighter inside the latched engaged window — gate
-# V's numerator — and PR-3 asserts that number rather than re-deriving it.
+# `src/simulation/disengageDiagnostics.ts` is CLOSED for the same reason one
+# level down: its exit-reason set is frozen — exactly `range`, `cap`,
+# `progress`, `censored` — and PR-4 may not add a reason, rename one, or move
+# one between the success and failure sets. `progress` is already there,
+# unreachable, waiting for exactly this PR to return it.
+#
+# `src/content/**` is CLOSED TOO, which is stricter than the spec requires. The
+# spec's §6 makes the two disengage constants and the exit predicate mutable and
+# names content as not mutable; the mechanism this PR implements needs neither,
+# so the list says so. If the work turns out to need content, the gate fails and
+# that is the brief's stop condition rather than a line to edit.
 #
 # `src/presentation/**`, `src/style.css`, `src/main.ts`, `index.html` and
-# `.github/workflows/` are closed for the reasons they always are here.
-#
-# `docs/**` is open. Recording what was found is not a lever on the finding.
+# `.github/workflows/` are closed for the reasons they always are.
 #
 # ---------------------------------------------------------------------------
-# THE SECOND PASS: INHERITED MEANS INHERITED
+# WHAT IS OPEN, AND WHY EACH IS EXPECTED TO MOVE
 # ---------------------------------------------------------------------------
 #
-# `check:allowlist` diffs against `git merge-base main HEAD`, and this branch
-# carries PR-1 and PR-2 as well as PR-3. Against that base an inherited change
-# and a fresh one look identical, so the first pass has to exempt everything the
-# earlier PRs touched — and would then happily let PR-3 edit any of it.
-#
-# That was external review's finding on the previous revision, and the answer is
-# the second pass at the bottom: measured from PR-3's own boundary — the tip of
-# PR-2, `1cd1942` — the earlier PRs' paths must not move at all. It fails loudly
-# if its anchor is missing rather than silently checking nothing.
-#
-# `tests/__screenshots__/linux/**` is inherited from `test/relinux-baselines`
-# (PR #20) and is frozen by the same pass. THE EXEMPTION MUST BE DELETED WHEN
-# PR #20 MERGES; re-checked 2026-08-29, `gh pr view 20` still reports
-# `state: OPEN`, `mergedAt: null`.
+#   * `src/simulation/combatDecision.ts` and its test — the two constants and
+#     the exit predicate the spec's §6 makes mutable, plus the start-separation
+#     argument the pursuit-relative form needs.
+#   * `src/simulation/encounter.ts` and its test — the start-separation field on
+#     `FighterCombatState` beside `forcedDisengageStartTick`, its stamp and
+#     clear, and its invariant coverage. It lands here and not in PR-2 because
+#     it is real combatant state, and `stateHash.test.ts` hashes the whole
+#     `BattleState` every tick, so no PR containing it could also claim the
+#     digests were untouched.
+#   * `src/simulation/battle.test.ts`, `series.test.ts`,
+#     `encounterDisposition.test.ts`, `src/testSupport/reachHarness.test.ts` —
+#     behavioural assertions that move because behaviour moved.
+#   * `src/testSupport/stateHash.test.ts` and
+#     `src/testSupport/frozenFixtures/**` — the determinism artifacts, under
+#     design.md's determinism-artifact rule: re-baselined in the diff that
+#     legitimately earns it, each with its reason.
+#   * `tests/**` — the e2e specs and both screenshot baseline sets. The previous
+#     slice's content PR moved five Linux and one win32 baseline for the same
+#     reason, and that is the precedent this follows.
+#   * this file.
 #
 # ---------------------------------------------------------------------------
 # WHAT A REVIEWER MUST CHECK, BECAUSE THIS GATE CANNOT
 # ---------------------------------------------------------------------------
 #
-#   1. The A–G clauses and their thresholds are frozen (spec gate S). PR-3 may
-#      ADD clauses to `measure-reach.ts` and may not alter one of these. A path
-#      allowlist cannot see the difference; the diff of the gate block can.
-#   2. The nine digests in `src/testSupport/stateHash.test.ts` reproduce
-#      unchanged. With `src/simulation/**` and `src/content/**` both closed they
-#      must, and if they do not, something is being measured that also moved.
-#   3. Do the new gates measure what the spec says? The bars come from the spec
-#      and the spec says where each came from; whether the shipped content still
-#      clears them under the seam's definition of success is a MEASUREMENT this
-#      PR must report, not an assumption it may make. Gate P's comparator floors
-#      in particular were derived from "reached the exit range", and the seam's
-#      success adds a ground condition on top of it.
+#   1. **Every moved digest has a stated reason.** A path allowlist can only say
+#      the file was allowed to move. Whether `4403ef70` became something else
+#      because the retiarius now exits his disengage differently, or because
+#      something unrelated broke, is a question only the diff and the gate
+#      output answer together.
+#   2. **Events, RNG consumption and terminal outcomes are unchanged where
+#      behaviour was not meant to move** — in particular in the six matchups
+#      containing no Fast fighter, which this change cannot reach.
+#   3. **The gates were run, not asserted.** `measure-reach --seeds 200 --gate`
+#      must show the A–G group passing and the P/Q/Q2/R group passing;
+#      `measure-distance --seeds 200 --gate --baseline <the committed file>`
+#      must show V and U passing. Before this PR, P and Q failed by design.
 set -euo pipefail
 BASE="${1:?base sha required}"
 FORBIDDEN='^(src/|scripts/|tests/|\.github/workflows/|index\.html$|playwright\.config\.ts$|package(-lock)?\.json$)'
-# Everything the branch has legitimately touched since `main`: PR-1's, PR-2's
-# and PR-3's. The second pass is what distinguishes them.
-EXEMPT='^(scripts/measure-(reach|distance)\.ts$|src/testSupport/disengageGates(\.test)?\.ts$|scripts/check-allowlist\.sh$|src/simulation/disengageDiagnostics(\.test)?\.ts$|src/simulation/(encounter|battle)\.ts$|src/simulation/combatDecision(\.test)?\.ts$|src/testSupport/distanceHarness(\.test)?\.ts$|tests/__screenshots__/linux/)'
+# Everything the branch has legitimately touched since `main`: PR-1's, PR-2's,
+# PR-3's and PR-4's. The second pass is what distinguishes them.
+EXEMPT='^(src/simulation/(combatDecision|encounter|battle|disengageDiagnostics)(\.test)?\.ts$|src/simulation/(series|encounterDisposition)\.test\.ts$|src/testSupport/(stateHash|reachHarness|distanceHarness|disengageGates)(\.test)?\.ts$|src/testSupport/frozenFixtures/|scripts/(measure-reach|measure-distance|check-allowlist)\.(ts|sh)$|tests/)'
 # Committed + staged + unstaged + untracked, and both sides of every rename.
 changed_since() {
   { git diff --name-status -z --find-renames "$1" HEAD; git diff --name-status -z --find-renames HEAD; git diff --name-status -z --find-renames --cached; } \
@@ -108,20 +106,25 @@ UNTRACKED="$(git ls-files --others --exclude-standard)"
 VIOLATIONS="$(printf '%s\n%s\n' "$(changed_since "$BASE")" "$UNTRACKED" | grep -v '^$' | grep -E "$FORBIDDEN" | grep -vE "$EXEMPT" || true)"
 if [ -n "$VIOLATIONS" ]; then echo "Forbidden for this slice:" >&2; echo "$VIOLATIONS" >&2; exit 1; fi
 
-# --- Second pass: what PR-3 itself may move ---------------------------------
-PR3_BOUNDARY='1cd1942'
-INHERITED='^(src/simulation/|src/testSupport/distanceHarness(\.test)?\.ts$|tests/__screenshots__/linux/)'
-if git rev-parse --verify --quiet "$PR3_BOUNDARY^{commit}" >/dev/null; then
-  REOPENED="$(printf '%s\n%s\n' "$(changed_since "$PR3_BOUNDARY")" "$UNTRACKED" | grep -v '^$' | grep -E "$INHERITED" || true)"
+# --- Second pass: the yardsticks do not move in the diff they judge ----------
+#
+# Measured from PR-4's own boundary, the tip of PR-3, so it sees only this PR's
+# work. Note that it covers `docs/`, which the first pass deliberately does not:
+# gate U's baseline is a recorded run, and a recorded run a candidate may
+# rewrite measures nothing.
+PR4_BOUNDARY='85131b4'
+FROZEN='^(scripts/measure-(reach|distance)\.ts$|src/testSupport/disengageGates(\.test)?\.ts$|src/testSupport/distanceHarness(\.test)?\.ts$|src/simulation/disengageDiagnostics(\.test)?\.ts$|docs/superpowers/plans/2026-08-29-distance-baseline\.json$)'
+if git rev-parse --verify --quiet "$PR4_BOUNDARY^{commit}" >/dev/null; then
+  REOPENED="$(printf '%s\n%s\n' "$(changed_since "$PR4_BOUNDARY")" "$UNTRACKED" | grep -v '^$' | grep -E "$FROZEN" || true)"
   if [ -n "$REOPENED" ]; then
-    echo "Inherited from an earlier PR, not editable by this one:" >&2
+    echo "This PR is judged by these; it may not move them:" >&2
     echo "$REOPENED" >&2
     exit 1
   fi
 else
   # Loud, not skipped. A pass that silently disappears when its anchor does is
   # worse than no pass at all -- it reports green while checking nothing.
-  echo "PR-3 boundary commit $PR3_BOUNDARY is not in this history; the inherited-paths pass cannot run" >&2
+  echo "PR-4 boundary commit $PR4_BOUNDARY is not in this history; the frozen-yardstick pass cannot run" >&2
   exit 1
 fi
 echo "allowlist ok"
