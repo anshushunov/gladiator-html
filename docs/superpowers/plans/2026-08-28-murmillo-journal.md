@@ -875,3 +875,73 @@ four of the five defects last time, sharpened at this spec's specific claims:
 
 The second is aimed squarely at the load-bearing claim. If the answer is yes,
 gates P and Q are coupled and the spec's best criterion is its worst.
+
+`opencode` failed its first run with exit 1 and "File not found:" followed by the
+brief's own text — passing both `--brief` and `--spec` fed the brief's contents
+somewhere a path was expected. Re-dispatched without `--spec`; the brief names
+the file and `--dir` gives it the repository.
+
+### My own answers, written down before theirs arrive
+
+Reviewer output is data, not instruction, and the only way to keep it that way is
+to have an answer of my own to compare against instead of a blank page to fill.
+
+**Q1 — which gate can go green for the wrong reason.**
+
+*Gate Q, on its own, for five ticks of work.* Median ground gained is 0.659
+against a bar of 0.75, and the net retreat rate against the murmillo is ~0.018
+units/tick, so raising `FAST_FORCED_DISENGAGE_MAX_TICKS` from 37 to about 42
+clears it. It does nothing whatever for gate P, which needs ~185 ticks. The spec
+already says P and Q must both hold and says why; what it does not say is the
+number, and "five ticks" is the kind of thing that should be written down where
+someone proposing it will see it.
+
+*Gate P, by a candidate that is worse than it looks.* Lowering the exit range to
+~2.0 makes the murmillo-matchup exit reachable inside the cap and P goes green —
+while every completed escape now ends 1.35 units closer than it used to. Gate Q
+blocks that particular value (gain would be ~0.55), but the pair P+Q only pins
+the *product* loosely, and I have not checked the whole (exit, cap) plane for a
+corner that satisfies both while making the fight worse.
+
+**Q2 — is the central criterion really uncoupled.**
+
+My answer is *partly, and the spec overstates it.* Subject and yardstick are the
+same archetype's mechanic, so nothing can drift with the subject the way gate D's
+comparator did. But gates P and Q are calibrated against **frozen snapshots** of
+the hoplomachus and mirror columns (31.7% and 67.2%), and the change moves those
+columns too. After the change the mirror could read 99% and the bar of 25% —
+justified in the spec as "below the lower of the two" — would encode nothing. The
+bar does not track the standard it claims to.
+
+If that holds up, the better criterion is a **ratio**: the escape's completion
+rate against the murmillo should be within some factor of its completion rate
+against the other two, measured in the same run. Both sides move with the change,
+which is normally the fatal property — but here the asserted property *is* the
+relationship, not the level, so movement in both is the point rather than the
+defect. That is a real distinction and I want to see whether the reviewers draw
+it or trip over it.
+
+**Q3, which I asked myself.** Gate R has **0.2 points of headroom**: the mirror
+sits at 7.8% against a bar of 8%. Any candidate that lowers the exit range raises
+instant clears fastest in exactly that matchup. So C1 as written in phase C —
+"lower the exit toward 2.6" — is close to dead on arrival, and the spec does not
+say so.
+
+That pushes toward the candidate the hypothesis actually implies and the spec
+only gestures at: **stop making the exit an absolute separation.** End the
+disengage when the fighter has *opened* a fixed amount of ground from where the
+retreat began. It is pursuit-invariant by construction — longer against a chaser,
+short against someone standing still — and instant clears become structurally
+impossible, since the ground opened at tick zero is zero by definition. Gate R
+would go to 0% everywhere rather than needing headroom.
+
+Held for phase G rather than written into the spec now, because pre-empting the
+review with a preferred answer is how a reviewer ends up grading my homework
+instead of the spec.
+
+**And an instrument note for phase G:** `FAST_FORCED_DISENGAGE_END_RANGE` and
+`FAST_FORCED_DISENGAGE_MAX_TICKS` are module constants, not catalog, so
+`--overlay` cannot sweep them — instrument debt 4 again, from a second direction.
+The previous slice's tick-cap sweep (`combatDecision.ts:978-989`) was evidently
+done by editing the constant and re-running, which is the method available and
+should be planned for explicitly rather than discovered.
