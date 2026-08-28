@@ -5,7 +5,7 @@ import { combatant, freeArena } from '../testSupport/combatFixtures'
 import { canonicalHash } from '../testSupport/stateHash'
 import { advanceBattleTick, createBattle, MAX_BOUT_TICKS, type BattleState } from './battle'
 import { FAST_FORCED_DISENGAGE_END_RANGE, FAST_FORCED_DISENGAGE_MAX_TICKS } from './combatDecision'
-import { assembleDisengageEpisodes, type DisengageCollector, type DisengageEpisode, type DisengageSample } from './disengageDiagnostics'
+import { assembleDisengageEpisodes, type DisengageAssembly, type DisengageCollector, type DisengageEpisode, type DisengageSample } from './disengageDiagnostics'
 import { advanceEncounterTick, createEncounter, type CombatantId } from './encounter'
 import { distanceBetween } from './movement'
 
@@ -37,7 +37,7 @@ function runBout(disengageCollector?: DisengageCollector, seed: number = BASELIN
   return { hash: rolling, ticks }
 }
 
-function collectEpisodes(seed?: number): DisengageEpisode[] {
+function collectEpisodes(seed?: number): DisengageAssembly {
   const samples: DisengageSample[] = []
   runBout({ record: (sample) => samples.push(sample) }, seed)
   return assembleDisengageEpisodes(samples)
@@ -50,7 +50,7 @@ const otherFoe = 'other-foe' as CombatantId
 
 describe('assembleDisengageEpisodes', () => {
   it('pairs a stamp with its clear and reports the endpoints, elapsed ticks and reason', () => {
-    const episodes = assembleDisengageEpisodes([
+    const { episodes } = assembleDisengageEpisodes([
       { kind: 'stamped', tick: 100, actorId: actor, targetId: foe, separation: 1.8 },
       { kind: 'held', tick: 101, actorId: actor, targetId: foe, separation: 2.1 },
       { kind: 'held', tick: 102, actorId: actor, targetId: foe, separation: 2.9 },
@@ -67,7 +67,7 @@ describe('assembleDisengageEpisodes', () => {
   // that do not finish are the pinned ones, which is the population the slice
   // exists to measure.
   it('keeps an episode still open at the end of the bout, as `censored`, with its last observed endpoint', () => {
-    const episodes = assembleDisengageEpisodes([
+    const { episodes } = assembleDisengageEpisodes([
       { kind: 'stamped', tick: 40, actorId: actor, targetId: foe, separation: 1.6 },
       { kind: 'held', tick: 41, actorId: actor, targetId: foe, separation: 1.9 },
       { kind: 'held', tick: 42, actorId: actor, targetId: foe, separation: 2.2 },
@@ -79,7 +79,7 @@ describe('assembleDisengageEpisodes', () => {
   })
 
   it('censors an episode stamped on the very last tick as a zero-tick episode rather than dropping it', () => {
-    const episodes = assembleDisengageEpisodes([{ kind: 'stamped', tick: 900, actorId: actor, targetId: foe, separation: 1.55 }])
+    const { episodes } = assembleDisengageEpisodes([{ kind: 'stamped', tick: 900, actorId: actor, targetId: foe, separation: 1.55 }])
 
     expect(episodes).toEqual<DisengageEpisode[]>([
       { actorId: actor, targetId: foe, startTick: 900, endTick: 900, ticks: 0, startSeparation: 1.55, endSeparation: 1.55, reason: 'censored' },
@@ -87,7 +87,7 @@ describe('assembleDisengageEpisodes', () => {
   })
 
   it('keeps two fighters’ interleaved episodes apart and orders the output deterministically', () => {
-    const episodes = assembleDisengageEpisodes([
+    const { episodes } = assembleDisengageEpisodes([
       { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 2.0 },
       { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.7 },
       { kind: 'held', tick: 11, actorId: other, targetId: foe, separation: 2.4 },
@@ -127,32 +127,73 @@ describe('assembleDisengageEpisodes', () => {
   // fighter mid-episode.
   //
   // Note the shape of the numbers: 1.7 to 3.4 against a *different* fighter
-  // would read as a textbook 1.7-unit successful escape. Emitting it would be
-  // worse than raising.
-  it('raises rather than subtract separations taken against two different opponents', () => {
-    expect(() =>
-      assembleDisengageEpisodes([
-        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
-        { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 2.0 },
-        { kind: 'cleared', tick: 7, actorId: actor, targetId: otherFoe, separation: 3.4, reason: 'range' },
-      ]),
-    ).toThrow(/switched target/)
+  // would read as a textbook 1.7-unit successful escape.
+  it('reports, rather than emits, an episode whose endpoints are against two different opponents', () => {
+    const { episodes, unmeasurable } = assembleDisengageEpisodes([
+      { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
+      { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 2.0 },
+      { kind: 'cleared', tick: 7, actorId: actor, targetId: otherFoe, separation: 3.4, reason: 'range' },
+    ])
+
+    expect(episodes).toEqual([])
+    expect(unmeasurable).toEqual([{ actorId: actor, startTick: 5, tick: 7, cause: 'target-changed' }])
   })
 
-  // The other half of the same review finding. The kernel deliberately does
-  // NOT raise on this -- doing so made an attached collector able to turn a
-  // legitimate targetless transition into an exception, which is the opposite
-  // of inert -- so the rejection has to live here, after the tick.
-  it('raises on an episode with no target rather than treating an infinite separation as an escape', () => {
-    expect(() => assembleDisengageEpisodes([{ kind: 'stamped', tick: 5, actorId: actor, targetId: undefined, separation: Infinity }])).toThrow(
-      /cannot be measured/,
-    )
-    expect(() =>
+  it('reports an episode with no target rather than treating an infinite separation as an escape', () => {
+    expect(assembleDisengageEpisodes([{ kind: 'stamped', tick: 5, actorId: actor, targetId: undefined, separation: Infinity }])).toEqual({
+      episodes: [],
+      unmeasurable: [{ actorId: actor, startTick: 5, tick: 5, cause: 'no-target' }],
+    })
+
+    expect(
       assembleDisengageEpisodes([
         { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
         { kind: 'cleared', tick: 6, actorId: actor, targetId: undefined, separation: Infinity, reason: 'range' },
       ]),
-    ).toThrow(/cannot be measured/)
+    ).toEqual({ episodes: [], unmeasurable: [{ actorId: actor, startTick: 5, tick: 6, cause: 'no-target' }] })
+  })
+
+  // Round 2 of external review: throwing on an unmeasurable episode destroyed
+  // every valid episode in the same run, and unmeasurable episodes are ordinary
+  // in a free-for-all. One bad episode must not take the other 2414 with it.
+  it('keeps every measurable episode in a stream that also contains an unmeasurable one', () => {
+    const { episodes, unmeasurable } = assembleDisengageEpisodes([
+      { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 1.7 },
+      { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.6 },
+      { kind: 'cleared', tick: 13, actorId: other, targetId: undefined, separation: Infinity, reason: 'range' },
+      { kind: 'cleared', tick: 14, actorId: actor, targetId: foe, separation: 3.4, reason: 'range' },
+    ])
+
+    expect(episodes.map((episode) => episode.actorId)).toEqual([actor])
+    expect(unmeasurable.map((episode) => episode.actorId)).toEqual([other])
+  })
+
+  // The property a rate can be built on, and the reason unmeasurable episodes
+  // are reported rather than dropped: the denominator is still the real number
+  // of episodes.
+  it('puts every stamped episode in exactly one of the two collections', () => {
+    const samples: DisengageSample[] = [
+      { kind: 'stamped', tick: 1, actorId: actor, targetId: foe, separation: 1.5 },
+      { kind: 'cleared', tick: 2, actorId: actor, targetId: foe, separation: 3.4, reason: 'range' },
+      { kind: 'stamped', tick: 3, actorId: other, targetId: undefined, separation: Infinity },
+      { kind: 'cleared', tick: 4, actorId: other, targetId: undefined, separation: Infinity, reason: 'range' },
+      { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.5 },
+      { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 1.9 },
+    ]
+    const { episodes, unmeasurable } = assembleDisengageEpisodes(samples)
+
+    expect(episodes.length + unmeasurable.length).toBe(samples.filter((sample) => sample.kind === 'stamped').length)
+  })
+
+  // Still fatal, and deliberately: a resolved target with an infinite distance
+  // between two finite positions is a broken kernel, not an ordinary state.
+  it('raises on a finite target reporting a non-finite separation', () => {
+    expect(() =>
+      assembleDisengageEpisodes([
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
+        { kind: 'cleared', tick: 6, actorId: actor, targetId: foe, separation: Number.NaN, reason: 'range' },
+      ]),
+    ).toThrow(/non-finite separation/)
   })
 })
 
@@ -173,8 +214,29 @@ describe('the disengage seam against a real bout', () => {
     expect(samples.length).toBeGreaterThan(0)
   }, 30_000)
 
+  // The bound on what a collector can do, made checkable instead of asserted.
+  // `record` runs synchronously inside phase 2, so a collector could in
+  // principle perturb a later phase by mutating something it was handed --
+  // except that it is handed nothing mutable. Every field is a primitive, so
+  // the only way a collector can affect the tick is by throwing, which is the
+  // narrowed claim the module header states.
+  it('hands the collector nothing it could mutate', () => {
+    const samples: DisengageSample[] = []
+    runBout({ record: (sample) => samples.push(sample) })
+
+    expect(samples.length).toBeGreaterThan(0)
+    for (const sample of samples) {
+      for (const value of Object.values(sample)) {
+        expect(value === null || typeof value !== 'object').toBe(true)
+      }
+    }
+  }, 30_000)
+
   it('records episodes whose reason is corroborated by the recorded endpoints', () => {
-    const episodes = collectEpisodes()
+    const { episodes, unmeasurable } = collectEpisodes()
+
+    // A duel cannot lose or change its target, so nothing here is unmeasurable.
+    expect(unmeasurable).toEqual([])
 
     // Coverage guard, not decoration. The first version of this test ran
     // against a pairing whose episodes all ended on the cap, so the `range`
@@ -211,7 +273,7 @@ describe('the disengage seam against a real bout', () => {
   // here; it was found by that sweep and a content change may well move it, in
   // which case this test should be re-pinned rather than deleted.
   it('keeps a real bout’s still-open episode instead of dropping it', () => {
-    const episodes = collectEpisodes(20260836)
+    const { episodes } = collectEpisodes(20260836)
     const censored = episodes.filter((episode) => episode.reason === 'censored')
 
     expect(censored).toHaveLength(1)
@@ -330,20 +392,30 @@ describe('the disengage seam outside the duel', () => {
     expect(samples.some((sample) => sample.targetId === undefined)).toBe(true)
   }, 30_000)
 
-  it('rejects, after the tick, the episode the kernel recorded with no target', () => {
+  it('sets a real targetless episode aside without losing the measurable ones around it', () => {
     const samples: DisengageSample[] = []
     runFfa(BASELINE_TEST_SEED, { record: (sample) => samples.push(sample) })
+    const { episodes, unmeasurable } = assembleDisengageEpisodes(samples)
 
-    expect(() => assembleDisengageEpisodes(samples)).toThrow(/cannot be measured/)
+    expect(unmeasurable.some((episode) => episode.cause === 'no-target')).toBe(true)
+    // The point of round 2's finding: the run still yields its good episodes.
+    // The previous revision threw here and returned nothing at all.
+    expect(episodes.length).toBeGreaterThan(0)
+    expect(episodes.length + unmeasurable.length).toBe(samples.filter((sample) => sample.kind === 'stamped').length)
   }, 30_000)
 
-  it('rejects a real episode whose target changed while it was open', () => {
+  it('sets aside a real episode whose target changed while it was open', () => {
     const samples: DisengageSample[] = []
     runFfa(20260837, { record: (sample) => samples.push(sample) })
+    const { episodes, unmeasurable } = assembleDisengageEpisodes(samples)
 
+    expect(unmeasurable.some((episode) => episode.cause === 'target-changed')).toBe(true)
+    expect(episodes.length + unmeasurable.length).toBe(samples.filter((sample) => sample.kind === 'stamped').length)
     // Not a synthetic stream: this seed retargets the Fast fighter 21 times
     // inside open episodes. Assembling it before the fix produced episodes
     // whose two endpoints were measured against two different opponents.
-    expect(() => assembleDisengageEpisodes(samples)).toThrow(/switched target/)
+    for (const episode of episodes) {
+      expect(episode.targetId).toBeDefined()
+    }
   }, 30_000)
 })

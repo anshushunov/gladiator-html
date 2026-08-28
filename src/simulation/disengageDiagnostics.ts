@@ -44,6 +44,29 @@
 // the recorded endpoints -- a `range` record must satisfy the range condition
 // at its recorded end separation -- and a label the endpoints contradict fails
 // the run.
+//
+// WHAT "INERT" MEANS HERE, STATED PRECISELY BECAUSE REVIEW ASKED TWICE.
+// `record` is invoked synchronously inside phase 2, exactly as
+// `contactDiagnostics.ts` is invoked inside phase 9 and `decisionDiagnostics`
+// inside phase 4 -- so a collector whose `record` throws aborts the tick, and
+// the guarantee is "inert for a collector that returns". Two things bound that:
+//
+//   - the sample handed to `record` is **only primitives** -- a tick, two ids,
+//     a number, a string reason. No combatant, no position vector, no array the
+//     kernel will read again. So a collector cannot perturb a later phase by
+//     mutating what it was given, only by throwing;
+//   - when no collector is attached, nothing is built at all. The call sites
+//     use `collector?.record({...})`, and optional chaining does not evaluate
+//     its argument list on the nullish path, so the sample object is never
+//     allocated; the stamp branch, which computed no distance before this seam
+//     existed, is additionally behind an explicit `if`.
+//
+// Handing samples back through `EncounterTransition` instead of a callback
+// would remove the throwing case entirely. It is not done here because it
+// would make this the only one of three diagnostics collectors with a
+// different shape, in a PR whose whole claim is that it changes nothing -- if
+// the callback pattern is wrong it is wrong in three places and is its own
+// change, recorded as a debt rather than smuggled in here.
 
 import type { CombatantId } from './encounter'
 
@@ -131,64 +154,114 @@ export interface DisengageEpisode {
 }
 
 /**
+ * Why an episode cannot be turned into a pair of comparable endpoints. This is
+ * a statement about the *measurement*, not about the fight, which is why it is
+ * deliberately not part of `DisengageExitReason`: the frozen set says how a
+ * disengage ended, and these episodes have no usable answer to that question at
+ * all.
+ */
+export type UnmeasurableCause =
+  /** Phase 2 found no target on some tick of the episode -- the target died, turned non-hostile, or could not be reacquired. */
+  | 'no-target'
+  /** Phase 3 replaced the target while the episode was open, so its two endpoints would be measured against two different fighters. */
+  | 'target-changed'
+
+/** An episode that happened but cannot be measured. Reported, never dropped, so a denominator can account for it. */
+export interface UnmeasurableDisengageEpisode {
+  actorId: CombatantId
+  startTick: number
+  /** The tick the episode stopped being measurable. */
+  tick: number
+  cause: UnmeasurableCause
+}
+
+/**
+ * Everything the assembler saw, split by whether it can carry a number.
+ *
+ * **Every `stamped` sample lands in exactly one of the two arrays.** That is
+ * the property a rate computed from this can rely on, and it is asserted in the
+ * tests: a consumer can report `episodes.length / (episodes.length +
+ * unmeasurable.length)` and know the denominator is the real episode count.
+ */
+export interface DisengageAssembly {
+  episodes: DisengageEpisode[]
+  unmeasurable: UnmeasurableDisengageEpisode[]
+}
+
+/**
  * Regroups a bout's flat sample stream into one record per episode, closing
  * anything still open as `censored`.
  *
- * Pure and total over well-formed input, and loud over ill-formed input:
+ * Two kinds of bad input, handled differently, and the difference is the point:
  *
- * - a `held`/`cleared` for an actor with no open episode, or a second
- *   `stamped` before the first was cleared, is a kernel invariant violation.
- *   Both are unreachable today -- phase 4 skips forced actors entirely
- *   (`encounter.ts`), so a fighter cannot start the burst lunge that would
- *   re-stamp it while its own disengage is running -- and that is precisely
- *   why they throw: if a later PR makes one reachable, the run should stop
- *   rather than quietly emit an episode with the wrong endpoints;
- * - an episode with no target, or one whose target changed while it was open,
- *   is **unmeasurable**, and raises here rather than being emitted or silently
- *   dropped. Emitting it would subtract separations taken against two
- *   different opponents and call the difference ground opened; dropping it
- *   would bias the denominator the same way dropping censored episodes does.
- *   There is no third option inside the frozen reason set, and inventing a
- *   fifth reason is exactly what the frozen set forbids -- so if a
- *   multi-combatant consumer ever needs these episodes, the policy has to be
- *   changed deliberately rather than patched here.
+ * - **Unmeasurable but ordinary.** An episode with no target, or one whose
+ *   target changed while it was open, is reported in `unmeasurable` rather than
+ *   emitted, dropped, or thrown on. Emitting it would subtract separations
+ *   taken against two different opponents and call the difference ground
+ *   opened; dropping it would bias the denominator the same way dropping
+ *   censored episodes does; **throwing would destroy every valid episode in the
+ *   same run over one ordinary free-for-all episode**, which is what the
+ *   previous revision did and what external review caught. Measurement validity
+ *   is orthogonal to why a disengage ended, so it gets its own vocabulary
+ *   instead of a fifth exit reason -- the frozen set stays frozen.
+ * - **Structurally impossible.** A `held`/`cleared` for an actor with no open
+ *   episode, a second `stamped` before the first was cleared, or a finite
+ *   target with a non-finite separation, is a kernel invariant violation and
+ *   still throws. These are not states the simulation reaches; phase 4 skips
+ *   forced actors entirely (`encounter.ts`), so a fighter cannot start the
+ *   burst lunge that would re-stamp it mid-episode. If a later PR makes one
+ *   reachable, the run should stop rather than quietly emit an episode with the
+ *   wrong endpoints.
  *
- * All of it runs AFTER the tick. That is the point: an earlier version put the
+ * All of it runs AFTER the tick. That is the point: an earlier revision put the
  * finiteness check in the kernel's write path, where raising turned a
  * transition that completed without a collector into an exception with one
- * attached -- a seam that claimed to be inert and was not. Validation belongs
- * where it cannot perturb what is being measured.
+ * attached -- a seam that claimed to be inert and was not. Deciding what a
+ * record means belongs where it cannot perturb what is being measured.
  *
  * Output order is by `startTick`, then `actorId`, so a measurement built on it
  * is stable across runs regardless of the order the kernel visited combatants
  * in.
  */
-export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): DisengageEpisode[] {
+export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): DisengageAssembly {
   interface OpenEpisode {
-    targetId: CombatantId
+    targetId: CombatantId | undefined
     startTick: number
     startSeparation: number
     lastTick: number
     lastSeparation: number
-  }
-
-  function requireMeasurable(sample: DisengageSample, expected?: CombatantId): CombatantId {
-    if (sample.targetId === undefined) {
-      throw new Error(`disengage diagnostics: ${sample.actorId} had no target in phase 2 of tick ${sample.tick}, so the episode cannot be measured`)
-    }
-    if (expected !== undefined && sample.targetId !== expected) {
-      throw new Error(
-        `disengage diagnostics: ${sample.actorId} switched target from ${expected} to ${sample.targetId} at tick ${sample.tick} during an open episode`,
-      )
-    }
-    if (!Number.isFinite(sample.separation)) {
-      throw new Error(`disengage diagnostics: ${sample.actorId} reported a non-finite separation at tick ${sample.tick}`)
-    }
-    return sample.targetId
+    /** Set once and never overwritten, so the reported tick is where it FIRST became unmeasurable. */
+    spoiled?: { tick: number; cause: UnmeasurableCause }
   }
 
   const open = new Map<CombatantId, OpenEpisode>()
   const episodes: DisengageEpisode[] = []
+  const unmeasurable: UnmeasurableDisengageEpisode[] = []
+
+  function spoil(current: OpenEpisode, tick: number, cause: UnmeasurableCause): void {
+    if (!current.spoiled) current.spoiled = { tick, cause }
+  }
+
+  function close(actorId: CombatantId, current: OpenEpisode, endTick: number, endSeparation: number, reason: DisengageExitReason): void {
+    // `spoiled` is the single gate: a stamp with no target spoils on the spot,
+    // so `targetId === undefined` here always implies `spoiled` is set, and
+    // narrowing on it keeps that invariant visible to the type checker instead
+    // of needing a second, unreachable branch.
+    if (current.spoiled || current.targetId === undefined) {
+      unmeasurable.push({ actorId, startTick: current.startTick, tick: current.spoiled?.tick ?? current.startTick, cause: current.spoiled?.cause ?? 'no-target' })
+      return
+    }
+    episodes.push({
+      actorId,
+      targetId: current.targetId,
+      startTick: current.startTick,
+      endTick,
+      ticks: endTick - current.startTick,
+      startSeparation: current.startSeparation,
+      endSeparation,
+      reason,
+    })
+  }
 
   for (const sample of samples) {
     const current = open.get(sample.actorId)
@@ -199,13 +272,15 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
           `disengage diagnostics: ${sample.actorId} was stamped at tick ${sample.tick} while an episode from tick ${current.startTick} was still open`,
         )
       }
-      open.set(sample.actorId, {
-        targetId: requireMeasurable(sample),
+      const opened: OpenEpisode = {
+        targetId: sample.targetId,
         startTick: sample.tick,
         startSeparation: sample.separation,
         lastTick: sample.tick,
         lastSeparation: sample.separation,
-      })
+      }
+      if (sample.targetId === undefined) spoil(opened, sample.tick, 'no-target')
+      open.set(sample.actorId, opened)
       continue
     }
 
@@ -213,7 +288,15 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
       throw new Error(`disengage diagnostics: ${sample.actorId} reported '${sample.kind}' at tick ${sample.tick} with no open episode`)
     }
 
-    requireMeasurable(sample, current.targetId)
+    if (sample.targetId === undefined) {
+      spoil(current, sample.tick, 'no-target')
+    } else if (current.targetId !== undefined && sample.targetId !== current.targetId) {
+      spoil(current, sample.tick, 'target-changed')
+    } else if (!Number.isFinite(sample.separation)) {
+      // A resolved target and an infinite distance between two finite
+      // positions is not an ordinary state, it is a broken one.
+      throw new Error(`disengage diagnostics: ${sample.actorId} reported a non-finite separation to ${sample.targetId} at tick ${sample.tick}`)
+    }
 
     if (sample.kind === 'held') {
       current.lastTick = sample.tick
@@ -222,30 +305,15 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
     }
 
     open.delete(sample.actorId)
-    episodes.push({
-      actorId: sample.actorId,
-      targetId: current.targetId,
-      startTick: current.startTick,
-      endTick: sample.tick,
-      ticks: sample.tick - current.startTick,
-      startSeparation: current.startSeparation,
-      endSeparation: sample.separation,
-      reason: sample.reason,
-    })
+    close(sample.actorId, current, sample.tick, sample.separation, sample.reason)
   }
 
   for (const [actorId, current] of open) {
-    episodes.push({
-      actorId,
-      targetId: current.targetId,
-      startTick: current.startTick,
-      endTick: current.lastTick,
-      ticks: current.lastTick - current.startTick,
-      startSeparation: current.startSeparation,
-      endSeparation: current.lastSeparation,
-      reason: 'censored',
-    })
+    close(actorId, current, current.lastTick, current.lastSeparation, 'censored')
   }
 
-  return episodes.sort((a, b) => a.startTick - b.startTick || (a.actorId < b.actorId ? -1 : a.actorId > b.actorId ? 1 : 0))
+  const byStart = (a: { startTick: number; actorId: CombatantId }, b: { startTick: number; actorId: CombatantId }) =>
+    a.startTick - b.startTick || (a.actorId < b.actorId ? -1 : a.actorId > b.actorId ? 1 : 0)
+
+  return { episodes: episodes.sort(byStart), unmeasurable: unmeasurable.sort(byStart) }
 }

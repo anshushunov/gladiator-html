@@ -69,7 +69,7 @@ import {
 } from './combatDecision'
 import type { ContactCollector, ContactOutcome } from './contactDiagnostics'
 import type { DecisionCollector, DecisionRecord } from './decisionDiagnostics'
-import type { DisengageCollector, DisengageSample } from './disengageDiagnostics'
+import type { DisengageCollector } from './disengageDiagnostics'
 import { DISPOSITION_IDS, dispositionModifiers, isDispositionId, type DispositionId } from './disposition'
 import type { FighterDefinition } from './fighters'
 import { compareArchetypes, comparisonDamageMultiplier, validateFighterDefinition } from './fighters'
@@ -952,26 +952,40 @@ function completeForcedStateTransitions(
     if (justEndedBurstLunge) {
       const forced = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
       next[id] = { ...forced, forcedDisengageStartTick: tick }
-      recordDisengage(disengageCollector, { kind: 'stamped', tick, actorId: id, ...phaseTwoSeparation(combatant, combatants) })
+      // Guarded, not merely short-circuited inside a helper. The stamp branch
+      // never computed a distance before this seam existed, so doing it
+      // unconditionally would add real work to the shipped runtime on every
+      // lunge recovery -- raised in external review as the seam not being
+      // allocation-inert even though state and events were.
+      if (disengageCollector) {
+        const target = phaseTwoTarget(combatant, combatants)
+        disengageCollector.record({ kind: 'stamped', tick, actorId: id, targetId: target?.id, separation: separationTo(combatant, target) })
+      }
       continue
     }
 
     if (combatant.forcedDisengageStartTick === undefined) continue
 
-    const { targetId, separation } = phaseTwoSeparation(combatant, combatants)
+    const target = phaseTwoTarget(combatant, combatants)
+    const separation = separationTo(combatant, target)
     const ticksSinceForced = tick - combatant.forcedDisengageStartTick
 
     // The reason is taken from the branch that fired, and the SAME number the
     // predicate judged is what gets recorded. Nothing downstream re-derives
     // either one; see `disengageDiagnostics.ts` for the inference this
     // replaces.
+    //
+    // `?.record({...})` rather than a `recordDisengage(collector, {...})`
+    // helper: optional chaining does not evaluate the argument list when the
+    // collector is absent, while a plain call would build the sample object
+    // first and discard it. The previous revision did exactly that.
     const exit = hasFastForcedDisengageEnded(separation, ticksSinceForced)
     if (exit) {
       next[id] = { ...combatant, forcedDisengageStartTick: undefined, nextDecisionTick: tick }
-      recordDisengage(disengageCollector, { kind: 'cleared', tick, actorId: id, targetId, separation, reason: exit })
+      disengageCollector?.record({ kind: 'cleared', tick, actorId: id, targetId: target?.id, separation, reason: exit })
     } else {
       next[id] = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
-      recordDisengage(disengageCollector, { kind: 'held', tick, actorId: id, targetId, separation })
+      disengageCollector?.record({ kind: 'held', tick, actorId: id, targetId: target?.id, separation })
     }
   }
 
@@ -979,30 +993,25 @@ function completeForcedStateTransitions(
 }
 
 /**
- * Who the fighter was measured against in phase 2, and how far away they were,
- * before this tick's movement.
- *
- * `Infinity` with no target, which is the value the exit predicate has always
- * been handed in that case and is preserved here exactly -- extracted from the
- * clear branch rather than rewritten, so both ends of an episode are measured
- * by one expression and cannot drift apart. The id is resolved from the
- * snapshot rather than copied off `self.targetId`, so a target that is not in
- * the snapshot reports `undefined` rather than an id whose separation is
- * `Infinity`.
+ * Who the fighter is measured against in phase 2 -- an existing reference out
+ * of the snapshot, allocating nothing. Resolved through the snapshot rather
+ * than read off `self.targetId`, so a target that is not in the snapshot is
+ * `undefined` here rather than an id whose separation would be `Infinity`.
  */
-function phaseTwoSeparation(
+function phaseTwoTarget(
   self: FighterCombatState,
   snapshot: Readonly<Record<CombatantId, FighterCombatState>>,
-): { targetId: CombatantId | undefined; separation: number } {
-  const target = self.targetId ? snapshot[self.targetId] : undefined
-  return { targetId: target?.id, separation: target ? distanceBetween(self.position, target.position) : Infinity }
+): FighterCombatState | undefined {
+  return self.targetId ? snapshot[self.targetId] : undefined
 }
 
 /**
- * Write-only, and inert unless a collector was passed -- the shipped runtime
- * and every test that does not ask for diagnostics never reach the body.
+ * Root-to-root separation before this tick's movement; `Infinity` with no
+ * target, which is the value the exit predicate has always been handed in that
+ * case and is preserved here exactly. Both ends of an episode go through this
+ * one expression, so the stamp and the clear cannot drift apart.
  *
- * IT VALIDATES NOTHING, DELIBERATELY. An earlier version raised here on a
+ * NOTHING IS VALIDATED HERE, DELIBERATELY. An earlier revision raised on a
  * non-finite separation, copying `recordContact`'s posture on `NaN`, and
  * external review found that this makes the seam non-inert in exactly the case
  * it claims to be inert in: `targetId` is legitimately cleared when a target
@@ -1014,12 +1023,12 @@ function phaseTwoSeparation(
  * for the raise ("the arena is under 9 units across") was true of the duel
  * adapter and not of `advanceEncounterTick`, which is the generic kernel.
  *
- * So the kernel records what phase 2 saw and nothing else. Rejecting an
- * unmeasurable episode is `assembleDisengageEpisodes`' job, after the tick,
- * where raising cannot perturb a single thing the seam is supposed to observe.
+ * So the kernel records what phase 2 saw and nothing else. Deciding whether an
+ * episode is measurable is `assembleDisengageEpisodes`' job, after the tick,
+ * where it cannot perturb a single thing the seam is supposed to observe.
  */
-function recordDisengage(collector: DisengageCollector | undefined, sample: DisengageSample): void {
-  collector?.record(sample)
+function separationTo(self: FighterCombatState, target: FighterCombatState | undefined): number {
+  return target ? distanceBetween(self.position, target.position) : Infinity
 }
 
 /**
