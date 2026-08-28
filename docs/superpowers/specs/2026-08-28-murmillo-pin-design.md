@@ -96,10 +96,18 @@ disengage records:
 | episodes | 948 | 608 | 859 |
 | **reaching the 3.35 exit range** | **1.6%** | 31.7% | 67.2% |
 | ending on the 37-tick cap | 95.7% | 65.8% | 30.6% |
-| **median ground opened** | **0.659** | 0.954 | 0.833 |
+| median ground opened *(not established — see §4.0)* | 0.659 | 0.954 | 0.833 |
 
 He gives ground about 2.4 times a bout, at 1.9× the speed the murmillo closes
 at, and it works sixteen times in a thousand.
+
+**The defect is the completion rate, and only the completion rate.** The
+ground-opened row is printed because it is what the existing instrument reports,
+and §4.0 shows that instrument measures a window shifted by one tick in a
+direction that understates the figure — the true median may be anywhere in
+[0.659, ~0.77] and may clear the 0.75 bar. Nothing in this spec may rest on that
+row until PR-2 re-measures it. The completion rate is a count of episodes and a
+one-tick shift cannot move 1.6% to 31.7%.
 
 ### 2.1 How far this criterion can be trusted, stated after review corrected it
 
@@ -223,17 +231,38 @@ back.**
 
 **A first revision of this section bounded that error at ~0.022 units and
 concluded the 0.659 baseline "does not reach 0.75 either way". That was wrong,
-and wrong in my own favour:** 0.022 is only the forced-retreat term. The ordinary
-movement at the back has uncontrolled sign and a magnitude up to ~0.068, so the
-total bound is roughly **±0.09**. The true median could sit at ~0.75 — on the
-bar, not clearly below it.
+and wrong in my own favour.** 0.022 is only the forced-retreat term I drop at the
+front; it ignores the ordinary movement I pick up at the back.
 
-The consequence is worth stating plainly rather than softening. **The
-ground-gained half of §2's finding is not established to the precision the gate
-needs.** What is untouched is the completion rate — 1.6% against 31.7% and 67.2%
-— because that is a count of episodes and a one-tick window shift cannot move a
-40-fold ratio. §2's headline stands on the completion rate; gate Q's baseline
-must be re-measured on PR-2's seam before Q is frozen.
+Signed, the error is
+
+```
+measured − true = (ordinary movement at the exit) − (first forced retreat)
+```
+
+The first forced retreat is Fast backing off at 2.7 u/s while the murmillo closes
+at 1.4, so about **+0.022** per tick. The ordinary movement depends on what
+weighted selection picks the instant the disengage lifts, and the extreme is
+`burst-in` — 4.0 u/s toward an opponent already closing, about **−0.09**. Fast
+authors `burst-in` at weight 14, the largest in its table
+(`combatStyles.ts:51-59`), so this is not a corner case.
+
+So `measured − true` runs from about **−0.11 to 0**, and therefore
+
+```
+true median ∈ [0.659, ~0.77]
+```
+
+**The measurement understates the ground opened, and the true figure brackets the
+0.75 bar rather than sitting below it.** That is the opposite of what my first
+revision claimed, and it is the direction that weakens my own case: measured
+correctly, gate Q may already pass on shipped content.
+
+Stated plainly rather than softened: **the ground-gained half of §2's finding is
+not established at all.** What survives untouched is the completion rate — 1.6%
+against 31.7% and 67.2% — because that counts episodes, and a one-tick window
+shift cannot move a forty-fold ratio. §2's headline rests on the completion rate
+alone until PR-2's seam re-measures the gain.
 
 **What PR-2 must build.** A write-only diagnostic seam on the model of
 `src/simulation/contactDiagnostics.ts`, which the previous slice added for
@@ -572,7 +601,7 @@ checked against source before disposition, and the checking moved one of them.
 |---|---|---|---|
 | 1 | blocker | The exit-reason classifier infers `range` from duration against the mutable constant it judges (`measure-reach.ts:281`). Cap 43 + early exit at 42 ⇒ every episode labelled `range`, gate P ≈ 100%, nobody reaches 3.35. | **Confirmed as stated.** §4.0 written; PR-2 added to build a seam that returns the reason. |
 | 2 | blocker | The permitted change surface cannot implement the hypothesis: no start separation in `FighterCombatState`, none in the predicate signature. | **Confirmed as stated.** §6 amended to admit the episode state and wiring. |
-| 3 | blocker | The harness mis-measures the episode window at both ends, so "the direction and size of the 0.659 baseline are not established". | **Confirmed, and on re-checking the reviewer was more right than my first disposition allowed.** I initially downgraded this to major on a ~0.022-unit bound. That bound covered only the forced-retreat term I dropped at the front and ignored the ordinary movement picked up at the back, whose sign is uncontrolled and whose magnitude reaches ~0.068 — a total of ~±0.09, enough to put the true median on the 0.75 bar. **Kept as a blocker for gate Q, whose baseline is now explicitly unestablished until PR-2's seam re-measures it.** It does not touch the completion rate, which is a count of episodes and carries §2's headline. Recorded because I got the arithmetic wrong in the direction that favoured my own finding, which is the failure mode this document is about. |
+| 3 | blocker | The harness mis-measures the episode window at both ends, so "the direction and size of the 0.659 baseline are not established". | **Confirmed, and the reviewer was more right than either of my first two dispositions allowed.** I downgraded it to major on a ~0.022 bound (only the term that helped), then restored it at ~±0.09. Both were wrong about the *sign*. Worked out signed, `measured − true = (ordinary movement at the exit) − (first forced retreat)`, which runs from ~−0.11 to 0 — so the measurement **understates** the gain and the true median lies in [0.659, ~0.77], bracketing the bar. **Measured correctly, gate Q may already pass on shipped content.** §2's ground-opened row is marked not-established and the headline now rests on the completion rate alone. Recorded at length because I got this wrong twice, both times in the direction of my own claim. |
 | 4 | major | §2.1's independence claim is false; P and Q are calibrated against columns the change moves. | **Confirmed.** §2.1 rewritten, gate P split into an absolute floor and an explicit relationship. The reviewer's refinement — keep the floor so a ratio cannot pass by degrading its denominator — is better than the bare ratio and is what P1/P2 implement. |
 | 5 | major | The hypothesis is not falsifiable: R excludes only one-tick exits, U permits any distance change after an explanation. | **Confirmed in part.** Gate Q2 added for the triviality hole. U left as a report rather than a bar: §1 shows the statistic ranks the counter below the thing it counters, so a threshold on it would be a threshold on the wrong quantity — but the 5-point trigger is now a stated stopping criterion rather than an explanation quota. |
 | 6 | major | The §1.2 withdrawal disposes of the geometry claim but not of the commissioned "is he still a retiarius" question; no gate bounds lunge attempts or offensive share. | **Confirmed that it was left open, and then answered by measurement rather than by a gate.** Lunge share of the retiarius' attack attempts at 200 seeds: **49.9%** vs the murmillo, 51.0% in the mirror, 53.3% vs the hoplomachus — flat within 3.4 points. He has not abandoned his signature attack against anyone; the playtest's 2095→786 was a before/after across the content change, not a per-opponent split, and it does not survive being asked per pair. No gate added. What the measurement *did* surface is unrelated and unclaimed: he attacks **2.5× less often per engaged tick** against the murmillo (8.44 against 21.24 in the mirror). Recorded in §8 as a debt. |
@@ -580,7 +609,25 @@ checked against source before disposition, and the checking moved one of them.
 | 8 | minor | R at 8% per matchup must be additive to pooled E at 5%, not a replacement. | **Confirmed and stated in R.** |
 | 9 | minor | P and Q pool the two orientations despite the protocol promising per-ordered-matchup. | **Confirmed.** P1, P2 and Q now assert each orientation separately. |
 
-Nothing was rejected, and the one finding I tried to downgrade was restored on
-re-checking. The pattern is worth naming: three times in this slice a number has
-been quoted at a precision it did not have, and every time the imprecision ran in
-the direction of the claim being made.
+Nothing was rejected, and the one finding I tried to downgrade was restored twice
+over — the second time with its sign corrected against me. The pattern is worth
+naming rather than buried: four times in this slice a number has been quoted at a
+precision it did not have, and every time the imprecision ran in the direction of
+the claim being made. Two of the four were caught by external review, one by
+re-reading my own arithmetic, and one by a reviewer that never managed to emit a
+valid report.
+
+### 10.1 The second reviewer produced nothing usable
+
+`opencode` was attempted four times — `deepseek-v4-flash` twice and
+`deepseek-v4-pro` twice, across both briefs. One failed on arguments; two
+returned zero-byte results after reading the source files; the last returned
+16 KB of unterminated reasoning that never reached a JSON object and ran out of
+budget mid-derivation. **This spec has had one external reviewer, not two, and
+that is a weaker gate than the previous slice had.**
+
+The failed run was not worthless. Its raw trace independently re-derived §4.0's
+contamination from the same source files and, in doing so, named `burst-in` as
+the closing move at the exit — which is what turned the ±0.09 bound into a signed
+one and reversed the conclusion. It is recorded here as data that happened to be
+correct, not as a review: it reached no verdict and listed no findings.
