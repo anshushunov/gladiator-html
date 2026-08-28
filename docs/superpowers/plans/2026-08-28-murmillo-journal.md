@@ -1806,3 +1806,147 @@ three earlier diffs wrote, and it has to move P1 from 1.1–1.3% to ≥25% and Q
 decided median from 0.72 to ≥0.75 **without** dropping V below 3.55 or moving
 `pinnedShare`/`insideEnvelopeShare` by more than 5 points — V and P pull directly
 against each other, which §9 names as the most likely place the work stops.
+
+
+---
+
+## 2026-08-29 — session 4, phase 3: PR-4 built, gated, and stopped by gate T
+
+**Phase:** 3. The candidate exists, passes every criterion the slice froze, and
+**fails gate T**. It is committed on `experiment/murmillo-pursuit-exit`, off
+PR-3, so this branch stays green and the finding is reproducible rather than
+remembered. Its boundary revision is reverted here for the same reason: a branch
+must not carry a gate wider than the work it contains.
+
+### What was built
+
+`FighterCombatState` gains `forcedDisengageStartSeparation`, stamped and cleared
+with `forcedDisengageStartTick` and required by `assertEncounterInvariants` to
+agree with it — the two are one piece of state in two fields, and a tick without
+a separation would leave the new exit measuring gain against the current
+distance, which is zero gain every tick until the cap.
+
+`hasFastForcedDisengageEnded` gains its third branch, `progress` — the reason
+PR-2 froze into the enum and deliberately left unreachable. The disengage now
+ends once the fighter has opened `FAST_FORCED_DISENGAGE_MIN_GAIN` on **where the
+episode started**, which is an exit a pursuer cannot deny. That is the spec's §3
+hypothesis, implemented.
+
+Constants chosen by a joint sweep, because neither means anything alone. The
+binding clause throughout is Q's median ground over all decided episodes in
+`fast vs heavy`, the worse orientation, against 0.75:
+
+| gain | cap 37 | cap 38 | cap 39 | cap 40 |
+|---|---|---|---|---|
+| 0.75 | 0.75 | | | 0.75 |
+| 0.80 | 0.72 | | | 0.76 |
+| 0.85 | 0.72 | 0.75 | 0.75 | **0.79** |
+| 0.90 | 0.71 | | | 0.78 |
+
+`0.85 / 40` was chosen: the only cell with real margin on the binding clause
+while keeping the commitment floor's margin at +0.20. `0.75 / 37` is the
+tempting small change and it puts Q exactly **on** its bar — the same "noise
+dressed as headroom" the spec rejected an 8% bar for on gate R.
+
+### It works, by every criterion the slice froze
+
+200 seeds, which is the only quotable size here:
+
+| | shipped | candidate | bar |
+|---|---:|---:|---:|
+| P1, success share vs the murmillo | 1.1% / 1.3% | **48.1% / 45.1%** | ≥25% |
+| Q, median ground, all decided | 0.75 / 0.72 | **0.82 / 0.80** | ≥0.75 |
+| Q, median ground, successes | 1.13 / 1.00 | 0.87 / 0.87 | ≥0.75 |
+| V, lunge starts per 1000 engaged ticks | 3.76 / 3.76 | **3.80 / 3.81** | ≥3.55 |
+
+A–G, P2, P3, Q2, R and U all pass. Commitment frequency went **up**, not down —
+an episode that ends on ground made is shorter than one that runs to the cap, so
+the fighter is back to choosing his own actions sooner. That was the risk §5 V
+was written to catch, and it did not fire.
+
+### And the matchup gets worse — gate T, §9's named stopping risk
+
+`balance.test.ts`, roster cohorts, both directions of the same pairing:
+
+- **`brutus/drusus` 85.5%**, against a 85% ceiling;
+- **`aquila/magnus` 13.0%**, against a 15% floor.
+
+Every variant fails it the same way — `0.85/37` gives 11.5%, `0.75/37` gives
+14.0% — so this is the mechanism, not the tuning. The equal-stat style cohort
+still passes: the counter triangle survives. It is the roster cohort, where
+stats differ, that leaves the band.
+
+### The reason, measured rather than guessed
+
+Median **absolute** separation at which an episode ends, 200 seeds:
+
+| | shipped | candidate |
+|---|---:|---:|
+| `fast vs heavy` | 2.35 | **2.20** |
+| `heavy vs fast` | 2.32 | **2.24** |
+
+**The candidate's episodes end closer than the shipped ones while opening far
+more ground.** Gate U agrees from the other side: `insideEnvelopeShare` in
+`fast vs heavy` rises 54.3% → 56.8%, and `pinnedShare` 47.8% → 50.0%. The
+retiarius escapes by every definition this spec froze, and spends **more** of
+the bout inside the murmillo's envelope.
+
+The mechanism is plain once it is measured. He stops retreating as soon as he
+has opened 0.85 relative units — which, from a start median of 1.61, is about
+2.4 — instead of running the retreat out and finishing wherever 37 ticks put
+him. He then resumes ordinary decisions at a distance the murmillo is happy
+with.
+
+**So P and Q measure ground opened, and the fight is decided by distance
+reached, and those are not the same quantity.** Ending sooner and ending further
+out are opposed while retreat speed is fixed — and retreat speed is the one
+lever §6 explicitly forbids, on the grounds that making Fast faster is a
+different change wearing this one's clothes. That was a stylistic judgement when
+it was written. It is now the measured centre of the problem.
+
+### What I got wrong, and what told me
+
+**I froze a test I had to move.** PR-4's boundary put
+`src/simulation/disengageDiagnostics.test.ts` in the frozen set alongside the
+module. Freezing the *module* is right — its reason set must not widen in the
+diff that starts returning `progress`. Freezing its *test* was over-broad: it
+pins seed-specific real-bout populations that legitimately move when behaviour
+moves, exactly as `contactDiagnostics.test.ts` did in the previous slice's
+content PR. The gate is what told me, which is the gate working.
+
+**And the first sweep did not run at all.** Eight configurations reported
+identical numbers because every `node -e` in the loop failed on a `/tmp` path
+Node cannot resolve under MSYS, so the constants were never patched and all
+eight runs measured the same unchanged tree. I noticed because the numbers were
+identical to three decimal places across a two-fold change in the threshold —
+a result that should have been impossible. Had the values differed slightly by
+chance, I would have "swept" nothing and believed it.
+
+### Where I stopped / next session
+
+**This is §9's stopping point, and design.md's instruction is to present the
+failing distributions rather than to widen a band.** The distributions are
+above; the band is untouched.
+
+`fix/murmillo-pin` is green and ends at PR-3: the seam, the criteria, and no
+content change. `experiment/murmillo-pursuit-exit` holds the candidate with its
+determinism artifacts deliberately **not** re-baselined, because re-freezing
+nine digests and five trace fixtures for a rejected candidate would dress it as
+an accepted one.
+
+The decision is the design owner's, and it is a real fork:
+
+1. **Accept the trade** — the escape works and the murmillo wins ~85/13 in the
+   roster cohort. That needs a playtest to judge, not a gate: the question is
+   whether a retiarius who gets away and still loses reads better than one who
+   never gets away.
+2. **Re-open §6's locomotion clause.** The measurement points at retreat speed,
+   which is the lever the spec forbids by name. It can now be argued against
+   evidence instead of style.
+3. **Re-express the criteria.** If distance reached is what matters, P and Q are
+   measuring the wrong quantity, and that is a spec change, not a candidate
+   change — and it must not happen in a diff that also contains a candidate.
+
+Standing: PR #20 open and unmerged. Debt 5 and debt 7 unpaid. The human "does it
+read as a retiarius" gate is still unpassed, and option 1 above cannot be
+decided without it.
