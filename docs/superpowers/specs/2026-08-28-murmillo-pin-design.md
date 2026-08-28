@@ -1,8 +1,9 @@
 # The Murmillo Pin — Design
 
 **Status:** third revision, 2026-08-28, after two rounds of external review
-(codex `gpt-5.6-sol`). **Not fit to implement**: §11 records an open design
-question that round 2 surfaced and this document cannot answer. Rewritten in §2.1, §4, §5 and §6 rather than patched: the review
+(codex `gpt-5.6-sol`, and one late report from opencode `deepseek-v4-pro`). §11's
+open question is resolved — signature-attack frequency is **in scope**, and gate
+V is the result. Round 3 has not yet been run against this revision. Rewritten in §2.1, §4, §5 and §6 rather than patched: the review
 invalidated the instrument the central gates were to be built on, and a document
 assembled by amendment would have kept the old gates visible beside the new
 ones.
@@ -327,12 +328,22 @@ to the behaviour it judges. Both placements break the rule the split exists for.
    `src/content/**` and `measure-reach.ts` all closed. **Merged state: done, on
    this branch.**
 2. **PR-2 — the diagnostic seam, and *no new combatant state*.**
-   `src/simulation/` opened for a write-only disengage collector, plus the
-   predicate's return type widening from `boolean` to the frozen exit-reason
-   enum. Claim: *adds a seam, changes no behaviour* — evidenced the way
-   `contactDiagnostics.ts` was, by every frozen hash and the whole suite passing
-   unchanged. `src/content/**` closed; the predicate's constants and its
-   *decision* closed.
+   `src/simulation/` opened for a write-only disengage collector, plus **one
+   signature change and nothing else**: `hasFastForcedDisengageEnded` widens its
+   return from `boolean` to the frozen exit-reason enum, whose two current
+   values preserve the existing truthiness exactly. Claim: *adds a seam, changes
+   no behaviour* — evidenced the way `contactDiagnostics.ts` was, by every frozen
+   hash and the whole suite passing unchanged.
+
+   **"Closed" in this PR means the constants and the exit-condition *logic*, not
+   the signature.** Both reviewers flagged the previous wording as making PR-2
+   literally unbuildable: it declared the predicate closed while §4.0 required
+   the predicate to return the reason, leaving only two ways out, both bad —
+   infer the reason from duration, which is the hole being fixed, or duplicate
+   the exit logic in a parallel diagnostic function, which is this project's
+   drift-and-divergence defect class rebuilt on purpose. The start-separation
+   *parameter* is not added here either; it arrives in PR-4 with the field it
+   would read.
 
    **Round-2 review found the previous version of this PR impossible, twice
    over.** It said the predicate was closed while §4.0 and §6 required PR-2 to
@@ -379,6 +390,16 @@ gate re-checks that reason against the recorded endpoints.** A criterion built o
 `ticks >= MAX_TICKS`, or on a reason the endpoints contradict, is void here
 whatever number it asserts.
 
+**And a success reason must denote a condition on ground, never on time.**
+Round-2 review found that forbidding *duration inference* was necessary and not
+sufficient: the reason is self-reported by the mutable predicate, so a candidate
+could honestly return `range` from a rule that fires at tick 42. So the success
+set is constrained by what it may mean, not only by how it is read — a successful
+exit is one where the fighter opened separation, however the exit is re-expressed
+— and **every episode P counts as a success must independently show seam-measured
+ground opened strictly greater than zero.** A self-reported label that the
+recorded endpoints do not corroborate fails the run.
+
 **Definitions, frozen, because round-2 review found every one of them load-bearing
 and none of them stated:**
 
@@ -387,9 +408,17 @@ and none of them stated:**
 - a **success** is an episode whose exit reason is in the frozen success set
   (`range`, and `progress` if a pursuit-relative predicate is adopted) *and* whose
   recorded endpoints satisfy that reason's condition;
-- `cap` and `censored` are **non-successes** and stay in every denominator. An
-  implementation that drops censored records can flatter itself by running
-  failures past the end of the bout.
+- `cap` and `censored` are **non-successes**. Where each belongs is stated per
+  gate rather than left to the implementation, because the existing gate E keeps
+  censored records in its denominators (`measure-reach.ts:484` reads the full
+  list) so consistency is not free and the choice moves every rate:
+  - **P** — `cap` and `censored` both count in the denominator as non-successes.
+    Dropping censored lets a candidate flatter itself by running failures past
+    the end of the bout.
+  - **Q** — `censored` **excluded**: no clear separation was ever recorded, so
+    there is no ground figure to take a median of. `cap` included.
+  - **Q2 and R** — `censored` **excluded** from the duration and instant-clear
+    statistics, for the same reason: the episode has no end.
 
 ### P. The escape must work against the opponent it exists for *(the defect detector)*
 
@@ -410,17 +439,23 @@ Three clauses. All must hold.
   opponents on the shipped content. 25% sits below the lower of the two,
   deliberately: this matchup is the hard one and the gate must not demand parity
   with an unpursued escape.
-- **Why P3 exists, and it is round-2 review's finding, accepted whole.** A
-  previous revision claimed P1 was "the floor that stops the denominator being
-  degraded". **It is not — P1 floors the murmillo numerator; nothing floored the
-  comparator.** Driving any one of the three other matchups to zero would make
-  P2's `lowest` zero and P2 vacuous, so the moving-comparator defect survived with
-  a justification attached, which is precisely the shape this project keeps
-  producing. P3 is the floor that was claimed and missing, applied to **every**
+- **Why P3 exists, and both reviewers found the hole independently.** A previous
+  revision claimed P1 was "the floor that stops the denominator being degraded".
+  **It is not — P1 floors the murmillo numerator; nothing floored the
+  comparator.** P3 is the floor that was claimed and missing, applied to **every**
   comparator component separately rather than to their minimum.
-- **Why P2 keeps a live comparator at all.** §2.1: the predicate is global to
-  Fast, so a frozen 25% stops encoding the standard it came from. P2 asserts the
-  relationship; P1 and P3 stop it being met by degrading either side.
+- **P2's honest region of effect, which P3 does not rescue.** One reviewer took
+  it further and is right: whenever `min(others) < 50%`, `0.5 · min(others) <
+  25% ≤` the murmillo share by P1, so **P2 is satisfied automatically and adds
+  nothing.** P3's floors are 25.4 / 25.4 / 53.8%, so two of the three sit well
+  below 50% and P2 is decorative across much of the space. It is kept because it
+  bites in the region that matters — a candidate that makes the escape easy
+  everywhere, where `min(others)` is high and the murmillo must keep pace — and
+  it is labelled here rather than left to look stronger than it is.
+- **What actually blocks the degrade-the-comparator path** is P3 and gate Q: Q
+  measures ground from recorded positions rather than from a share, so a
+  candidate cannot buy P by making every matchup worse. Crediting P1 for that
+  protection was wrong and the credit is moved.
 - **Fails today:** 1.6% against 25%, and against a lowest-other of 31.7%.
 
 ### Q. The ground must actually be opened, per pair and not pooled
@@ -461,12 +496,20 @@ Three clauses. All must hold.
 ### R. It must not become an instant escape anywhere *(the counter-lever)*
 
 > In **every** matchup containing a Fast fighter, the share of episodes clearing
-> within one tick is at most **8%**.
+> within one tick is at most **10%**.
 
 - **Source:** the worst matchup on the shipped content — the mirror, at 7.8% —
-  rounded up to the 1% grid. This is a bar the current content only just meets,
-  and it is set there on purpose: gate E's pooled 5% is met at 2.9% only because
-  four matchups average away a mirror that is already over it.
+  plus two standard errors. **A previous revision put the bar at 8% and that was
+  underpowered**, which round-2 review caught with arithmetic I should have done:
+  7.8% is 67 of 859 episodes, so the binomial standard error is
+  `sqrt(0.078 × 0.922 / 859) ≈ 0.9` points. A bar 0.2 points above the baseline
+  sits at **0.22σ** — a re-run flips it with no candidate change, and a candidate
+  passes at 8.5% with nothing altered. For the clause this spec itself calls the
+  one most likely to break, that margin was noise dressed as headroom. 10% is
+  ~2.4σ.
+- **This bar is loose on purpose and is not the whole guard.** It catches a large
+  regression, not a small one; pooled gate E's 5% stays in force beside it, and
+  Q2 carries triviality.
 - **Note against myself:** this bar is *looser* than gate E's pooled 5%. It has
   to be, because 5% pooled is not 5% per pair and the shipped content does not
   meet 5% per pair today. Tightening it to 5% would fail the authored build,
@@ -484,6 +527,38 @@ Three clauses. All must hold.
   which the table in §4.1 shows is dominated by the mirror. That rejection is
   therefore not evidence against a lowered exit *in the murmillo matchup*, and
   re-measuring it per pair is a named task rather than an assumption.
+
+### V. The retiarius must not stop committing *(the decision that put it here)*
+
+> In `fast vs heavy` and in `heavy vs fast`, each asserted separately,
+> `fast-burst-lunge` **attempts per 1000 engaged ticks** are at least **4.0**.
+
+- **Source:** the shipped content's own measurement, 4.21 against the murmillo at
+  200 seeds, floored at 4.0 — a non-regression bar, not a target. It does not ask
+  the candidate to *improve* commitment frequency, only to not buy the escape
+  with it.
+- **Why it exists, decided by the design owner, 2026-08-28.** Round-2 review
+  showed the commissioned question — "is that a retiarius or a spammer?" — was
+  about frequency, and that a previous revision closed it with the wrong
+  statistic. The lunge *share* of his attack attempts is flat at 49.9 / 51.0 /
+  53.3%, but the share is a ratio and its denominator collapses: he attacks 8.44
+  times per 1000 engaged ticks against the murmillo against 21.24 in the mirror,
+  so the lunge rate is **4.21 against 10.83 — 61% lower**. The flat share hid it.
+- **Why it belongs in *this* slice rather than the next one.** The mechanism this
+  slice proposes makes the number worse by construction: a longer or more
+  successful forced disengage is more time spent retreating and less spent
+  attacking. Without V, every other gate here can go green while the retiarius
+  commits even less often than he does today — the precise shape of "green for
+  the wrong reason" this document exists to prevent.
+- **Measured with the engaged window from `measure-distance.ts`** and attempt
+  counts from `measure-reach.ts`, so the denominator is the same tick population
+  gates P–R use.
+- **Passes today** at 4.21, and it is thin by design: this is the gate most
+  likely to fail a candidate that fixes the escape by keeping Fast out of the
+  fight, which is exactly the candidate that should fail.
+- **Named risk:** V and P pull directly against each other. If no candidate
+  satisfies both, that is a design finding to report under §9, not a bar to
+  lower.
 
 ### S. The reach claim of the previous slice does not regress
 
@@ -680,10 +755,11 @@ claim about a test I had not opened.
 | 16 | major | The flat lunge *share* answers a mix question, not the commissioned frequency question: 4.21 lunge attempts per 1000 engaged ticks against 10.83 in the mirror is a ~61% collapse the share hides. | **Confirmed, and it is the sharpest finding in either round.** I computed that rate myself, filed it in §8 as an unrelated debt, and then used the share to close the question. It does not close it. **Escalated to the design owner rather than answered here** — see §11. |
 | 17 | minor | Gate U names "a per-pair figure" while the instrument reports several. | **Confirmed.** U now names `pinnedShare` and `insideEnvelopeShare`, engaged window, five Fast matchups, and lists what is excluded. |
 
-## 11. Open, and blocking: is signature-attack frequency in this slice?
+## 11. Signature-attack frequency: decided, in scope
 
-Round-2 finding #16 is not an engineering question and this document will not
-answer it.
+**Resolved by the design owner, 2026-08-28: in scope.** Gate V above is the
+result. What follows is the evidence and the reasoning that produced the
+question, kept because the answer is only legible with it.
 
 Measured, 200 seeds, equal-stat cohorts, engaged window:
 
@@ -703,28 +779,37 @@ forced disengage reduces attack incidence further.** Every gate in §5 can pass
 while the signature attack gets rarer, which is the exact shape of "green for the
 wrong reason" this document exists to prevent.
 
-Two possible dispositions, and the choice is the design owner's:
+**The decision was "in scope", and its cost is accepted with it:** the candidate
+space narrows, possibly to nothing once §9's balance risk is applied on top. If
+V and P cannot both be satisfied, the slice stops and reports the failing
+distributions, per design.md's own rule and §9.
 
-- **In scope:** add a frozen per-orientation floor on lunge attempts per 1000
-  engaged ticks against the murmillo, and accept that it constrains the candidate
-  space further — possibly out of existence, given §9's balance risk.
-- **Out of scope:** record explicitly that signature-attack frequency is not this
-  slice's concern, so that the next playtest is not surprised by it a second
-  time.
+## 10.6 The second reviewer, eventually — and it found two things the first did not
 
-Until this is decided, §5 is incomplete and PR-4 must not start.
+`opencode` was attempted five times. `deepseek-v4-flash` failed three times (once
+on arguments, twice with zero-byte results after reading the source files);
+`deepseek-v4-pro` failed once with 16 KB of unterminated reasoning, then
+succeeded on the round-2 brief. So round 1 had one reviewer and round 2 had two.
 
-### 10.1 The second reviewer produced nothing usable
+**Consensus on four findings**, reached independently: the PR-2 predicate
+contradiction (both blocker), P1 flooring the numerator instead of the
+denominator, the exit reason being self-reported by the mutable predicate, and
+#6's disposition overstating what the flat lunge share proved. Four findings
+found twice is the strongest signal either round produced, and all four are
+accepted above.
 
-`opencode` was attempted four times — `deepseek-v4-flash` twice and
-`deepseek-v4-pro` twice, across both briefs. One failed on arguments; two
-returned zero-byte results after reading the source files; the last returned
-16 KB of unterminated reasoning that never reached a JSON object and ran out of
-budget mid-derivation. **This spec has had one external reviewer, not two, and
-that is a weaker gate than the previous slice had.**
+**Two findings only the second reviewer had:**
 
-The failed run was not worthless. Its raw trace independently re-derived §4.0's
-contamination from the same source files and, in doing so, named `burst-in` as
-the closing move at the exit — which is what turned the ±0.09 bound into a signed
-one and reversed the conclusion. It is recorded here as data that happened to be
-correct, not as a review: it reached no verdict and listed no findings.
+| # | sev | finding | disposition |
+|---|---|---|---|
+| 18 | minor→**accepted as material** | Gate R's 8% bar sits inside its own noise. 7.8% is 67 of 859 episodes, so the binomial standard error is ~0.9 points and a bar 0.2 points above baseline is **0.22σ** — flaky by construction, on the clause the spec itself calls most likely to break. | **Confirmed by arithmetic I should have done.** R widened to 10%, ~2.4σ, with the calculation written into the gate and the looseness stated as deliberate. |
+| 19 | minor | Censored episodes' membership in the denominators of P, Q2 and R is unspecified, and gate E already includes them (`measure-reach.ts:484`), so consistency is not free. | **Confirmed.** §5's definitions now state it per gate: censored count as non-successes in P's denominator, and are excluded from Q, Q2 and R because the episode has no recorded end. |
+
+**And it sharpened the P2 finding past where the first reviewer left it.** Both
+saw that P1 floors the wrong term. The second went on to show that P3 does not
+rescue P2 either: whenever `min(others) < 50%`, the ratio is satisfied
+automatically by P1, so **P2 is decorative across most of the space** — including
+at two of P3's own three floors. It also identified what does the protecting
+instead: P3 plus gate Q, which measures ground from recorded positions rather
+than from a share. Both corrections are in gate P above, and the credit P1 was
+given for a protection it never provided has been moved.
