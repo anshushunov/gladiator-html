@@ -848,5 +848,30 @@ Correction recorded. Next: the spec (phase E), targeting the forced disengage
 alone, with the withdrawn lunge finding written into it explicitly so the next
 reader does not rediscover it as news.
 
-PR #20 still pending in CI, now past an hour — the e2e step is running, and
-allowlist, unit tests and build have all passed on it. **Do not merge.**
+### PR #20 is green, and that is the §2 debt discharged
+
+`test` passed in **1h10m06s**, every step including `npm run test:e2e`. That is
+the evidence the whole PR was for: the two re-captured baselines match what
+`ubuntu-latest` actually renders, measured by the same image that renders them.
+Nothing about the argument in the PR body rests on my reading of the pixels any
+more — the runner agrees.
+
+Left unmerged per §8.1. It is the user's call.
+
+### Phase F dispatched
+
+Spec sent to both reviewers (`codex/gpt-5.6-sol` and
+`opencode/deepseek-v4-flash`) through the `peer` skill. The brief carries the
+spec, §3 and §4 of the task brief — so the reviewers know what this project
+keeps getting wrong and in which direction — and the two questions that found
+four of the five defects last time, sharpened at this spec's specific claims:
+
+1. which frozen gate in §5 can go green for the wrong reason, and by what
+   mechanism;
+2. §2.1 claims the central criterion needs no comparator because subject and
+   yardstick are the same archetype's own mechanic across three opponents — is
+   there a path by which changing the forced disengage moves the "vs
+   hoplomachus" or "mirror" columns that gates P and Q are calibrated against?
+
+The second is aimed squarely at the load-bearing claim. If the answer is yes,
+gates P and Q are coupled and the spec's best criterion is its worst.
