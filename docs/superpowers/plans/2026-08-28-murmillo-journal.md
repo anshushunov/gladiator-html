@@ -945,3 +945,97 @@ instead of the spec.
 The previous slice's tick-cap sweep (`combatDecision.ts:978-989`) was evidently
 done by editing the constant and re-running, which is the method available and
 should be planned for explicitly rather than discovered.
+
+### codex came back, and it is the strongest review this slice has had
+
+Three blockers. Each checked against source before being accepted, per §4.2 —
+and the checking moved two of them.
+
+**CONFIRMED, blocker — the exit-reason classifier is an inference from the
+constant it judges.** `measure-reach.ts:281`:
+
+```ts
+exit: ticks >= FAST_FORCED_DISENGAGE_MAX_TICKS ? 'cap' : 'range',
+```
+
+Nothing observes *why* `hasFastForcedDisengageEnded` returned true; the label is
+deduced from duration against a mutable constant. Gate P — "the share of
+episodes ending by reaching the exit range" — would be built entirely on that
+deduction, and §6 of the spec explicitly permits replacing the predicate. codex's
+mechanism is exact: set the cap to 43 and add an early time exit at 42, and every
+episode is labelled `range`, P approaches 100%, and nobody has reached 3.35.
+
+The file's own comment shows how near-miss this was — it says the constant must
+be read rather than hard-coded "or a hard-coded 30 would silently mislabel every
+range exit past that tick". They saw the literal and not the inference.
+
+**CONFIRMED, blocker — the permitted change surface cannot implement the
+hypothesis.** `encounter.ts:215` carries `forcedDisengageStartTick?: number` and
+nothing else; `hasFastForcedDisengageEnded(distanceToTarget, ticksSinceForced)`
+receives only those two. There is no way to express "how much ground has this
+episode opened". §6 lists only the constants and the predicate as mutable, so the
+spec forbids the pursuit-relative answer its own §3 argues for — which is the
+same candidate I pre-registered above two hours before codex named it.
+
+**DOWNGRADED to major — the disengage window is mis-measured, but the direction
+is establishable and I established it.** codex says the harness omits the first
+forced movement and includes one post-exit ordinary movement, so "the direction
+and size of the 0.659 baseline are not established".
+
+Half right. Traced through `measure-reach.ts:229-290`: the field is stamped
+inside the advance into tick `S`, the harness first sees it at the top of the
+iteration where `battle.encounter.tick === S`, and takes `started.separation`
+from the state at `S` — after that tick's forced movement. `ticks` counts from
+`S` too, so the window is **self-consistent at the start**: 37 movements counted,
+37 ticks reported. The start is not the defect.
+
+The exit is. The kernel clears the field in phase 2 of the advance into tick `E`
+and sets `nextDecisionTick: tick`, so ordinary decision and movement run in that
+same advance — and the harness samples after all of it. One ordinary movement is
+counted as disengage ground, of uncontrolled sign.
+
+Magnitude: one tick is 0.045 units of retreat against 0.023 of murmillo advance,
+so ~0.022 net at most. The measured 0.659 could be off by roughly that. **It does
+not reach the 0.75 bar either way, and it does not touch the headline statistic
+at all** — completion rate is a count of episodes, not a separation. So the
+finding stands and the instrument still needs to be exact before it is a gate.
+
+**CONFIRMED, major — my §1.2 withdrawal does not dispose of the commissioned
+question**, and codex is right that I let it slide. The playtest asked whether
+the retiarius still uses his signature attack; I disproved a *different* claim
+(that the murmillo uniquely causes geometry failures) and moved on.
+
+So I measured it. Lunge share of the retiarius' total attack attempts, 200 seeds:
+
+| opponent | lunge attempts | probe attempts | **lunge share** | attacks per 1000 engaged ticks |
+|---|---:|---:|---:|---:|
+| murmillo | 569 | 572 | **49.9%** | 8.44 |
+| mirror | 1079 | 1037 | **51.0%** | 21.24 |
+| hoplomachus | 607 | 531 | **53.3%** | 12.98 |
+
+**He has not abandoned his signature attack against the murmillo.** Half his
+offence is the lunge against every opponent, within 3.4 points. The playtest's
+2095→786 was a before/after across the content change, not a per-opponent split,
+and it does not survive being asked per pair.
+
+What *is* different, and what nobody has looked at: he attacks **2.5× less often
+per engaged tick** against the murmillo than in the mirror. That is a real
+per-pair asymmetry and it is unmeasured. Recorded; not this slice's target
+without a decision.
+
+**CONFIRMED, major — three PRs must become four.** Fixing the exit-reason
+instrumentation needs a behaviour-neutral kernel diagnostic, which cannot go in
+PR-2 (that PR claims simulation stays closed) or PR-3 (that couples the
+instrument to the behaviour it judges). The precedent is exact: the previous
+slice added `src/simulation/contactDiagnostics.ts` as a write-only seam for
+precisely this reason, and this slice needs its sibling for disengage episodes.
+
+**CONFIRMED, major — §2.1's independence claim, which is what I pre-registered
+above.** codex adds a refinement better than my own: if the criterion becomes a
+ratio, keep an absolute floor as well, so the ratio cannot be satisfied by
+degrading its denominator. My version had that hole.
+
+Also accepted: R only excludes one-tick exits so a two-tick trivial escape passes
+(major); keep pooled E *and* add per-matchup R rather than replacing (minor);
+assert P and Q per ordered matchup rather than pooling the two orientations
+(minor).
