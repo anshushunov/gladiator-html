@@ -1,92 +1,98 @@
 #!/usr/bin/env bash
 # scripts/check-allowlist.sh — the paths this slice may not touch.
 #
-# RE-SCOPED for the Linux-baseline re-capture (2026-08-28). Rebuilt from
-# scratch, as every slice rebuilds it, because the shape follows the claim.
+# RE-SCOPED for the murmillo-pin slice's PREPARATORY PR (2026-08-28). Rebuilt
+# from scratch, as every slice rebuilds it, because the shape follows the claim.
 #
 # ---------------------------------------------------------------------------
-# WHY THIS SLICE EXISTS, since it is a debt rather than a plan
+# THE CLAIM THIS LIST PROTECTS
 # ---------------------------------------------------------------------------
 #
-# Two Linux screenshot baselines are stale on `main`: `planning.png` and the
-# season board, 5% of pixels against a `maxDiffPixelRatio` of 0.002. They are
-# stale for a reason worth writing down rather than fixing quietly.
+# This PR adds an instrument and changes nothing the instrument measures.
 #
-# `update-baselines.yml` exists precisely because baselines captured in
-# `mcr.microsoft.com/playwright:v1.62.1-noble` render text differently from the
-# `ubuntu-latest` runner that compares them -- its own header says so. The
-# retiarius-reach content PR nevertheless refreshed them the other way:
-# commit `18fa19f`, "refresh the Linux visual baselines in the clean
-# container".
+# `scripts/measure-distance.ts` and `src/testSupport/distanceHarness.ts` measure
+# where a bout is actually fought -- the separation on every tick, per ordered
+# matchup. That is the question the retiarius-reach playtest asked and the one
+# `measure-reach.ts` structurally cannot answer, since every gate it owns is
+# conditional on a contact having happened. Against the murmillo those two
+# questions gave opposite answers: every reach gate went green while the pair
+# never separated, because blows that used to land at 0.90 became geometry
+# misses rather than the fight moving out.
 #
-# Nobody caught it because THE E2E STEP NEVER RAN. `npm run check` is
-# `test && build && test:e2e`, the camera metric was failing `npm test`, and CI
-# stopped there. PR #17 went through four CI runs, all red at the same unit
-# test, and was merged anyway; the last green run on `main` is `8d57619`, the
-# merge before it. The measurement-repair slice turned `npm test` green, CI
-# reached e2e for the first time in a week, and these two surfaced immediately.
+# A new instrument is only worth trusting if the thing it measures did not move
+# in the same diff. So `src/simulation/**` and `src/content/**` are closed
+# outright: a baseline is a baseline only if it was taken of the shipped build.
 #
-# So the honest framing: this is not a new failure, it is the first look at an
-# old one. Recorded here because the same shape -- a gate that cannot report
-# because an earlier gate is already red -- will happen again, and a list that
-# said only "PNGs may move" would lose the reason.
+# EXEMPTIONS, four, and no others:
 #
-# ---------------------------------------------------------------------------
-# WHAT THIS LIST PROTECTS
-# ---------------------------------------------------------------------------
+#   * `src/testSupport/distanceHarness.ts` and its test -- the instrument's
+#     silently-wrong parts, kept in `src/` precisely so `npm run build`
+#     typechecks them and Vitest can reach them; `scripts/` is outside
+#     tsconfig's `include` and neither applies there.
+#   * `scripts/measure-distance.ts` -- the instrument itself, authored here.
+#   * this file. A gate that cannot maintain itself cannot be enforced, as every
+#     revision of it has said.
 #
-# The claim is the narrowest this repository has made: the Linux baselines are
-# re-captured on the runner image that compares them, and NOTHING ELSE CHANGES
-# AT ALL. A re-baseline is only trustworthy if the thing being baselined did
-# not move in the same diff -- otherwise "the screenshots now match" says
-# nothing about whether they match the right picture.
+# `scripts/measure-reach.ts` IS CLOSED, and that is the load-bearing entry.
+# It is the instrument producing this slice's *existing* baselines while this
+# slice runs, and the previous slice established the rule the hard way: an
+# instrument may not be adjusted in the diff whose numbers it produces. Two
+# things that would be improvements are therefore deliberately NOT done here and
+# are recorded as debts instead -- unifying the `equalStatFighter` fixture that
+# both scripts now carry a copy of, and reporting gate E's disengage statistics
+# per matchup rather than pooled. Both are named in
+# `docs/superpowers/plans/2026-08-28-murmillo-journal.md`.
 #
-# So the denylist is everything under `src/`, `scripts/`, `tests/` and
-# `.github/workflows/`, with two exemptions and no others:
+# `src/presentation/**`, `src/style.css`, `src/main.ts` and `index.html` are
+# closed for the reason they always are here: this slice's question is about
+# behaviour, and answering it a second way by redrawing would make the two
+# answers inseparable.
 #
-#   * `tests/__screenshots__/linux/**` -- the artefact being re-captured, and
-#     ONLY the Linux set. `win32` stays closed, mirroring the rule
-#     `update-baselines.yml` enforces on itself: "a run here must never touch
-#     the win32 baselines a developer captured on their own machine". A slice
-#     that moved both could not tell a genuine content change from a
-#     runner-image difference, which is the exact confusion that produced this
-#     debt.
-#   * `scripts/check-allowlist.sh` -- a gate that cannot maintain itself cannot
-#     be enforced at all, as every revision of this file has said.
+# `.github/workflows/` is closed. Same rule as the instrument.
 #
 # `docs/**` is open. Recording what was found is not a lever on the finding.
 #
-# `.github/workflows/` is CLOSED here, unlike in every previous revision. The
-# workflow that captures these baselines is the instrument of this slice, and
-# the slice before this one established the rule the hard way: an instrument
-# may not be adjusted in the diff whose numbers it produces. If
-# `update-baselines.yml` turns out to need a change, that is a finding and a
-# separate PR.
+# ---------------------------------------------------------------------------
+# ONE EXEMPTION IS INHERITED, NOT CHOSEN
+# ---------------------------------------------------------------------------
 #
-# THE PNGs MUST COME FROM `update-baselines.yml`, not from a local run and not
-# from a container. This script cannot enforce that -- it sees which paths
-# moved, not where the bytes came from -- so it is stated here and belongs in
-# the PR description as evidence: the workflow run id that produced them.
-# Guessing at a matching local image is the ten-minute round trip that workflow
-# was written to abolish.
+# `tests/__screenshots__/linux/**` is exempt only because this branch is stacked
+# on `test/relinux-baselines` (PR #20), which re-captures two stale baselines on
+# the runner image that compares them. `check:allowlist` diffs against
+# `git merge-base main HEAD`, so until that PR merges those two PNGs appear in
+# this slice's diff as inherited commits and a closed list would fail on work
+# this slice did not do.
+#
+# THIS EXEMPTION MUST BE DELETED WHEN PR #20 MERGES. It is the one line here
+# that protects nothing, and leaving it after the stack flattens would silently
+# reopen the screenshot baselines for the content PR that follows.
 #
 # ---------------------------------------------------------------------------
 # WHAT A REVIEWER MUST CHECK, BECAUSE THIS GATE CANNOT
 # ---------------------------------------------------------------------------
 #
-# This list proves the diff is PNGs and prose. It CANNOT prove the new PNGs are
-# right, and a green gate here must not be read as saying so. Two questions
-# stay human:
+# This list proves the diff is a new instrument plus prose. It CANNOT prove the
+# instrument measures the right thing, and a green gate here must not be read as
+# saying so. Three questions stay human:
 #
-#   1. Does the diff look like the content change it should? Every `maxHp` rose
-#      in the retiarius-reach slice, so the planning screen's stat cards are
-#      expected to move. A diff that moved layout, fonts or colours instead is
-#      a different finding and a different slice.
-#   2. Is the season board the same story? It was not predicted, only observed.
+#   1. Is the engaged window the right window? It opens at the first local
+#      resolution, reusing `balanceCohorts.runBout`'s own predicate, so the
+#      opening ~8.4-unit walk is excluded. Including it would make the metric
+#      partly a measurement of approach speed, unevenly per matchup. Both
+#      windows are printed; only one can be gated against.
+#   2. Are the band edges the right edges? They are read from the patched
+#      catalog -- the retiarius' committed floor and ceiling, and the murmillo's
+#      `preferredRange.max` -- never from literals. Whether those are the
+#      distances that matter is a design question this file cannot settle.
+#   3. Does a share of time inside the murmillo's envelope mean what it looks
+#      like it means? It does not, and the instrument says so in its own output:
+#      the hoplomachus spends MORE of his bout in there than the retiarius does
+#      and WINS that matchup. Any criterion built on that share alone would rank
+#      the counter above the pin.
 set -euo pipefail
 BASE="${1:?base sha required}"
 FORBIDDEN='^(src/|scripts/|tests/|\.github/workflows/|index\.html$|playwright\.config\.ts$|package(-lock)?\.json$)'
-EXEMPT='^(tests/__screenshots__/linux/|scripts/check-allowlist\.sh$)'
+EXEMPT='^(src/testSupport/distanceHarness(\.test)?\.ts$|scripts/measure-distance\.ts$|scripts/check-allowlist\.sh$|tests/__screenshots__/linux/)'
 # Committed + staged + unstaged + untracked, and both sides of every rename.
 CHANGED="$( { git diff --name-status -z --find-renames "$BASE" HEAD; git diff --name-status -z --find-renames HEAD; git diff --name-status -z --find-renames --cached; } \
   | tr '\0' '\n' | grep -vE '^[A-Z][0-9]*$' | sort -u )"
