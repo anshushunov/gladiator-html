@@ -798,15 +798,39 @@ slice must close.
 
    The fix is to return requested samples on `EncounterTransition` and let the
    caller consume them after the kernel returns, for all three collectors
-   together. That changes a kernel type and re-shapes two merged modules, which
-   cannot honestly happen inside a diff whose claim is that it changes nothing.
-   PR-2 therefore states what it can defend — *inert for a collector that
-   returns and does not write to state it captured* — and leaves the
-   disposition to the design owner.
+   together. PR-2 therefore states what it can defend — *inert for a collector
+   that returns and does not write to state it captured*.
 
-   Acceptance for whichever fix is chosen, so it is not re-litigated: a
-   regression whose returning collector captures the pre-tick state, mutates it
-   from inside `record`, and shows the returned transition unchanged.
+   **Disposition: deferred, and not as a preference.** Checked rather than
+   asserted, the fix has nowhere to live inside this slice. Samples handed back
+   from the duel adapter can only ride on `BattleState`, which
+   `stateHash.test.ts` hashes **whole** after every tick of nine pairings — so
+   they would move the nine digests by construction, which is the exact trap
+   that forced the PR-2/PR-4 re-split in §4.2 — or on a widened
+   `advanceBattleTick` return, which changes the signature used by
+   `src/presentation/`, `src/testSupport/balanceCohorts.ts` and
+   `scripts/measure-reach.ts`. All three are closed to this slice, and the last
+   is closed for the load-bearing reason: it is the instrument producing these
+   baselines and may not be adjusted in the diff whose numbers it produces.
+   Widening the slice to reach it would break the rule the slice exists to
+   respect.
+
+   **And the exposure is latent, not live.** Every collector in the repository
+   is `{ record: (entry) => array.push(entry) }` — twenty construction sites
+   across scripts and tests, none of which captures encounter state — and the
+   shipped runtime attaches no collector at all. The defect needs a collector
+   that goes looking for the kernel's own state, and none exists.
+
+   **Constraint this places on PR-3**, which is the first diff that will write a
+   new collector: it must close over nothing but its own accumulator. Reaching
+   into `BattleState` or `EncounterState` from inside `record` is what turns
+   this debt from latent into live, and PR-3 is exactly where that temptation
+   arrives — the per-matchup report wants to know who the fighters are.
+
+   Acceptance for whichever fix is eventually chosen, so it is not re-litigated:
+   a regression whose returning collector captures the pre-tick state, mutates
+   it from inside `record`, and shows the returned transition unchanged. It
+   fails today, in all three modules.
 
 ## 9. Risks
 

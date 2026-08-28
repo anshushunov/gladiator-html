@@ -1613,3 +1613,88 @@ Standing: PR #20 open and unmerged, so the inherited
 `fix/murmillo-pin` and is **not** opened as a GitHub PR and not merged. The
 human "does it read as a retiarius" gate is still unpassed and still needs two
 people who did not write the combat.
+
+
+---
+
+## 2026-08-29 — session 4, the fork decided: PR-2 stands, debt 7 deferred
+
+The design owner handed the §7.5 decision back. Three options were on the table:
+accept PR-2 with the narrowed claim, widen the slice to re-shape all three
+collectors first, or open debt 7 as its own slice before PR-3.
+
+**Decision: accept PR-2 as it stands.** Not because the reviewer was wrong — the
+blocker is confirmed by measurement and the claim it broke was mine — but
+because the fix has nowhere to live inside this slice, and that turned out to be
+a checkable fact rather than an opinion.
+
+### What I checked before choosing
+
+The proposed fix is to hand samples back on the transition instead of through a
+callback. From the duel adapter there are exactly two places to put them:
+
+1. **On `BattleState`.** `stateHash.test.ts:57-80` hashes the *whole*
+   `BattleState` after every tick across nine pairings. Samples living there
+   move nine frozen digests **by construction** — which is precisely the trap
+   that forced §4.2's PR-2/PR-4 re-split, arriving again by a different route.
+2. **On a widened `advanceBattleTick` return.** Traced the callers:
+   `src/presentation/ArenaCamera.test.ts`, `src/testSupport/balanceCohorts.ts`,
+   `scripts/measure-reach.ts`, `scripts/measure-distance.ts`,
+   `src/testSupport/reachHarness.test.ts`, `scripts/benchmark-duel-log.ts`.
+   Three of those are closed to this slice, and `measure-reach.ts` is closed for
+   the load-bearing reason — it is the instrument producing these baselines, and
+   an instrument may not be adjusted in the diff whose numbers it produces.
+
+So options 2 and 3 do not merely cost more. **They require breaking the rule the
+slice exists to respect**, in order to fix a defect about measurement honesty.
+That is not a trade I am willing to make quietly, and it is the whole argument.
+
+### And the exposure is latent, not live
+
+Also checked rather than assumed. Every collector in the repository is the same
+shape — `{ record: (entry) => array.push(entry) }` — across twenty construction
+sites in scripts and tests. **None captures encounter state.** The shipped
+runtime attaches no collector at all: nothing in `main.ts` or `src/presentation/`
+passes one.
+
+The defect needs a collector that goes looking for the kernel's own state. None
+exists, so what is deferred is a latent hazard, not a live one.
+
+### What the decision costs, stated rather than buried
+
+A third module now carries the weakness, and PR-2's header says so out loud
+instead of claiming inertness it does not have. Debt 7 records the fix, the
+reason it is deferred, and its acceptance criterion — a regression whose
+returning collector mutates the pre-tick state and shows the transition
+unchanged, which **fails today in all three modules**.
+
+One constraint falls out of it and is written into the debt, because PR-3 is
+where the temptation actually arrives: **PR-3's collector must close over
+nothing but its own accumulator.** Its per-matchup report wants to know who the
+fighters are, and reaching into `BattleState` from inside `record` is exactly
+what turns this debt from latent into live.
+
+### Not done, deliberately
+
+No GitHub PR opened. The branch stacks on PR #20, which is still unmerged, and
+the human "does it read as a retiarius" gate is unpassed, so a PR would sit
+unmergeable while implying it was ready. Creating one is permitted by §7.1;
+nothing about it is useful yet.
+
+### Where I stopped / next session
+
+PR-2 is complete, reviewed three times, green, and committed on
+`fix/murmillo-pin`: `003b962` boundary, `8609a38` seam, `53fab2b`, `ca16246` and
+`4efff33` the three review rounds. Acceptance re-run after each: `tsc` clean,
+**832/832 across 40 files**, nine digests unchanged, `measure-reach --seeds 200
+--gate` byte-identical to the pre-seam tree, both allowlist passes green.
+
+Next is **PR-3, the criteria** — `measure-reach.ts` opens, gate E's pooled
+clauses are kept and added to, and §5's gates are asserted on this seam's
+records rather than on a duration inference. Two things it inherits from today:
+the constraint above, and the fact that `unmeasurable` episodes now exist and
+have to appear in its denominators rather than being quietly skipped.
+
+Standing: PR #20 open and unmerged, so the inherited
+`tests/__screenshots__/linux/**` exemption stays. Debts 5 and 7 unpaid. The
+human review gate still needs two people who did not write the combat.
