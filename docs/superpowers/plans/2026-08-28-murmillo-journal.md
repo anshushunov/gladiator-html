@@ -345,3 +345,315 @@ actually broken may be that the retiarius' committed attack whiffs half the time
 against him — a legibility failure ("he keeps missing") rather than a spacing
 failure ("he fights too close"). Those want different fixes, and the current
 instrument can distinguish neither.
+
+---
+
+## 2026-08-28 — session 2, the lever map corrected
+
+**Phase:** end of B, into C.
+
+### I had the node wrong, and the code says so in six lines
+
+The previous entry claimed the forced disengage "cannot fire in exactly the
+situation that needs it fired", because it is triggered by a lunge and the lunge
+is illegal below 1.60. **That is wrong.** `encounter.ts:944-953`:
+
+```ts
+const justEndedBurstLunge =
+  previousCombatant.action.type === 'active' &&
+  previousCombatant.action.definitionId === 'fast-burst-lunge' &&
+  previousCombatant.action.phase === 'recovery' &&
+  previousCombatant.action.phaseEndsAtTick === tick
+```
+
+The trigger is a **phase boundary**, not a contact. It reads
+`previousCombatant.action`, never an event, never an outcome. A lunge that failed
+on geometry still goes windup → impact → recovery, so it still stamps
+`forcedDisengageStartTick`. The retiarius' give-ground fires on his whiffs too.
+
+I inferred the coupling from the decision seam without checking the one place
+that implements it. The brief's §4.1 ordering — distrust the harness, then the
+gate, then the numbers — has a fourth item it does not name: distrust the reading
+of the code before distrusting anything measured.
+
+### What the disengage data actually says, and it is worse
+
+Per ordered matchup, 50 seeds, from the same run's JSON:
+
+| matchup | episodes | reached 3.35 | hit the 37-tick cap | median gain |
+|---|---:|---:|---:|---:|
+| `fast vs heavy` | 120 | **2 (1.7%)** | 116 | **0.66** |
+| `heavy vs fast` | 124 | **0 (0.0%)** | 121 | **0.66** |
+| `fast vs fast` | 220 | 138 (62.7%) | 77 | 0.81 |
+| `fast vs technical` | 83 | 22 (26.5%) | 59 | 0.98 |
+| `technical vs fast` | 81 | 28 (34.6%) | 51 | 0.90 |
+
+**The retiarius is not unable to leave. He leaves about 2.4 times a bout, at 1.9×
+the murmillo's speed, and gets nowhere.** Two of 244 episodes against a murmillo
+reach the exit range. The rest run the clock out.
+
+The arithmetic closes: 37 ticks of retreat at 2.7 u/s is 1.67 units of travel;
+the murmillo spends the same 37 ticks advancing at 1.4 u/s, which is 0.86; the
+difference is 0.81 and the measured net is 0.66, the gap being facing and the
+ticks he is not advancing. To cover the 1.9 units from a pin at ~1.45 out to the
+3.35 exit at that net rate would take about 185 ticks. **The exit condition is
+not marginally unreachable against a murmillo. It is unreachable by a factor of
+five.**
+
+So the node is not "he cannot escape". It is: **an escape with a time limit,
+against a pursuit with none.** Nothing in the content or the kernel ever makes
+the murmillo's advance cost anything — `combatStyles.ts:26-35` gives him
+`advance` 12 *and* `pressure` 12 and `retreat` 0, and `movement.ts:167` maps both
+to the same forward step.
+
+### And gate E is green for the wrong reason
+
+Gate E's third clause is the one the previous slice added *specifically* to catch
+an escape that runs but does not open ground: median separation gained ≥ 0.75.
+Pooled at 50 seeds it measures **0.76** and passes.
+
+It passes because `fast vs fast` — 220 of the 628 episodes, median 0.81, 63% of
+them clearing the range — carries the pooled median over the line. Against the
+murmillo the same statistic is **0.66**, and against him it is the only matchup
+where the clause's purpose is live at all.
+
+Stated carefully, because the direction matters and this project's history is
+findings that flatter the finder: **I am not claiming gate E fails.** The 0.75
+floor was measured pooled on the authored content, so comparing a per-pair figure
+to it is not a like-for-like test — that is the same defect class as gate D's
+comparator, pointed the other way, and I am not going to commit it while writing
+about it. The claim is narrower and I think stronger: *the clause written to
+detect a pinned escape is pooled, and pooling hides the pin in the one matchup
+that has one.* That is a criterion defect independent of which candidate wins,
+and it is the second thing this slice owes an instrument.
+
+### Confirmed at 200 seeds, and gate E is worse than I said
+
+`measure-reach --seeds 200 --gate`: **all reach gates pass.** The run reproduces
+the spec's closing-note figures exactly — retiarius whole-type 63.3%, hoplomachus
+71.9% `fast`-free and 65.0% pooled — which is the determinism check passing as a
+side effect.
+
+The disengage table holds at 200 seeds:
+
+| matchup | episodes | reached 3.35 | median gain |
+|---|---:|---:|---:|
+| `fast vs heavy` | 475 | 9 (1.9%) | 0.65 |
+| `heavy vs fast` | 473 | 6 (1.3%) | 0.67 |
+| `fast vs fast` | 859 | 577 (67.2%) | 0.83 |
+| `fast vs technical` | 315 | 100 (31.7%) | 0.97 |
+| `technical vs fast` | 293 | 93 (31.7%) | 0.94 |
+
+Grouped, against the two clauses gate E actually asserts:
+
+| group | n | median gain (bar ≥0.75) | reached range | immediate (bar ≤5%) |
+|---|---:|---:|---:|---:|
+| **pooled — what gate E reads** | 2415 | **0.775** ✔ | 32.5% | **2.9%** ✔ |
+| vs the murmillo only | 948 | **0.659** ✘ | **1.6%** | 0.3% |
+| vs the hoplomachus only | 608 | 0.954 | 31.7% | 0.0% |
+| the mirror only | 859 | 0.833 | 67.2% | **7.8%** ✘ |
+
+**Gate E passes by 0.025 units, and the two matchups cover each other's
+failures in opposite directions.** The ground-gained clause would fail against
+the murmillo (0.659) and is carried over the bar by the mirror. The
+immediate-clear clause would fail on the mirror (7.8%) and is carried under the
+bar by everything else. The pooled number, 0.775 and 2.9%, describes no matchup
+that exists.
+
+That is not the same finding as "the give-ground collapses against the murmillo".
+It is a bigger one: **the clause added specifically to catch an escape that runs
+without opening ground is pooled, and pooling is what lets a real pin and a real
+instant-escape sit inside a green gate simultaneously.**
+
+Two honesty notes, because this project's history is findings that flatter the
+finder.
+
+*It does not flatter anything I want to build.* This is a defect in the shipped
+criteria that exists whatever candidate wins, and it makes the slice's job
+bigger, not smaller.
+
+*I am still not claiming gate E fails.* Its bars were measured pooled on the
+authored content, so holding a per-pair figure against a pooled-derived bar is
+the same like-for-like error as gate D's comparator, and I am not going to commit
+it in the paragraph where I describe it. The defensible claim is the weaker,
+sufficient one: the statistic is pooled, its components disagree by 0.30 units
+and 7.5 points, and no per-pair criterion exists to notice.
+
+### The trap this slice is most likely to fall into, named in advance
+
+`FAST_FORCED_DISENGAGE_MAX_TICKS` is 37 and 65% of episodes hit it. Raising it is
+the obvious move and it is a **gate-greening move, not a fight-changing one**:
+against the murmillo the retiarius nets ~0.018 units per tick, so reaching the
+3.35 exit from a pin at ~1.45 needs roughly **185 ticks**. More ticks cannot get
+him out; they only extend the mirror's already-successful escapes and lift the
+pooled median. The spec's own tuning table (`combatDecision.ts:978-989`) is a
+sweep of exactly this constant against exactly the pooled statistic.
+
+Any candidate whose effect on gate E is larger than its effect on per-pair
+time-at-distance vs the murmillo is this trap wearing a different number.
+
+---
+
+## Phase C — the candidates
+
+Four, as the brief requires: three from different angles, plus the zero option
+taken seriously. Each with what it pays, what authored ordering it crosses, and
+what would refute it.
+
+### C0. Change the question, not the content — and it is not really an option
+
+Argued at its strongest: **the slice's deliverable is the measurement.** Two
+criterion defects are already on the table before any candidate exists — the
+per-tick, per-pair metric the brief demands has no instrument at all, and gate E
+is pooled in a way that lets two matchups hide each other. Build the instrument,
+re-express the give-ground criterion per pair, re-measure, and the murmillo
+matchup may turn out to be *correct*: the triangle says the murmillo beats the
+retiarius, `aquila/magnus` is in band at 15.0%, and "43% of the bout inside 1.7"
+may be what being counter-picked is supposed to look like.
+
+- **Pays with:** a slice spent on instruments, and the playtest's finding stays
+  open another cycle.
+- **Crosses:** nothing.
+- **Refuted by:** per-pair time-at-distance coming back sharply asymmetric —
+  ~43% inside 1.7 against the murmillo against ~20% against the hoplomachus.
+  Then the asymmetry is real, measurement alone will not discharge it, and
+  content has to move.
+
+**Verdict: C0 is not a fourth alternative, it is the first half of the other
+three.** None of C1–C3 can be judged without the instrument, and the honest thing
+is to say that rather than to list C0 politely and move past it. What is genuinely
+open is whether the second half is needed at all — and that is a question the
+first half answers, which is a good reason to build it first and cheap.
+
+### C1. Contentual — the exit range was derived, never checked for reachability
+
+`FAST_FORCED_DISENGAGE_END_RANGE = 3.35` came from arithmetic, and the spec says
+so: "the authored 2.4 sits 0.95 above the authored lunge's contact max of 1.45,
+and the same gap above 2.40 is 3.35". Nobody asked whether a fighter being chased
+can reach it. One constant serves two situations — pursued and not pursued — and
+it is calibrated on the second. Candidate: lower it toward ~2.6 and re-derive the
+tick cap around the result.
+
+- **Pays with:** the previous slice measured 3.00 and rejected it, because
+  "cleared within one tick" jumped to 6.7% and broke gate E's first clause.
+  **But that objection is now suspect in a specific, checkable way:** the
+  immediate-clear figure is a pooled number and the mirror already contributes
+  7.8% of it at 3.35. The measurement that rejected this candidate may have been
+  a pooling artefact. Re-measuring it per pair is a §4.2 direction-check that
+  could reverse a rejected candidate, which is exactly the shape of thing this
+  project keeps getting wrong in the other direction.
+- **Crosses:** no authored ordering; needs a written amendment (decision
+  constants are outside design.md's tuning allowance).
+- **Refuted by:** per-pair time-at-distance against the murmillo not moving,
+  because he re-closes in the ticks the shorter exit saves.
+
+### C2. Kinematic — the escape is speed-capped, the pursuit is not
+
+The forced disengage moves at `backwardUnitsPerSecond` 2.7 (`movement.ts:171`)
+while the murmillo advances at 1.4, and 37 ticks of that difference is 0.81 units
+before facing losses. Candidate: give the *forced* disengage Fast's authored
+`burstUnitsPerSecond` of 4.0, which turns 1.67 units of travel into 2.47 and a
+net of ~0.66 into ~1.6 — enough that the escape actually completes.
+
+The other half of this angle — making pursuit *cost* something — is out of scope:
+there is no stamina or commitment resource to hang a cost on, and inventing one
+is a different slice.
+
+- **Pays with:** a kernel change on the forced path, and it buffs Fast in the two
+  matchups where the escape already works. `heavy > fast` must stay inside
+  55–75%.
+- **Crosses:** nothing in the authored ordering ("Fast remains quickest" is
+  already true), but it is a new distinction between forced and ordinary
+  backward movement that the design does not currently draw.
+- **Refuted by:** `heavy > fast` falling below 55%, or bout duration and timeout
+  rate rising — i.e. kiting. **Neither has a per-pair instrument.** Third
+  instrument finding.
+
+### C3. Decisional — "inside my own floor" is not a state the retiarius can see
+
+Technical has this recognition and Fast does not: `BACKSTEP_MAX_RANGE = 1.2`
+(`combatDecision.ts:313`) gates an authored `backstep` for exactly the case
+"someone is inside my committed floor", and `combatStyles.ts:122-127` uses the
+retiarius' *lack* of a backstep to justify keeping `fast-slash.min` at 0.9. Two
+sub-forms: (a) give Fast a `backstep` gated at its own committed floor of 1.60
+rather than 1.2; (b) widen the anti-stall exemption from "no viable action" to
+"no viable **committed** action", which addresses the measured coupling directly —
+the probe that keeps him legal is what forbids him to leave.
+
+- **Pays with:** a `baseWeights` or decision-constant amendment; (b) adds a
+  decision rule, and `deterministicFallbackDecision`'s own comment
+  (`combatDecision.ts:882-890`) records what undisclosed decision rules cost this
+  codebase.
+- **Crosses:** the kiting guard. Fast at 2.7 backward against Heavy at 1.4
+  forward is a worse version of the exact configuration `BACKSTEP_MAX_RANGE` was
+  introduced to stop for Technical at 2.0.
+- **Refuted by:** *its own arithmetic, and this is the strongest prediction in
+  phase C.* A forced disengage — uninterruptible, 37 consecutive ticks at full
+  backward speed — nets 0.66 units against the murmillo. A voluntary backstep
+  chosen among four candidates every 12–30 ticks must net **less**. So C3 is
+  predicted inert for the same reason raising the tick cap is inert, and the
+  prediction ought to be cheap to test, since `baseWeights` live under `styles`
+  in the catalog and `--overlay` patches `styles`.
+
+  **It is not testable, and I found that out by trying it.** The overlay refuses:
+
+  ```
+  Error: overlay sets unknown field 'styles.fast.baseWeights.backstep'
+      at requireKnownKeys (src/testSupport/reachHarness.ts:132)
+  ```
+
+  `requireKnownKeys` (`reachHarness.ts:130-138`) demands that every key a patch
+  names already exist on the target, at every depth. That check is *correct* for
+  the defect it was written against — a typo like `rootTravl` would otherwise
+  merge in as a new key, validate cleanly, and measure exactly like the unpatched
+  catalog. But the same rule means the overlay can only **retune values that
+  already exist**, never add an authored field. So the entire class of candidate
+  "give this style an intent it does not currently author" cannot be measured
+  without editing content — which is precisely what `--overlay` exists to avoid.
+  C3(b) is a kernel predicate and is not overlay-able either.
+
+  **So C3 has no instrument at all**, and neither sub-form can be falsified
+  before it is built. Instrument finding number four.
+
+### Phase D, so far: the answer to "is there an instrument that would see this
+### candidate fail?" is no, four times
+
+The brief says a missing instrument is itself a finding, to be recorded rather
+than worked around. Recorded:
+
+1. **No per-tick, per-pair time-at-distance** — the slice's mandated primary
+   metric. Nothing in `scripts/` computes it; the playtest's table came from a
+   throwaway, so its numbers are unreproducible.
+2. **Gate E is pooled** and its components cover each other's failures in
+   opposite directions (0.659 vs 0.833 on ground gained; 7.8% vs 0.3% on
+   immediate clears). No per-pair give-ground criterion exists.
+3. **No kiting detector.** C2 and C3 both risk letting Fast retreat indefinitely,
+   which is the exact failure `BACKSTEP_MAX_RANGE` was introduced to stop for
+   Technical. Bout duration and timeout rate exist in `balance.test.ts` at cohort
+   level, not per pair, and not in this slice's harness.
+4. **`--overlay` cannot add authored fields**, so any candidate that gives a
+   style a new intent must be measured by editing content — the thing the overlay
+   was built to make unnecessary.
+
+Findings 1 and 2 have to be fixed for this slice to have an acceptance criterion
+at all. 3 and 4 are needed only if C2 or C3 survives.
+
+### Where I stopped / next session
+
+Phase C drafted above. PR #20's CI was still pending at the end of this session —
+**check it first** (`gh pr checks 20`), do not merge.
+
+Next, in order:
+
+1. **Build the per-pair time-at-distance instrument.** Instrument findings 1 and
+   2. This is not phase-H work smuggled forward: the previous slice's spec opens
+   with a section called "The instrument comes first" and froze its gates against
+   numbers from the rebuilt harness, so instrument-before-spec is this
+   repository's established order. A spec that froze gates without it would be
+   freezing bars whose baselines nobody had measured.
+2. Then the spec (phase E), with the per-pair re-expression of gate E as a named
+   deliverable rather than a side effect, and with C1's rejected-candidate
+   direction-check called out explicitly.
+3. Then phase F review, and only then any content.
+
+**Nothing outside `docs/` has been touched by this slice.**
