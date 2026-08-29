@@ -69,7 +69,7 @@ import {
 } from './combatDecision'
 import type { ContactCollector, ContactOutcome } from './contactDiagnostics'
 import type { DecisionCollector, DecisionRecord } from './decisionDiagnostics'
-import type { DisengageCollector } from './disengageDiagnostics'
+import type { DisengageCollector, DisengagePredicateExit } from './disengageDiagnostics'
 import { DISPOSITION_IDS, dispositionModifiers, isDispositionId, type DispositionId } from './disposition'
 import type { FighterDefinition } from './fighters'
 import { compareArchetypes, comparisonDamageMultiplier, validateFighterDefinition } from './fighters'
@@ -911,6 +911,26 @@ function forceLocomotionIntent(
 }
 
 /**
+ * A `held`/`cleared` disengage observation whose `separation` (phase 2,
+ * pre-movement, exactly as before) is already final, but whose
+ * `externalSeparationDelta` is not: that needs THIS tick's `pushByTarget`,
+ * which phase 9 has not computed yet when phase 2 runs. `advanceEncounterTick`
+ * finishes each of these into a `DisengageSample` right after phase 9, using
+ * `actor`/`target` (the same phase-2 snapshot `separation` was read from) to
+ * build the axis. `stamped` carries no such field and is still recorded
+ * immediately, unchanged.
+ */
+interface PendingDisengageSample {
+  kind: 'held' | 'cleared'
+  tick: number
+  actorId: CombatantId
+  actor: Readonly<FighterCombatState>
+  target: FighterCombatState | undefined
+  separation: number
+  reason?: DisengagePredicateExit
+}
+
+/**
  * Wires Fast's forced disengage (design.md's locomotion section): the
  * instant a `fast-burst-lunge` action's `recovery` phase ends (detected off
  * `previousCombatants`, the tick's pre-phase-1 snapshot, exactly like
@@ -934,9 +954,10 @@ function completeForcedStateTransitions(
   tick: number,
   cursor: EventIdCursor,
   disengageCollector?: DisengageCollector,
-): { combatants: Record<CombatantId, FighterCombatState>; events: EncounterEvent[] } {
+): { combatants: Record<CombatantId, FighterCombatState>; events: EncounterEvent[]; pendingDisengage: PendingDisengageSample[] } {
   const next: Record<CombatantId, FighterCombatState> = { ...combatants }
   const events: EncounterEvent[] = []
+  const pendingDisengage: PendingDisengageSample[] = []
 
   for (const id of combatantIds) {
     const previousCombatant = previousCombatants[id]
@@ -975,21 +996,21 @@ function completeForcedStateTransitions(
     // either one; see `disengageDiagnostics.ts` for the inference this
     // replaces.
     //
-    // `?.record({...})` rather than a `recordDisengage(collector, {...})`
-    // helper: optional chaining does not evaluate the argument list when the
-    // collector is absent, while a plain call would build the sample object
-    // first and discard it. The previous revision did exactly that.
+    // Guarded by `if (disengageCollector)`, same reasoning as the stamp
+    // branch above: with no collector attached, nothing is pushed onto
+    // `pendingDisengage` and `advanceEncounterTick` builds no sample from it
+    // after phase 9 either.
     const exit = hasFastForcedDisengageEnded(separation, ticksSinceForced)
     if (exit) {
       next[id] = { ...combatant, forcedDisengageStartTick: undefined, nextDecisionTick: tick }
-      disengageCollector?.record({ kind: 'cleared', tick, actorId: id, targetId: target?.id, separation, externalSeparationDelta: 0, reason: exit })
+      if (disengageCollector) pendingDisengage.push({ kind: 'cleared', tick, actorId: id, actor: combatant, target, separation, reason: exit })
     } else {
       next[id] = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
-      disengageCollector?.record({ kind: 'held', tick, actorId: id, targetId: target?.id, separation, externalSeparationDelta: 0 })
+      if (disengageCollector) pendingDisengage.push({ kind: 'held', tick, actorId: id, actor: combatant, target, separation })
     }
   }
 
-  return { combatants: next, events }
+  return { combatants: next, events, pendingDisengage }
 }
 
 /**
@@ -1029,6 +1050,45 @@ function phaseTwoTarget(
  */
 function separationTo(self: FighterCombatState, target: FighterCombatState | undefined): number {
   return target ? distanceBetween(self.position, target.position) : Infinity
+}
+
+const ZERO_VEC: Readonly<Vec2> = { x: 0, z: 0 }
+
+/**
+ * The part of this tick's contact resolution attributable to external
+ * displacement, projected onto the actor->target axis recorded alongside
+ * this tick's disengage sample. Positive when this tick's pushes moved the
+ * pair apart: a push on the target moves the far end away (adds); a push on
+ * the actor moves the near end towards or past the target (subtracts).
+ *
+ * `actor`/`target` are the SAME phase-2, pre-movement `FighterCombatState`s
+ * `separationTo` was already called with for this sample -- the axis these
+ * two positions describe, not any position phases 7-10 move them to
+ * afterwards. `pushByTarget` is phase 9's own result for THIS tick
+ * (`ContactResolutionResult`, computed after phase 2 within the same
+ * `advanceEncounterTick` call), which is why the sample this feeds is built
+ * after phase 9 rather than inside phase 2 alongside `separation`
+ * (`PendingDisengageSample`, above).
+ *
+ * Zero with no target: `separationTo` already reports `Infinity` in that
+ * case, and `assembleDisengageEpisodes` marks the episode unmeasurable
+ * regardless of what this returns, so there is no axis worth constructing.
+ */
+function externalSeparationDeltaFor(
+  actor: Readonly<FighterCombatState>,
+  target: FighterCombatState | undefined,
+  pushByTarget: Readonly<Record<CombatantId, Vec2>>,
+): number {
+  if (!target) return 0
+  const axis = normalizeVec2({ x: target.position.x - actor.position.x, z: target.position.z - actor.position.z })
+  const targetPush = pushByTarget[target.id] ?? ZERO_VEC
+  const actorPush = pushByTarget[actor.id] ?? ZERO_VEC
+  // Inline dot product, matching `combatActions.ts`'s existing
+  // `actorFacing.x * dx + actorFacing.z * dz` idiom for a one-off projection
+  // rather than adding a shared helper for two call sites.
+  const targetPushAlongAxis = targetPush.x * axis.x + targetPush.z * axis.z
+  const actorPushAlongAxis = actorPush.x * axis.x + actorPush.z * axis.z
+  return targetPushAlongAxis - actorPushAlongAxis
 }
 
 /**
@@ -2433,6 +2493,38 @@ export function advanceEncounterTick(
   const contactResolution = resolveContactIntents(combatants, previous.combatantIds, previous.combatStyles, previous.seed, tick, cursor, previous.arena, contactCollector)
   combatants = contactResolution.combatants
   events.push(...contactResolution.events)
+
+  // The held/cleared disengage samples phase 2 deferred (`PendingDisengageSample`,
+  // above `completeForcedStateTransitions`): `separation` was already final at
+  // phase 2, but `externalSeparationDelta` needed this tick's own push, which
+  // phase 9 has only just computed. Finished here, in the same combatantIds
+  // order phase 2 produced them in, so this reorders nothing relative to a
+  // single actor's own sample stream -- only relative to OTHER actors'
+  // `stamped` samples, which `assembleDisengageEpisodes` groups per actor and
+  // does not depend on cross-actor ordering for.
+  for (const pending of forcedTransitions.pendingDisengage) {
+    const externalSeparationDelta = externalSeparationDeltaFor(pending.actor, pending.target, contactResolution.pushByTarget)
+    if (pending.kind === 'cleared') {
+      disengageCollector?.record({
+        kind: 'cleared',
+        tick: pending.tick,
+        actorId: pending.actorId,
+        targetId: pending.target?.id,
+        separation: pending.separation,
+        externalSeparationDelta,
+        reason: pending.reason!,
+      })
+    } else {
+      disengageCollector?.record({
+        kind: 'held',
+        tick: pending.tick,
+        actorId: pending.actorId,
+        targetId: pending.target?.id,
+        separation: pending.separation,
+        externalSeparationDelta,
+      })
+    }
+  }
 
   // Phase 10
   combatants = applyAccumulatedPush(combatants, previous.combatantIds, contactResolution.pushByTarget, previous.arena)

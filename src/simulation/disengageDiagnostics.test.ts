@@ -316,6 +316,34 @@ describe('the disengage seam against a real bout', () => {
   // tick. None of them fall at `BASELINE_TEST_SEED`, hence the pinned seed
   // here; it was found by that sweep and a content change may well move it, in
   // which case this test should be re-pinned rather than deleted.
+  // What Task 3 adds: the kernel projects each tick's real `pushByTarget`
+  // (phase 9) onto the actor->target axis instead of writing the literal `0`
+  // Task 2 left behind. Deliberately run against the SAME fixture as the rest
+  // of this describe block -- `aquila vs drusus` at `BASELINE_TEST_SEED` --
+  // rather than a bespoke encounter, and it is not a hunt: this Fast mirror
+  // trades `fast-slash` hits (`pushDistance` 0.18) throughout its several
+  // forced-disengage windows, so a push landing inside an open episode is the
+  // ordinary case here, not a rare one.
+  //
+  // The sign matters more than the presence of a number: `>` 0, not `!==` 0,
+  // because the whole point of `externalGround` is that a push which moved
+  // the pair apart must read positive. Verified by flipping the subtraction
+  // in `externalSeparationDeltaFor` (`encounter.ts`) locally while writing
+  // this test -- every value below goes negative and this assertion fails,
+  // which is what earns the `>` here instead of a weaker `!== 0`.
+  it('gives a real episode a positive externalGround when a push landed inside it', () => {
+    const { episodes } = collectEpisodes()
+    const pushed = episodes.filter((episode) => episode.externalGround !== 0)
+
+    // Coverage guard, same reasoning as the reason-set guard above: if a
+    // later change stops any push from ever landing inside an open episode
+    // at this pinned seed, the loop below goes vacuous and this catches it.
+    expect(pushed.length).toBeGreaterThan(0)
+    for (const episode of pushed) {
+      expect(episode.externalGround).toBeGreaterThan(0)
+    }
+  }, 30_000)
+
   it('keeps a real bout’s still-open episode instead of dropping it', () => {
     const { episodes } = collectEpisodes(20260836)
     const censored = episodes.filter((episode) => episode.reason === 'censored')

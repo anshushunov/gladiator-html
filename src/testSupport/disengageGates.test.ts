@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { FAST_FORCED_DISENGAGE_END_RANGE, FAST_FORCED_DISENGAGE_MAX_TICKS } from '../simulation/combatDecision'
 import type { DisengageEpisode, DisengageExitReason } from '../simulation/disengageDiagnostics'
-import { corroborate, disengageStats, DISENGAGE_SUCCESS_GROUND, groundOpened, isSuccess, SUCCESS_EXIT_REASONS } from './disengageGates'
+import { corroborate, disengageStats, DISENGAGE_SUCCESS_GROUND, groundOpened, isSuccess, SUCCESS_EXIT_REASONS, voluntaryGroundOpened } from './disengageGates'
 
 let nextStart = 0
 
@@ -54,6 +54,29 @@ describe('what counts as a success', () => {
 
   it('measures ground from the endpoints, signed', () => {
     expect(groundOpened(episode(-0.4, 'cap', FAST_FORCED_DISENGAGE_MAX_TICKS))).toBeCloseTo(-0.4, 10)
+  })
+
+  it('does not count an escape the pursuer created', () => {
+    const episode = {
+      actorId: 'a', targetId: 'b', startTick: 0, endTick: 20, ticks: 20,
+      startSeparation: 1.2, endSeparation: 2.2, externalGround: 0.9,
+      reason: 'progress' as const,
+    }
+
+    expect(groundOpened(episode)).toBeCloseTo(1.0, 10)      // the raw endpoints still say 1.0
+    expect(voluntaryGroundOpened(episode)).toBeCloseTo(0.1, 10)
+    expect(isSuccess(episode)).toBe(false)                   // 0.1 < DISENGAGE_SUCCESS_GROUND
+  })
+
+  it('still counts an escape the fighter made himself', () => {
+    const episode = {
+      actorId: 'a', targetId: 'b', startTick: 0, endTick: 20, ticks: 20,
+      startSeparation: 1.2, endSeparation: 2.2, externalGround: 0,
+      reason: 'progress' as const,
+    }
+
+    expect(voluntaryGroundOpened(episode)).toBeCloseTo(1.0, 10)
+    expect(isSuccess(episode)).toBe(true)
   })
 })
 

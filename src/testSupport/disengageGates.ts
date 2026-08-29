@@ -94,9 +94,19 @@ export function groundOpened(episode: Readonly<DisengageEpisode>): number {
   return episode.endSeparation - episode.startSeparation
 }
 
+/**
+ * Ground the fighter opened by his own locomotion: the endpoints' difference
+ * less the external displacement recorded alongside them. This -- not
+ * `groundOpened` -- is what P and Q count, because a murmillo shove moves the
+ * retiarius and would otherwise register as an escape he did not make.
+ */
+export function voluntaryGroundOpened(episode: Readonly<DisengageEpisode>): number {
+  return groundOpened(episode) - episode.externalGround
+}
+
 /** Both conditions, ground first because it is the binding one. */
 export function isSuccess(episode: Readonly<DisengageEpisode>): boolean {
-  return groundOpened(episode) >= DISENGAGE_SUCCESS_GROUND && SUCCESS_EXIT_REASONS.has(episode.reason)
+  return voluntaryGroundOpened(episode) >= DISENGAGE_SUCCESS_GROUND && SUCCESS_EXIT_REASONS.has(episode.reason)
 }
 
 /**
