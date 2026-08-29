@@ -72,10 +72,14 @@
 # PR-2, `1cd1942` — the earlier PRs' paths must not move at all. It fails loudly
 # if its anchor is missing rather than silently checking nothing.
 #
-# `tests/__screenshots__/linux/**` is inherited from `test/relinux-baselines`
-# (PR #20) and is frozen by the same pass. THE EXEMPTION MUST BE DELETED WHEN
-# PR #20 MERGES; re-checked 2026-08-29, `gh pr view 20` still reports
-# `state: OPEN`, `mergedAt: null`.
+# `tests/__screenshots__/linux/**` USED to be exempt here, inherited from
+# `test/relinux-baselines` (PR #20), under a note saying the line had to go the
+# moment that PR merged because it protected nothing. It merged on 2026-08-29
+# as `3d43624`, its two re-captured baselines are in `main`, and they no longer
+# appear in this branch's diff at all. So the line is deleted rather than left
+# standing, and the screenshots are closed to this slice again — which is what
+# they should have been all along, and would have been if the two PRs had not
+# been stacked.
 #
 # ---------------------------------------------------------------------------
 # WHAT A REVIEWER MUST CHECK, BECAUSE THIS GATE CANNOT
@@ -98,7 +102,7 @@ BASE="${1:?base sha required}"
 FORBIDDEN='^(src/|scripts/|tests/|\.github/workflows/|index\.html$|playwright\.config\.ts$|package(-lock)?\.json$)'
 # Everything the branch has legitimately touched since `main`: PR-1's, PR-2's
 # and PR-3's. The second pass is what distinguishes them.
-EXEMPT='^(scripts/measure-(reach|distance)\.ts$|src/testSupport/disengageGates(\.test)?\.ts$|scripts/check-allowlist\.sh$|src/simulation/disengageDiagnostics(\.test)?\.ts$|src/simulation/(encounter|battle)\.ts$|src/simulation/combatDecision(\.test)?\.ts$|src/testSupport/distanceHarness(\.test)?\.ts$|tests/__screenshots__/linux/)'
+EXEMPT='^(scripts/measure-(reach|distance)\.ts$|src/testSupport/disengageGates(\.test)?\.ts$|scripts/check-allowlist\.sh$|src/simulation/disengageDiagnostics(\.test)?\.ts$|src/simulation/(encounter|battle)\.ts$|src/simulation/combatDecision(\.test)?\.ts$|src/testSupport/distanceHarness(\.test)?\.ts$)'
 # Committed + staged + unstaged + untracked, and both sides of every rename.
 changed_since() {
   { git diff --name-status -z --find-renames "$1" HEAD; git diff --name-status -z --find-renames HEAD; git diff --name-status -z --find-renames --cached; } \
@@ -110,7 +114,7 @@ if [ -n "$VIOLATIONS" ]; then echo "Forbidden for this slice:" >&2; echo "$VIOLA
 
 # --- Second pass: what PR-3 itself may move ---------------------------------
 PR3_BOUNDARY='1cd1942'
-INHERITED='^(src/simulation/|src/testSupport/distanceHarness(\.test)?\.ts$|tests/__screenshots__/linux/)'
+INHERITED='^(src/simulation/|src/testSupport/distanceHarness(\.test)?\.ts$)'
 if git rev-parse --verify --quiet "$PR3_BOUNDARY^{commit}" >/dev/null; then
   REOPENED="$(printf '%s\n%s\n' "$(changed_since "$PR3_BOUNDARY")" "$UNTRACKED" | grep -v '^$' | grep -E "$INHERITED" || true)"
   if [ -n "$REOPENED" ]; then
