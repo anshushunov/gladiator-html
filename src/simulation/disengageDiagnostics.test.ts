@@ -51,7 +51,7 @@ const otherFoe = 'other-foe' as CombatantId
 describe('assembleDisengageEpisodes', () => {
   it('pairs a stamp with its clear and reports the endpoints, elapsed ticks and reason', () => {
     const { episodes } = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 100, actorId: actor, targetId: foe, separation: 1.8 },
+      { kind: 'stamped', tick: 100, actorId: actor, targetId: foe, separation: 1.8, externalSeparationDelta: 0 },
       { kind: 'held', tick: 101, actorId: actor, targetId: foe, separation: 2.1, externalSeparationDelta: 0 },
       { kind: 'held', tick: 102, actorId: actor, targetId: foe, separation: 2.9, externalSeparationDelta: 0 },
       { kind: 'cleared', tick: 103, actorId: actor, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
@@ -68,7 +68,7 @@ describe('assembleDisengageEpisodes', () => {
   // exists to measure.
   it('keeps an episode still open at the end of the bout, as `censored`, with its last observed endpoint', () => {
     const { episodes } = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 40, actorId: actor, targetId: foe, separation: 1.6 },
+      { kind: 'stamped', tick: 40, actorId: actor, targetId: foe, separation: 1.6, externalSeparationDelta: 0 },
       { kind: 'held', tick: 41, actorId: actor, targetId: foe, separation: 1.9, externalSeparationDelta: 0 },
       { kind: 'held', tick: 42, actorId: actor, targetId: foe, separation: 2.2, externalSeparationDelta: 0 },
     ])
@@ -79,7 +79,7 @@ describe('assembleDisengageEpisodes', () => {
   })
 
   it('censors an episode stamped on the very last tick as a zero-tick episode rather than dropping it', () => {
-    const { episodes } = assembleDisengageEpisodes([{ kind: 'stamped', tick: 900, actorId: actor, targetId: foe, separation: 1.55 }])
+    const { episodes } = assembleDisengageEpisodes([{ kind: 'stamped', tick: 900, actorId: actor, targetId: foe, separation: 1.55, externalSeparationDelta: 0 }])
 
     expect(episodes).toEqual<DisengageEpisode[]>([
       { actorId: actor, targetId: foe, startTick: 900, endTick: 900, ticks: 0, startSeparation: 1.55, endSeparation: 1.55, reason: 'censored', externalGround: 0 },
@@ -88,8 +88,8 @@ describe('assembleDisengageEpisodes', () => {
 
   it('keeps two fighters’ interleaved episodes apart and orders the output deterministically', () => {
     const { episodes } = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 2.0 },
-      { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.7 },
+      { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 2.0, externalSeparationDelta: 0 },
+      { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
       { kind: 'held', tick: 11, actorId: other, targetId: foe, separation: 2.4, externalSeparationDelta: 0 },
       { kind: 'cleared', tick: 12, actorId: other, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
       { kind: 'cleared', tick: 48, actorId: actor, targetId: foe, separation: 1.2, externalSeparationDelta: 0, reason: 'cap' },
@@ -116,8 +116,8 @@ describe('assembleDisengageEpisodes', () => {
   it('raises on a second stamp before the first was cleared', () => {
     expect(() =>
       assembleDisengageEpisodes([
-        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
-        { kind: 'stamped', tick: 6, actorId: actor, targetId: foe, separation: 1.9 },
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
+        { kind: 'stamped', tick: 6, actorId: actor, targetId: foe, separation: 1.9, externalSeparationDelta: 0 },
       ]),
     ).toThrow(/still open/)
   })
@@ -132,7 +132,7 @@ describe('assembleDisengageEpisodes', () => {
   // would read as a textbook 1.7-unit successful escape.
   it('reports, rather than emits, an episode whose endpoints are against two different opponents', () => {
     const { episodes, unmeasurable } = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
+      { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
       { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 2.0, externalSeparationDelta: 0 },
       { kind: 'cleared', tick: 7, actorId: actor, targetId: otherFoe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
     ])
@@ -142,14 +142,16 @@ describe('assembleDisengageEpisodes', () => {
   })
 
   it('reports an episode with no target rather than treating an infinite separation as an escape', () => {
-    expect(assembleDisengageEpisodes([{ kind: 'stamped', tick: 5, actorId: actor, targetId: undefined, separation: Infinity }])).toEqual({
+    expect(
+      assembleDisengageEpisodes([{ kind: 'stamped', tick: 5, actorId: actor, targetId: undefined, separation: Infinity, externalSeparationDelta: 0 }]),
+    ).toEqual({
       episodes: [],
       unmeasurable: [{ actorId: actor, startTick: 5, tick: 5, cause: 'no-target' }],
     })
 
     expect(
       assembleDisengageEpisodes([
-        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
         { kind: 'cleared', tick: 6, actorId: actor, targetId: undefined, separation: Infinity, externalSeparationDelta: 0, reason: 'range' },
       ]),
     ).toEqual({ episodes: [], unmeasurable: [{ actorId: actor, startTick: 5, tick: 6, cause: 'no-target' }] })
@@ -160,8 +162,8 @@ describe('assembleDisengageEpisodes', () => {
   // in a free-for-all. One bad episode must not take the other 2414 with it.
   it('keeps every measurable episode in a stream that also contains an unmeasurable one', () => {
     const { episodes, unmeasurable } = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 1.7 },
-      { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.6 },
+      { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
+      { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.6, externalSeparationDelta: 0 },
       { kind: 'cleared', tick: 13, actorId: other, targetId: undefined, separation: Infinity, externalSeparationDelta: 0, reason: 'range' },
       { kind: 'cleared', tick: 14, actorId: actor, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
     ])
@@ -175,11 +177,11 @@ describe('assembleDisengageEpisodes', () => {
   // of episodes.
   it('puts every stamped episode in exactly one of the two collections', () => {
     const samples: DisengageSample[] = [
-      { kind: 'stamped', tick: 1, actorId: actor, targetId: foe, separation: 1.5 },
+      { kind: 'stamped', tick: 1, actorId: actor, targetId: foe, separation: 1.5, externalSeparationDelta: 0 },
       { kind: 'cleared', tick: 2, actorId: actor, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
-      { kind: 'stamped', tick: 3, actorId: other, targetId: undefined, separation: Infinity },
+      { kind: 'stamped', tick: 3, actorId: other, targetId: undefined, separation: Infinity, externalSeparationDelta: 0 },
       { kind: 'cleared', tick: 4, actorId: other, targetId: undefined, separation: Infinity, externalSeparationDelta: 0, reason: 'range' },
-      { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.5 },
+      { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.5, externalSeparationDelta: 0 },
       { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 1.9, externalSeparationDelta: 0 },
     ]
     const { episodes, unmeasurable } = assembleDisengageEpisodes(samples)
@@ -197,41 +199,66 @@ describe('assembleDisengageEpisodes', () => {
   // sample that both retargeted and went non-finite took the `target-changed`
   // branch instead.
   it('raises on a resolved target reporting a non-finite separation, whichever sample carries it', () => {
-    expect(() => assembleDisengageEpisodes([{ kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: Number.NaN }])).toThrow(
-      /non-finite separation/,
-    )
+    expect(() =>
+      assembleDisengageEpisodes([{ kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: Number.NaN, externalSeparationDelta: 0 }]),
+    ).toThrow(/non-finite separation/)
 
     expect(() =>
       assembleDisengageEpisodes([
-        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
         { kind: 'cleared', tick: 6, actorId: actor, targetId: foe, separation: Number.NaN, externalSeparationDelta: 0, reason: 'range' },
       ]),
     ).toThrow(/non-finite separation/)
 
     expect(() =>
       assembleDisengageEpisodes([
-        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
         { kind: 'held', tick: 6, actorId: actor, targetId: otherFoe, separation: Infinity, externalSeparationDelta: 0 },
       ]),
     ).toThrow(/non-finite separation/)
   })
 
-  it('sums the external component of every tick into the episode', () => {
+  // Finding 1 (fix round 1): the window is `[startTick, endTick)` -- the same
+  // ticks the raw endpoints span -- not "every held/cleared sample". The
+  // stamp's own tick's push is inside that window (it happens before the
+  // FIRST held reading, same as any other tick's), so it must count; the
+  // clear's own tick's push happens strictly after `endSeparation` was
+  // already read at phase 2, so it must not.
+  it('sums the external component of every tick the raw endpoints span -- the stamp and the holds, not the clear', () => {
     const assembly = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 10, actorId: 'a', targetId: 'b', separation: 1.0 },
+      { kind: 'stamped', tick: 10, actorId: 'a', targetId: 'b', separation: 1.0, externalSeparationDelta: 0.05 },
       { kind: 'held', tick: 11, actorId: 'a', targetId: 'b', separation: 1.4, externalSeparationDelta: 0.3 },
       { kind: 'held', tick: 12, actorId: 'a', targetId: 'b', separation: 1.7, externalSeparationDelta: 0 },
       { kind: 'cleared', tick: 13, actorId: 'a', targetId: 'b', separation: 2.1, externalSeparationDelta: 0.2, reason: 'progress' },
     ])
 
     expect(assembly.episodes).toHaveLength(1)
-    expect(assembly.episodes[0].externalGround).toBeCloseTo(0.5, 10)
+    // 0.05 (stamp, tick 10) + 0.3 (held, tick 11) + 0 (held, tick 12) = 0.35.
+    // NOT 0.5: that would be what you get by also folding in the clear's own
+    // 0.2 (tick 13) -- the exact off-by-one-at-both-ends bug this test guards
+    // against regressing to.
+    expect(assembly.episodes[0].externalGround).toBeCloseTo(0.35, 10)
   })
 
   it('reports zero external ground when nothing pushed anyone', () => {
     const assembly = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 10, actorId: 'a', targetId: 'b', separation: 1.0 },
+      { kind: 'stamped', tick: 10, actorId: 'a', targetId: 'b', separation: 1.0, externalSeparationDelta: 0 },
       { kind: 'cleared', tick: 11, actorId: 'a', targetId: 'b', separation: 2.0, externalSeparationDelta: 0, reason: 'progress' },
+    ])
+
+    expect(assembly.episodes[0].externalGround).toBe(0)
+  })
+
+  // The other half of Finding 1's fix, isolated: a push recorded on the
+  // CLEAR sample must never reach `externalGround`, even when it is the only
+  // nonzero value in the stream. A version that summed every held/cleared
+  // sample (this file's pre-fix-round behaviour) would report `0.4` here;
+  // the corrected window reports `0`.
+  it('never lets the clearing tick’s own push into externalGround, even alone', () => {
+    const assembly = assembleDisengageEpisodes([
+      { kind: 'stamped', tick: 20, actorId: 'a', targetId: 'b', separation: 1.0, externalSeparationDelta: 0 },
+      { kind: 'held', tick: 21, actorId: 'a', targetId: 'b', separation: 1.3, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 22, actorId: 'a', targetId: 'b', separation: 1.6, externalSeparationDelta: 0.4, reason: 'progress' },
     ])
 
     expect(assembly.episodes[0].externalGround).toBe(0)

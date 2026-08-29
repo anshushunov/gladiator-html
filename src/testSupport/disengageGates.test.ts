@@ -196,4 +196,55 @@ describe('disengageStats', () => {
 
     expect(stats.byReason).toEqual({ range: 1, cap: 1, progress: 0, censored: 1 })
   })
+
+  // Finding 3 (fix round 1): Q's medians must read `voluntaryGroundOpened`,
+  // not `groundOpened` -- `isSuccess` already selects the population by the
+  // voluntary measure, so reporting the raw one back out mixes two different
+  // quantities. Three successes, each opening 0.75+ voluntary ground so all
+  // three pass `isSuccess`, but each with a different external component so
+  // raw and voluntary disagree on which one is the median:
+  //
+  //   raw ground:       [0.80, 1.30, 1.00] -> sorted [0.80, 1.00, 1.30] -> median 1.00
+  //   voluntary ground:  [0.80, 0.90, 0.90] -> sorted [0.80, 0.90, 0.90] -> median 0.90
+  //
+  // A version still reading `groundOpened` here reports `1.00`; this asserts
+  // `0.90` and would fail under that regression.
+  it('reads Q’s medians off voluntary ground, not raw ground', () => {
+    const madeItHimself: DisengageEpisode = {
+      actorId: 'home' as DisengageEpisode['actorId'],
+      targetId: 'away' as DisengageEpisode['targetId'],
+      startTick: 0,
+      endTick: 12,
+      ticks: 12,
+      startSeparation: 1.0,
+      endSeparation: 1.8, // raw ground 0.80
+      externalGround: 0,
+      reason: 'progress',
+    }
+    const mostlyPushedButOverTheBar: DisengageEpisode = {
+      ...madeItHimself,
+      startTick: 20,
+      endTick: 32,
+      startSeparation: 1.0,
+      endSeparation: 2.3, // raw ground 1.30
+      externalGround: 0.4, // voluntary 0.90
+    }
+    const partlyPushed: DisengageEpisode = {
+      ...madeItHimself,
+      startTick: 40,
+      endTick: 52,
+      startSeparation: 1.0,
+      endSeparation: 2.0, // raw ground 1.00
+      externalGround: 0.1, // voluntary 0.90
+    }
+
+    const stats = disengageStats([madeItHimself, mostlyPushedButOverTheBar, partlyPushed])
+
+    // All three clear the 0.75 voluntary floor, so all three are successes
+    // and all three are also the entire `decided` population here.
+    expect(stats.successes).toBe(3)
+    expect(stats.decided).toBe(3)
+    expect(stats.groundMedianSuccesses).toBeCloseTo(0.9, 10)
+    expect(stats.groundMedianDecided).toBeCloseTo(0.9, 10)
+  })
 })

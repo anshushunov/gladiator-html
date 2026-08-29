@@ -147,9 +147,18 @@ export interface DisengageStats {
   successes: number
   /** `successes / episodes`, gate P's quantity. `NaN` with no episodes, never a silent 0. */
   successShare: number
-  /** Gate Q, over successes only. Censored cannot be a success, so this is censored-free by construction. */
+  /**
+   * Gate Q, over successes only, of `voluntaryGroundOpened` -- not
+   * `groundOpened`. Censored cannot be a success, so this is censored-free by
+   * construction. Reading the raw ground here, over a population `isSuccess`
+   * already selected by the voluntary measure, would report a mixed
+   * quantity: a success let in by ground it did not make itself would then
+   * also inflate the median with ground it did not make itself. The spec's
+   * P/Q addendum ("A P or Q success whose ground is majority external does
+   * not count toward P or Q") binds the quantity, not just the membership.
+   */
   groundMedianSuccesses: number
-  /** Gate Q, over every non-censored episode. */
+  /** Gate Q, over every non-censored episode, of `voluntaryGroundOpened`. Same reasoning as `groundMedianSuccesses`. */
   groundMedianDecided: number
   /** Gate Q2, over successes. */
   durationMedianSuccesses: number
@@ -181,8 +190,8 @@ export function disengageStats(episodes: readonly DisengageEpisode[]): Disengage
     episodes: episodes.length,
     successes: successes.length,
     successShare: share(successes.length, episodes.length),
-    groundMedianSuccesses: medianOf(successes.map(groundOpened)),
-    groundMedianDecided: medianOf(decided.map(groundOpened)),
+    groundMedianSuccesses: medianOf(successes.map(voluntaryGroundOpened)),
+    groundMedianDecided: medianOf(decided.map(voluntaryGroundOpened)),
     durationMedianSuccesses: medianOf(successes.map((episode) => episode.ticks)),
     subFourTickSuccessShare: share(successes.filter((episode) => episode.ticks < 4).length, successes.length),
     immediateShare: share(decided.filter((episode) => episode.ticks <= 1).length, decided.length),

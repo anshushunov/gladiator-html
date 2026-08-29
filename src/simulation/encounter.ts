@@ -911,24 +911,36 @@ function forceLocomotionIntent(
 }
 
 /**
- * A `held`/`cleared` disengage observation whose `separation` (phase 2,
- * pre-movement, exactly as before) is already final, but whose
- * `externalSeparationDelta` is not: that needs THIS tick's `pushByTarget`,
- * which phase 9 has not computed yet when phase 2 runs. `advanceEncounterTick`
- * finishes each of these into a `DisengageSample` right after phase 9, using
- * `actor`/`target` (the same phase-2 snapshot `separation` was read from) to
- * build the axis. `stamped` carries no such field and is still recorded
- * immediately, unchanged.
+ * A `stamped`/`held`/`cleared` disengage observation whose `separation`
+ * (phase 2, pre-movement, exactly as before) and `reason` (`cleared` only)
+ * are already final, but whose `externalSeparationDelta` is not: that needs
+ * THIS tick's `pushByTarget`, which phase 9 has not computed yet when phase 2
+ * runs. `advanceEncounterTick` finishes each of these into a `DisengageSample`
+ * right after phase 9, using `actor`/`target` (the same phase-2 snapshot
+ * `separation` was read from) to build the axis.
+ *
+ * `stamped` is deferred exactly like `held`/`cleared`, not recorded
+ * immediately, because `assembleDisengageEpisodes` opens
+ * `DisengageEpisode.externalGround` from the stamp sample's own
+ * `externalSeparationDelta`: the stamp tick's push is inside the window the
+ * raw endpoints span, so it has to be measured the same way the others are.
+ *
+ * A discriminated union, not one shape with an optional `reason`: only
+ * `cleared` carries one, so a `held`/`stamped` record with a `reason` is
+ * unrepresentable and the emission site below needs no `!` to satisfy it.
  */
-interface PendingDisengageSample {
-  kind: 'held' | 'cleared'
-  tick: number
-  actorId: CombatantId
-  actor: Readonly<FighterCombatState>
-  target: FighterCombatState | undefined
-  separation: number
-  reason?: DisengagePredicateExit
-}
+type PendingDisengageSample =
+  | { kind: 'stamped'; tick: number; actorId: CombatantId; actor: Readonly<FighterCombatState>; target: FighterCombatState | undefined; separation: number }
+  | { kind: 'held'; tick: number; actorId: CombatantId; actor: Readonly<FighterCombatState>; target: FighterCombatState | undefined; separation: number }
+  | {
+      kind: 'cleared'
+      tick: number
+      actorId: CombatantId
+      actor: Readonly<FighterCombatState>
+      target: FighterCombatState | undefined
+      separation: number
+      reason: DisengagePredicateExit
+    }
 
 /**
  * Wires Fast's forced disengage (design.md's locomotion section): the
@@ -977,10 +989,13 @@ function completeForcedStateTransitions(
       // never computed a distance before this seam existed, so doing it
       // unconditionally would add real work to the shipped runtime on every
       // lunge recovery -- raised in external review as the seam not being
-      // allocation-inert even though state and events were.
+      // allocation-inert even though state and events were. Deferred onto
+      // `pendingDisengage` rather than recorded here, same as `held`/`cleared`
+      // below: this tick's own push (needed for `externalSeparationDelta`)
+      // is not known until phase 9.
       if (disengageCollector) {
         const target = phaseTwoTarget(combatant, combatants)
-        disengageCollector.record({ kind: 'stamped', tick, actorId: id, targetId: target?.id, separation: separationTo(combatant, target) })
+        pendingDisengage.push({ kind: 'stamped', tick, actorId: id, actor: combatant, target, separation: separationTo(combatant, target) })
       }
       continue
     }
@@ -1055,6 +1070,19 @@ function separationTo(self: FighterCombatState, target: FighterCombatState | und
 const ZERO_VEC: Readonly<Vec2> = { x: 0, z: 0 }
 
 /**
+ * Below this separation the actor->target axis is not well-defined, so
+ * `externalSeparationDeltaFor` returns `0` explicitly rather than asking
+ * `normalizeVec2` to fall back to its arbitrary fixed direction (positive
+ * x) -- a real push projected onto a meaningless axis is worse than no
+ * number. Matches `movement.ts`'s own private `EPSILON`; not imported from
+ * there since nothing in `movement.ts` exports it, and this slice's
+ * allowlist does not open that file. Effectively unreachable in a real
+ * encounter: contact resolution and the arena's `minimumSeparation` keep
+ * fighters apart by more than this.
+ */
+const DEGENERATE_AXIS_EPSILON = 1e-9
+
+/**
  * The part of this tick's contact resolution attributable to external
  * displacement, projected onto the actor->target axis recorded alongside
  * this tick's disengage sample. Positive when this tick's pushes moved the
@@ -1073,6 +1101,8 @@ const ZERO_VEC: Readonly<Vec2> = { x: 0, z: 0 }
  * Zero with no target: `separationTo` already reports `Infinity` in that
  * case, and `assembleDisengageEpisodes` marks the episode unmeasurable
  * regardless of what this returns, so there is no axis worth constructing.
+ * Zero with a coincident actor and target too, for the same reason -- see
+ * `DEGENERATE_AXIS_EPSILON`.
  */
 function externalSeparationDeltaFor(
   actor: Readonly<FighterCombatState>,
@@ -1080,6 +1110,7 @@ function externalSeparationDeltaFor(
   pushByTarget: Readonly<Record<CombatantId, Vec2>>,
 ): number {
   if (!target) return 0
+  if (distanceBetween(actor.position, target.position) <= DEGENERATE_AXIS_EPSILON) return 0
   const axis = normalizeVec2({ x: target.position.x - actor.position.x, z: target.position.z - actor.position.z })
   const targetPush = pushByTarget[target.id] ?? ZERO_VEC
   const actorPush = pushByTarget[actor.id] ?? ZERO_VEC
@@ -2494,14 +2525,19 @@ export function advanceEncounterTick(
   combatants = contactResolution.combatants
   events.push(...contactResolution.events)
 
-  // The held/cleared disengage samples phase 2 deferred (`PendingDisengageSample`,
-  // above `completeForcedStateTransitions`): `separation` was already final at
-  // phase 2, but `externalSeparationDelta` needed this tick's own push, which
-  // phase 9 has only just computed. Finished here, in the same combatantIds
-  // order phase 2 produced them in, so this reorders nothing relative to a
-  // single actor's own sample stream -- only relative to OTHER actors'
-  // `stamped` samples, which `assembleDisengageEpisodes` groups per actor and
-  // does not depend on cross-actor ordering for.
+  // Every disengage sample phase 2 deferred (`PendingDisengageSample`, above
+  // `completeForcedStateTransitions`, ALL THREE kinds -- `stamped` included):
+  // `separation`/`reason` were already final at phase 2, but
+  // `externalSeparationDelta` needed this tick's own push, which phase 9 has
+  // only just computed. Finished here, in the same combatantIds order phase 2
+  // produced them in, so per-actor ordering is exactly what phase 2 would
+  // have produced -- and per-actor is the only ordering `assembleDisengageEpisodes`
+  // relies on: each actor emits at most one pending record per tick (the
+  // `stamped` branch and the `held`/`cleared` branch are mutually exclusive in
+  // the loop above), and this loop preserves tick order within an actor
+  // because `forcedTransitions.pendingDisengage` does. Interleaving with
+  // OTHER actors' records is irrelevant: the assembler tracks one open episode
+  // per actor in a `Map` and never compares across actors.
   for (const pending of forcedTransitions.pendingDisengage) {
     const externalSeparationDelta = externalSeparationDeltaFor(pending.actor, pending.target, contactResolution.pushByTarget)
     if (pending.kind === 'cleared') {
@@ -2512,11 +2548,11 @@ export function advanceEncounterTick(
         targetId: pending.target?.id,
         separation: pending.separation,
         externalSeparationDelta,
-        reason: pending.reason!,
+        reason: pending.reason,
       })
     } else {
       disengageCollector?.record({
-        kind: 'held',
+        kind: pending.kind,
         tick: pending.tick,
         actorId: pending.actorId,
         targetId: pending.target?.id,
