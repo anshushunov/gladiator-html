@@ -1950,3 +1950,70 @@ The decision is the design owner's, and it is a real fork:
 Standing: PR #20 open and unmerged. Debt 5 and debt 7 unpaid. The human "does it
 read as a retiarius" gate is still unpassed, and option 1 above cannot be
 decided without it.
+
+
+---
+
+## 2026-08-29 — the slice closes: parked at PR-3, candidate on its branch
+
+**Decision by the design owner**, taken on the question of whether a coming
+push/shove ability would dissolve the problem by itself. Written up as §9.1 of
+the spec; the short version is that it will not, and the reason is worth keeping
+here because it is a mechanism, not an opinion.
+
+The exit fires on ground opened **relative to where the episode started**. A
+push adds separation instantly, so it does not lengthen the retreat — **it ends
+it.** Whether that helps depends entirely on how big the push is: above roughly
+the gain threshold it leaves the retiarius further out than either the candidate
+(2.20) or the shipped build (2.35); below it, the push becomes a cheap way to
+satisfy the exit and he stops nearer than he does today. The exit rule and the
+push are one decision in two places and have to be fitted together.
+
+So: not merged, not tuned further, not reverted.
+
+- `fix/murmillo-pin` is **green** and ends at PR-3 — the seam, the criteria, and
+  no content change. 846/846 across 41 files.
+- `experiment/murmillo-pursuit-exit` holds the candidate, its determinism
+  artifacts deliberately **not** re-baselined, so nothing about it reads as
+  accepted.
+
+### What this slice actually delivered, since it did not deliver the fix
+
+1. **An instrument that answers the question the reach gates structurally could
+   not** — where the bout is fought, not where contacts land.
+2. **A seam that observes the disengage instead of inferring it.** The exit
+   reason now comes from the branch that fired, and both endpoints are read in
+   phase 2, which is what made the window error disappear rather than be bounded.
+3. **Criteria that fail on the shipped content in exactly the right place** —
+   P and Q red, A–G and V green — so the next attempt is judged by something
+   written before it existed.
+4. **A measured statement of why the obvious fix does not work.** That is the
+   part I would have got wrong by reasoning: the escape works by every
+   definition the spec froze, and the matchup gets worse, because ground opened
+   and distance reached are different quantities.
+
+### The count that matters for the next session
+
+Six times this slice an instrument or a claim was wrong in my favour, and three
+more times this session:
+
+- P3's floors were derived under a superseded definition of success and would
+  have failed the authored build;
+- a boundary froze a test whose fixtures legitimately move;
+- a constant sweep did not run at all, and reported eight identical results
+  across a two-fold threshold change.
+
+None of those was caught by reasoning. Two were caught by printing the
+population instead of trusting the green, one by the gate itself.
+
+### Where I stopped / next session
+
+The next slice is **abilities**, and it inherits one instruction: fit the push
+and `FAST_FORCED_DISENGAGE_MIN_GAIN` in the same sweep, against P, Q, T and U at
+once, with **T as the binding gate** — it is the one the mechanism broke.
+
+Standing and unchanged: PR #20 open and unmerged, so the inherited
+`tests/__screenshots__/linux/**` exemption stays. Debt 5 (the untimed pacing
+probe) and debt 7 (all three collectors run caller code inside the tick) unpaid.
+The human "does it read as a retiarius" gate never ran, and the parked candidate
+is exactly the kind of question it exists to answer.

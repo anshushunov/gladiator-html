@@ -877,6 +877,57 @@ slice must close.
 - **Gate T stops the slice.** A more successful Fast escape is a direct nerf to
   the murmillo in a band that is 55–75% and currently reads 64.5%. This is the
   most likely place the work stops and reports.
+
+  **It fired. 2026-08-29.** The candidate on
+  `experiment/murmillo-pursuit-exit` passes every other gate — P1 goes from
+  1.1%/1.3% to 48.1%/45.1%, Q's decided median from 0.75/0.72 to 0.82/0.80, and
+  commitment frequency *rises* to 3.80/3.81 — and fails T in both directions of
+  the same pairing: `brutus/drusus` 85.5% against an 85% ceiling,
+  `aquila/magnus` 13.0% against a 15% floor. Every variant tried fails the same
+  way, so it is the mechanism rather than the tuning.
+
+  The measured cause: episodes now **end closer** than the shipped ones (median
+  absolute separation 2.35 → 2.20 and 2.32 → 2.24) while opening far more
+  ground, and gate U agrees from the other side, `insideEnvelopeShare` rising
+  54.3% → 56.8%. P and Q measure ground opened; the fight is decided by distance
+  reached. See the journal entry of the same date.
+
+## 9.1 Decision, 2026-08-29: parked until abilities, and tuned with them
+
+**Decided by the design owner.** The candidate is neither merged nor tuned
+further. It stays on its branch, with its determinism artifacts deliberately not
+re-baselined; `fix/murmillo-pin` ends green at PR-3.
+
+The question that settled it was whether a coming push/shove ability would make
+the problem go away on its own. **It will not, on its own, and its sign depends
+on a number that does not exist yet.** The exit fires when the fighter has
+opened `FAST_FORCED_DISENGAGE_MIN_GAIN` on where the episode started, and a push
+adds separation instantly — so a push does not extend the retreat, it **ends**
+it. Whether that helps is a matter of size:
+
+- a push larger than the gain threshold ends the episode immediately at
+  `start + push`, which for a push above ~0.9 leaves the retiarius **further**
+  out than either the candidate's 2.20 or the shipped 2.35;
+- a push smaller than it becomes a cheap way to satisfy the exit, and the
+  retiarius stops nearer than he does today.
+
+So the exit rule and the push are **one design decision in two places** and must
+be tuned in the same pass. Doing either alone measures a fight that will not
+exist.
+
+Two supporting reasons, recorded so this is not re-argued:
+
+1. **Merging it would corrupt the baselines for the ability work.** 85/13 is
+   outside a band this project enforces automatically, and every later
+   measurement — including the ability's — would be taken against a build known
+   to be out of band.
+2. **Tuning it now is probably discarded work.** Abilities move the distances
+   the constants were fitted to, so the sweep would have to be re-run anyway.
+
+**What the next slice inherits, and must not skip:** the joint sweep, not a
+sequential one. Fit the push and `FAST_FORCED_DISENGAGE_MIN_GAIN` together
+against gates P, Q, T and U at once, and treat T as the binding one, since it is
+the gate the mechanism actually broke.
 - **Gate R and gate P pull against each other.** Lowering the exit range raises
   completion and raises instant clears; raising the tick cap raises ground
   gained and, on the measured evidence, cannot raise completion in this matchup
