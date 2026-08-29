@@ -1,12 +1,45 @@
 name: checks
 
+# TWO JOBS, AND WHY THE SPLIT IS BY SCHEDULE RATHER THAN BY SAMPLE SIZE.
+#
+# Measured on the murmillo-pin merge commit: three balance cohorts are 550 s,
+# 540 s and 192 s against 48 s for the other 38 unit-test files, and
+# `legibility.spec.ts` is 12.1 min against ~1.1 min for the other five specs.
+# Four files were roughly 95% of a run that took over an hour, so every push
+# waited on them.
+#
+# The tempting fix -- drop the cohorts from 200 and 500 seeds to 50 and 100 --
+# is not the one taken. Those seeds are the whole reason a band catches a
+# balance regression, and this repository has already had a threshold sitting
+# 0.22 sigma above its baseline flip on a re-run with no code change. The slow
+# suites keep every seed; they stop blocking a push.
+#
+# `fast` gates pull requests. `slow` runs on merges to `main`, nightly, and on
+# demand -- so nothing is deleted, it is only moved off the edit loop. If the
+# nightly is red on a Tuesday, `main` still tells you so before the next slice
+# builds on it.
+#
+# `src/testSupport/slowSuites.test.ts` is the guard that makes this safe: it
+# checks against the FILESYSTEM that fast plus slow is still every test file
+# that exists, so a file added later cannot quietly belong to neither. It runs
+# in `fast`, deliberately -- a guard that only runs in the job it is guarding
+# cannot report that the job was misconfigured.
+
 on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # 03:00 UTC daily. The slow suites are deterministic, so a nightly failure
+    # means the tree moved, not that the dice did.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 jobs:
-  test:
+  fast:
+    # Everything a push should wait for: ~48 s of unit tests, the build, and
+    # the five e2e specs that are not the legibility harness.
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +84,35 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-results
+          name: playwright-results-fast
+          path: test-results/
+          retention-days: 7
+
+  slow:
+    # The balance cohorts and the legibility harness, at full sample size.
+    # Not on pull requests: that is the whole point. On a merge to `main` it
+    # still runs before the next slice is built on top, which is the property
+    # that matters -- a nightly-only schedule would let a regression sit for a
+    # day, and a PR-only schedule is what this change is removing.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # Generous, because these are 12-minute measurements on a runner slower
+    # than the machine they were timed on, and a timeout that fires is
+    # indistinguishable from a failure nobody can reproduce.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:slow
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:slow
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results-slow
           path: test-results/
           retention-days: 7
