@@ -89,6 +89,54 @@
 //     because a large movement means the candidate changed the matchup rather
 //     than the mechanic, and that is a different slice.
 //
+// ---------------------------------------------------------------------------
+// SHIELD SHOVE ATTRIBUTION -- the shove doesn't exist yet, and that's the point
+// ---------------------------------------------------------------------------
+//
+// The murmillo-pin slice's inherited gates P and Q read ground opened from a
+// disengage episode's raw endpoints, which does not distinguish the retiarius'
+// own locomotion from a push he received. A murmillo shield shove (coming in a
+// later PR, id `heavy-shield-shove`) would let P and Q go green on ground the
+// *pursuer* opened -- so this instrument reports `voluntaryGroundShare`, the
+// share of `groundOpened` that survives `voluntaryGroundOpened`
+// (`src/testSupport/disengageGates.ts`), per matchup, over the disengage
+// episodes this run already collects.
+//
+// The five counters beside it -- `shoveStarts`, `shoveContacts`, `shoveMisses`
+// and the two `recoveryWindowContactsPer*` ratios -- are gate W's inputs. They
+// key off the action id `heavy-shield-shove` as a plain string, not as a member
+// of `AttackActionId` (see `SHOVE_ACTION_ID`), because the id is not in that
+// union yet -- a later PR adds it, not this one. Comparing as a string rather
+// than a typed literal is what lets this file compile today and start counting
+// the moment the id exists, with no further change here. Today every shove
+// counter reads zero, and a run recorded at this point in the codebase's
+// history is committed as the "before" precisely so that claim is falsifiable
+// later rather than asserted.
+//
+// `recoveryWindowContactsPerJab` is NOT expected to read zero: `heavy-shield-jab`
+// already ships, so its punishment rate is a real, populated comparator today
+// (gate W.3 compares the shove's future rate against it). Only the four counters
+// that key off `heavy-shield-shove` itself -- `shoveStarts`, `shoveContacts`,
+// `shoveMisses`, `recoveryWindowContactsPerShove` -- are the ones this run
+// proves read zero.
+//
+// FINDING, ACCEPTED BY THE DESIGN OWNER (2026-08-29): the first `voluntaryGroundShare`
+// run at 200 seeds came back at 0.84-0.94 in every matchup with a Fast fighter,
+// not the ~1 "pushes only from ordinary attacks" implied -- i.e. ordinary attack
+// pushes and collision resolution already supply 6-16% of the ground the
+// inherited gates P and Q count as an escape, BEFORE any shield shove exists.
+// This was invisible until this attribution existed: P and Q read raw
+// `groundOpened`, which cannot distinguish that 6-16% from the retiarius' own
+// locomotion. The ruling was to proceed without retuning anything --
+// `DISENGAGE_SUCCESS_GROUND` (`src/testSupport/disengageGates.ts`) stays at
+// `0.75`, nobody recalibrates a threshold mid-slice against the very
+// measurement it exists to judge -- and to treat these numbers, recorded in
+// `docs/superpowers/plans/2026-08-29-shove-before.json`, as the honest
+// "before". The previous slice's P and Q figures, measured on raw ground with
+// no attribution, are stale and are not comparators; every later comparison in
+// this slice reads against the attributed baseline committed alongside this
+// file.
+//
 // Usage:
 //   node node_modules/vite-node/vite-node.mjs scripts/measure-distance.ts -- --seeds 200
 //   node node_modules/vite-node/vite-node.mjs scripts/measure-distance.ts -- --seeds 200 --gate
@@ -99,6 +147,9 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { COMBAT_STYLES } from '../src/content/combatStyles'
 import { BASELINE_TEST_SEED } from '../src/content/mvpSeries'
 import { advanceBattleTick, createBattle, MAX_BOUT_TICKS } from '../src/simulation/battle'
+import { assembleDisengageEpisodes } from '../src/simulation/disengageDiagnostics'
+import type { DisengageCollector, DisengageEpisode, DisengageSample } from '../src/simulation/disengageDiagnostics'
+import { groundOpened, voluntaryGroundOpened } from '../src/testSupport/disengageGates'
 import { percentile } from '../src/testSupport/balanceCohorts'
 import {
   accumulate,
@@ -114,6 +165,14 @@ import type { CombatStyleCatalog } from '../src/simulation/combatActions'
 import type { Archetype, FighterDefinition } from '../src/simulation/fighters'
 
 const STYLES: readonly Archetype[] = ['heavy', 'fast', 'technical']
+
+/**
+ * Not (yet) a member of `AttackActionId` -- Task 5 adds it. Typed `string`
+ * rather than left as a literal so `event.actionId === SHOVE_ACTION_ID`
+ * compiles against today's `AttackActionId` union instead of tripping
+ * TypeScript's no-overlap check on a literal comparison. See the header.
+ */
+const SHOVE_ACTION_ID: string = 'heavy-shield-shove'
 
 interface Args { seeds: number; overlay?: string; json?: string; gate: boolean; baseline?: string }
 
@@ -193,15 +252,56 @@ interface MatchupResult {
    */
   lungeStarts: number
   fastFighters: number
+  /** Every forced-disengage episode collected across this matchup's bouts. Powers `voluntaryGroundShare`; nothing else in this file reads it. */
+  disengages: DisengageEpisode[]
+  /**
+   * `action-started` events with `actionId === 'heavy-shield-shove'`. The
+   * action does not exist yet (Task 5 adds it), so this and the next four
+   * fields read exactly zero until it lands -- see `SHOVE_ACTION_ID`.
+   */
+  shoveStarts: number
+  /** Resolved shove contacts: `damage-dealt`/`attack-blocked` for the shove id. */
+  shoveContacts: number
+  /** `attack-missed`/`attack-evaded`/`attack-parried` for the shove id. */
+  shoveMisses: number
+  /**
+   * Sum, over every resolved shove in this matchup, of contacts taken by the
+   * shover -- any `damage-dealt`/`attack-blocked` against him, any action id --
+   * with a tick inside `[contactTick, contactTick + recoveryTicks]`. Divided by
+   * `shoveContacts` at report time; gate W.3's punishability numerator.
+   */
+  shoveRecoveryContacts: number
+  /**
+   * Resolved `heavy-shield-jab` contacts -- gate W.3's comparator denominator.
+   * Not gated on the shove existing, so this is populated today, unlike the
+   * shove counters above.
+   */
+  jabContacts: number
+  /** Same accumulation as `shoveRecoveryContacts`, for `heavy-shield-jab`. */
+  jabRecoveryContacts: number
 }
 
 const args = parseArgs(process.argv.slice(2))
 const catalog = catalogFor(args.overlay)
 const BANDS = distanceBands(catalog)
 
+/**
+ * `catalog.attacks` is indexed by the frozen `AttackActionId` union, which
+ * does not include `heavy-shield-shove` yet. Read generically by string so
+ * this resolves to `undefined` for the shove today -- correctly, since there
+ * is no resolved shove to look a recovery window up for -- and to the
+ * authored constant the moment Task 5 adds the id to the catalog, with no
+ * further change here.
+ */
+const attacksById = catalog.attacks as Readonly<Record<string, { recoveryTicks: number } | undefined>>
+function recoveryTicksOf(actionId: string): number | undefined {
+  return attacksById[actionId]?.recoveryTicks
+}
+
 function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupResult {
   const result: MatchupResult = { label: matchupLabel(home, away), home, away, all: emptyAccumulator(), engaged: emptyAccumulator(), homeWins: 0, bouts: 0,
-    lungeStarts: 0, fastFighters: [home, away].filter((a) => a === 'fast').length }
+    lungeStarts: 0, fastFighters: [home, away].filter((a) => a === 'fast').length,
+    disengages: [], shoveStarts: 0, shoveContacts: 0, shoveMisses: 0, shoveRecoveryContacts: 0, jabContacts: 0, jabRecoveryContacts: 0 }
 
   for (let index = 0; index < seeds; index += 1) {
     let battle = createBattle({
@@ -222,6 +322,19 @@ function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupRes
     result.engaged.bouts += 1
     let everEngaged = false
 
+    // Closes over its own accumulator and nothing else, per the constraint
+    // `disengageDiagnostics.ts`'s header places on a collector: `record` runs
+    // synchronously inside the tick, so reaching into `battle` from in here
+    // could perturb the tick it is observing.
+    const disengageSamples: DisengageSample[] = []
+    const disengageCollector: DisengageCollector = { record: (sample) => disengageSamples.push(sample) }
+    /** One entry per resolved shove contact this bout: who threw it, and the tick it landed. */
+    const resolvedShoves: { actorId: string; tick: number }[] = []
+    /** Same, for `heavy-shield-jab` -- gate W.3's comparator population. */
+    const resolvedJabs: { actorId: string; tick: number }[] = []
+    /** Every tick a fighter took a resolved contact (any action id), keyed by who took it. */
+    const contactsAgainst = new Map<string, number[]>()
+
     while (battle.phase === 'running' && battle.encounter.tick < MAX_BOUT_TICKS) {
       // The opening of this tick, before phase 7-8 movement -- the same instant
       // `measure-reach.ts` reads its `start` separation from.
@@ -236,32 +349,84 @@ function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupRes
       }
 
       const previousTick = battle.encounter.tick
-      battle = advanceBattleTick(battle)
+      battle = advanceBattleTick(battle, undefined, undefined, disengageCollector)
 
-      // Commitment frequency, counted here rather than inferred from contacts.
-      //
-      // The numerator is `action-started`, not a contact record, and that is the
-      // whole point: `measure-reach.ts` files a contact under `reached` only when
-      // the outcome is in `REACHED`, geometry misses in their own bucket, and an
-      // action interrupted before phase 9 leaves no record at all. Deriving
-      // "attempts" from those buckets counts how many commitments *survived*, not
-      // how many were made -- so a candidate that commits less often but more
-      // cleanly reads as unchanged. External review caught that on a first draft
-      // of this metric and it is the reason this loop counts starts.
-      //
-      // Gated on `engaged`, the same flag that decided whether this tick entered
-      // the denominator, so numerator and denominator describe one tick
-      // population. The earlier figure joined contact counts spanning the WHOLE
-      // bout to a denominator of engaged ticks only, across two JSON files by
-      // hand, and the mismatch survived precisely because nothing computed both
-      // halves in one place.
-      if (engaged) {
-        for (const event of battle.events) {
-          if (event.tick !== previousTick + 1) continue
-          if (event.type !== 'action-started') continue
-          if (event.actionId !== 'fast-burst-lunge') continue
+      for (const event of battle.events) {
+        if (event.tick !== previousTick + 1) continue
+
+        // Commitment frequency, counted here rather than inferred from contacts.
+        //
+        // The numerator is `action-started`, not a contact record, and that is the
+        // whole point: `measure-reach.ts` files a contact under `reached` only when
+        // the outcome is in `REACHED`, geometry misses in their own bucket, and an
+        // action interrupted before phase 9 leaves no record at all. Deriving
+        // "attempts" from those buckets counts how many commitments *survived*, not
+        // how many were made -- so a candidate that commits less often but more
+        // cleanly reads as unchanged. External review caught that on a first draft
+        // of this metric and it is the reason this loop counts starts.
+        //
+        // Gated on `engaged`, the same flag that decided whether this tick entered
+        // the denominator, so numerator and denominator describe one tick
+        // population. The earlier figure joined contact counts spanning the WHOLE
+        // bout to a denominator of engaged ticks only, across two JSON files by
+        // hand, and the mismatch survived precisely because nothing computed both
+        // halves in one place.
+        if (engaged && event.type === 'action-started' && event.actionId === 'fast-burst-lunge') {
           result.lungeStarts += 1
         }
+
+        // Shove/jab attribution, gate W's inputs. Counted over the WHOLE bout,
+        // not gated on `engaged`: gate W's coverage and punishability clauses
+        // (design spec §4 "W") are whole-run counts with no engaged-window
+        // restriction of their own, and inventing one here would disagree with
+        // the spec these counters exist to feed.
+        if (event.type === 'action-started' && event.actionId === SHOVE_ACTION_ID) {
+          result.shoveStarts += 1
+        }
+
+        if (event.type === 'damage-dealt' || event.type === 'attack-blocked') {
+          const hits = contactsAgainst.get(event.targetId)
+          if (hits) hits.push(event.tick)
+          else contactsAgainst.set(event.targetId, [event.tick])
+
+          if (event.actionId === SHOVE_ACTION_ID) {
+            result.shoveContacts += 1
+            resolvedShoves.push({ actorId: event.actorId, tick: event.tick })
+          }
+          if (event.actionId === 'heavy-shield-jab') {
+            result.jabContacts += 1
+            resolvedJabs.push({ actorId: event.actorId, tick: event.tick })
+          }
+        }
+
+        if (
+          (event.type === 'attack-missed' || event.type === 'attack-evaded' || event.type === 'attack-parried') &&
+          event.actionId === SHOVE_ACTION_ID
+        ) {
+          result.shoveMisses += 1
+        }
+      }
+    }
+
+    // Ground attribution and the recovery-window punishment counts both need
+    // the WHOLE bout's records, so both are assembled once here rather than
+    // incrementally inside the tick loop above.
+    const assembly = assembleDisengageEpisodes(disengageSamples)
+    result.disengages.push(...assembly.episodes)
+
+    const shoveRecoveryTicks = recoveryTicksOf(SHOVE_ACTION_ID)
+    if (shoveRecoveryTicks !== undefined) {
+      for (const shove of resolvedShoves) {
+        const hits = contactsAgainst.get(shove.actorId) ?? []
+        result.shoveRecoveryContacts += hits.filter((tick) => tick >= shove.tick && tick <= shove.tick + shoveRecoveryTicks).length
+      }
+    }
+
+    const jabRecoveryTicks = recoveryTicksOf('heavy-shield-jab')
+    if (jabRecoveryTicks !== undefined) {
+      for (const jab of resolvedJabs) {
+        const hits = contactsAgainst.get(jab.actorId) ?? []
+        result.jabRecoveryContacts += hits.filter((tick) => tick >= jab.tick && tick <= jab.tick + jabRecoveryTicks).length
       }
     }
 
@@ -300,6 +465,38 @@ function pool(results: readonly MatchupResult[], window: 'all' | 'engaged'): Dis
     out.unengagedBouts += a.unengagedBouts
   }
   return out
+}
+
+/**
+ * P/Q's addendum, applied here rather than in `disengageGates.ts`: the share
+ * of raw ground (`groundOpened`) that survives `voluntaryGroundOpened` --
+ * i.e. the share NOT explained by external displacement (shove, attack push,
+ * collision resolution) -- over every disengage episode this matchup
+ * collected, censored included. `null`, not `NaN`, when `totalGround` is
+ * exactly `0` -- which is also what a matchup with zero episodes reports,
+ * since summing an empty array is `0`, so the two "nothing to divide" cases
+ * share one guard.
+ */
+function voluntaryGroundShare(m: MatchupResult): number | null {
+  const totalGround = m.disengages.reduce((sum, episode) => sum + groundOpened(episode), 0)
+  if (totalGround === 0) return null
+  const totalVoluntaryGround = m.disengages.reduce((sum, episode) => sum + voluntaryGroundOpened(episode), 0)
+  return totalVoluntaryGround / totalGround
+}
+
+/**
+ * Gate W.3's punishability quantity: recovery-window contacts taken by the
+ * shover, per resolved shove. `0`, not `null`, with no resolved shoves --
+ * these are counters keyed off an action that does not exist yet, not shares
+ * of a population that might be legitimately absent.
+ */
+function recoveryWindowContactsPerShove(m: MatchupResult): number {
+  return m.shoveContacts > 0 ? m.shoveRecoveryContacts / m.shoveContacts : 0
+}
+
+/** Same quantity, for `heavy-shield-jab` -- gate W.3's comparator. */
+function recoveryWindowContactsPerJab(m: MatchupResult): number {
+  return m.jabContacts > 0 ? m.jabRecoveryContacts / m.jabContacts : 0
 }
 
 console.log(`\nequal-stat cohorts, ${args.seeds} seeds x 9 ordered matchups${args.overlay ? `, overlay ${args.overlay}` : ''}`)
@@ -385,6 +582,26 @@ console.log('\nTHE SAME SUBJECT AGAINST EVERY OPPONENT (what the playtest claime
 for (const away of STYLES) {
   const m = byLabel.get(matchupLabel(SUBJECT, away)) as MatchupResult
   console.log(line(m.label, summarise(m.engaged, percentile), m))
+}
+
+// The shield-shove slice's own inputs: ground attribution (P/Q's addendum) and
+// gate W's coverage/punishability counters. Every shove counter reads zero at
+// this point in the codebase's history, because `heavy-shield-shove` does not
+// exist yet -- see the header. `recoveryWindowContactsPerJab` is the one
+// exception, by design: it is gate W.3's comparator and `heavy-shield-jab`
+// already ships, so it is populated today.
+console.log('\nSHIELD SHOVE ATTRIBUTION (ground attribution for P/Q; gate W\'s coverage and punishability inputs)')
+console.log(
+  `${'matchup'.padEnd(24)} ${'volGrndShr'.padStart(10)} ${'shvStart'.padStart(8)} ${'shvHit'.padStart(6)} ${'shvMiss'.padStart(7)} ` +
+  `${'recov/shv'.padStart(9)} ${'recov/jab'.padStart(9)}`,
+)
+for (const m of matchups) {
+  const share = voluntaryGroundShare(m)
+  console.log(
+    `${m.label.padEnd(24)} ${(share === null ? '--' : pct(share)).padStart(10)} ${String(m.shoveStarts).padStart(8)} ` +
+    `${String(m.shoveContacts).padStart(6)} ${String(m.shoveMisses).padStart(7)} ` +
+    `${fixed(recoveryWindowContactsPerShove(m)).padStart(9)} ${fixed(recoveryWindowContactsPerJab(m)).padStart(9)}`,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -477,6 +694,16 @@ if (args.json) {
         m.fastFighters > 0 && m.engaged.separations.length > 0
           ? (m.lungeStarts / m.fastFighters / m.engaged.separations.length) * 1000
           : null,
+      // Shield-shove attribution: P/Q's ground addendum, and gate W's coverage
+      // and punishability counters. See the header for why every shove counter
+      // below reads zero at this point in the codebase's history, and why
+      // `recoveryWindowContactsPerJab` does not.
+      voluntaryGroundShare: voluntaryGroundShare(m),
+      shoveStarts: m.shoveStarts,
+      shoveContacts: m.shoveContacts,
+      shoveMisses: m.shoveMisses,
+      recoveryWindowContactsPerShove: recoveryWindowContactsPerShove(m),
+      recoveryWindowContactsPerJab: recoveryWindowContactsPerJab(m),
     })),
     comparison: { subject: subjectLabel, comparator: comparatorLabel, comparatorMatchups: COMPARATOR_MATCHUPS },
   }, null, 2)}\n`, 'utf8')
