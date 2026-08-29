@@ -982,10 +982,10 @@ function completeForcedStateTransitions(
     const exit = hasFastForcedDisengageEnded(separation, ticksSinceForced)
     if (exit) {
       next[id] = { ...combatant, forcedDisengageStartTick: undefined, nextDecisionTick: tick }
-      disengageCollector?.record({ kind: 'cleared', tick, actorId: id, targetId: target?.id, separation, reason: exit })
+      disengageCollector?.record({ kind: 'cleared', tick, actorId: id, targetId: target?.id, separation, externalSeparationDelta: 0, reason: exit })
     } else {
       next[id] = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
-      disengageCollector?.record({ kind: 'held', tick, actorId: id, targetId: target?.id, separation })
+      disengageCollector?.record({ kind: 'held', tick, actorId: id, targetId: target?.id, separation, externalSeparationDelta: 0 })
     }
   }
 

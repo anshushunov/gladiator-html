@@ -16,6 +16,7 @@ function episodeAt(startSeparation: number, endSeparation: number, reason: Disen
     startSeparation,
     endSeparation,
     reason,
+    externalGround: 0,
   }
 }
 

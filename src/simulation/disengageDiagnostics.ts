@@ -137,8 +137,16 @@ export type DisengagePredicateExit = Exclude<DisengageExitReason, 'censored'>
  */
 export type DisengageSample =
   | { kind: 'stamped'; tick: number; actorId: CombatantId; targetId: CombatantId | undefined; separation: number }
-  | { kind: 'held'; tick: number; actorId: CombatantId; targetId: CombatantId | undefined; separation: number }
-  | { kind: 'cleared'; tick: number; actorId: CombatantId; targetId: CombatantId | undefined; separation: number; reason: DisengagePredicateExit }
+  | { kind: 'held'; tick: number; actorId: CombatantId; targetId: CombatantId | undefined; separation: number; externalSeparationDelta: number }
+  | {
+      kind: 'cleared'
+      tick: number
+      actorId: CombatantId
+      targetId: CombatantId | undefined
+      separation: number
+      externalSeparationDelta: number
+      reason: DisengagePredicateExit
+    }
 
 /** The kernel's whole view of this module: somewhere to write, nothing to read. */
 export interface DisengageCollector {
@@ -166,6 +174,15 @@ export interface DisengageEpisode {
   /** Separation at the clear, phase 2, before that tick's ordinary decision and movement. */
   endSeparation: number
   reason: DisengageExitReason
+  /**
+   * The part of `endSeparation - startSeparation` contributed by external
+   * displacement -- any push applied to either fighter during the episode,
+   * projected onto the actor->target axis. The remainder is the actor's own
+   * locomotion. An approximation in exactly one direction: the arena clamp and
+   * collision resolution can shorten a push after it is recorded, so this
+   * OVERSTATES the external share rather than flattering the fighter.
+   */
+  externalGround: number
 }
 
 /**
@@ -245,6 +262,8 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
     startSeparation: number
     lastTick: number
     lastSeparation: number
+    /** Running sum of `externalSeparationDelta` across every `held`/`cleared` sample seen so far. */
+    externalGround: number
     /** Set once and never overwritten, so the reported tick is where it FIRST became unmeasurable. */
     spoiled?: { tick: number; cause: UnmeasurableCause }
   }
@@ -275,6 +294,7 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
       startSeparation: current.startSeparation,
       endSeparation,
       reason,
+      externalGround: current.externalGround,
     })
   }
 
@@ -305,6 +325,7 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
         startSeparation: sample.separation,
         lastTick: sample.tick,
         lastSeparation: sample.separation,
+        externalGround: 0,
       }
       if (sample.targetId === undefined) spoil(opened, sample.tick, 'no-target')
       open.set(sample.actorId, opened)
@@ -324,9 +345,11 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
     if (sample.kind === 'held') {
       current.lastTick = sample.tick
       current.lastSeparation = sample.separation
+      current.externalGround += sample.externalSeparationDelta
       continue
     }
 
+    current.externalGround += sample.externalSeparationDelta
     open.delete(sample.actorId)
     close(sample.actorId, current, sample.tick, sample.separation, sample.reason)
   }

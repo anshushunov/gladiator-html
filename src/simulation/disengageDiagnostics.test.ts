@@ -52,13 +52,13 @@ describe('assembleDisengageEpisodes', () => {
   it('pairs a stamp with its clear and reports the endpoints, elapsed ticks and reason', () => {
     const { episodes } = assembleDisengageEpisodes([
       { kind: 'stamped', tick: 100, actorId: actor, targetId: foe, separation: 1.8 },
-      { kind: 'held', tick: 101, actorId: actor, targetId: foe, separation: 2.1 },
-      { kind: 'held', tick: 102, actorId: actor, targetId: foe, separation: 2.9 },
-      { kind: 'cleared', tick: 103, actorId: actor, targetId: foe, separation: 3.4, reason: 'range' },
+      { kind: 'held', tick: 101, actorId: actor, targetId: foe, separation: 2.1, externalSeparationDelta: 0 },
+      { kind: 'held', tick: 102, actorId: actor, targetId: foe, separation: 2.9, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 103, actorId: actor, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
     ])
 
     expect(episodes).toEqual<DisengageEpisode[]>([
-      { actorId: actor, targetId: foe, startTick: 100, endTick: 103, ticks: 3, startSeparation: 1.8, endSeparation: 3.4, reason: 'range' },
+      { actorId: actor, targetId: foe, startTick: 100, endTick: 103, ticks: 3, startSeparation: 1.8, endSeparation: 3.4, reason: 'range', externalGround: 0 },
     ])
   })
 
@@ -69,12 +69,12 @@ describe('assembleDisengageEpisodes', () => {
   it('keeps an episode still open at the end of the bout, as `censored`, with its last observed endpoint', () => {
     const { episodes } = assembleDisengageEpisodes([
       { kind: 'stamped', tick: 40, actorId: actor, targetId: foe, separation: 1.6 },
-      { kind: 'held', tick: 41, actorId: actor, targetId: foe, separation: 1.9 },
-      { kind: 'held', tick: 42, actorId: actor, targetId: foe, separation: 2.2 },
+      { kind: 'held', tick: 41, actorId: actor, targetId: foe, separation: 1.9, externalSeparationDelta: 0 },
+      { kind: 'held', tick: 42, actorId: actor, targetId: foe, separation: 2.2, externalSeparationDelta: 0 },
     ])
 
     expect(episodes).toEqual<DisengageEpisode[]>([
-      { actorId: actor, targetId: foe, startTick: 40, endTick: 42, ticks: 2, startSeparation: 1.6, endSeparation: 2.2, reason: 'censored' },
+      { actorId: actor, targetId: foe, startTick: 40, endTick: 42, ticks: 2, startSeparation: 1.6, endSeparation: 2.2, reason: 'censored', externalGround: 0 },
     ])
   })
 
@@ -82,7 +82,7 @@ describe('assembleDisengageEpisodes', () => {
     const { episodes } = assembleDisengageEpisodes([{ kind: 'stamped', tick: 900, actorId: actor, targetId: foe, separation: 1.55 }])
 
     expect(episodes).toEqual<DisengageEpisode[]>([
-      { actorId: actor, targetId: foe, startTick: 900, endTick: 900, ticks: 0, startSeparation: 1.55, endSeparation: 1.55, reason: 'censored' },
+      { actorId: actor, targetId: foe, startTick: 900, endTick: 900, ticks: 0, startSeparation: 1.55, endSeparation: 1.55, reason: 'censored', externalGround: 0 },
     ])
   })
 
@@ -90,9 +90,9 @@ describe('assembleDisengageEpisodes', () => {
     const { episodes } = assembleDisengageEpisodes([
       { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 2.0 },
       { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.7 },
-      { kind: 'held', tick: 11, actorId: other, targetId: foe, separation: 2.4 },
-      { kind: 'cleared', tick: 12, actorId: other, targetId: foe, separation: 3.4, reason: 'range' },
-      { kind: 'cleared', tick: 48, actorId: actor, targetId: foe, separation: 1.2, reason: 'cap' },
+      { kind: 'held', tick: 11, actorId: other, targetId: foe, separation: 2.4, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 12, actorId: other, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
+      { kind: 'cleared', tick: 48, actorId: actor, targetId: foe, separation: 1.2, externalSeparationDelta: 0, reason: 'cap' },
     ])
 
     expect(episodes.map((episode) => [episode.actorId, episode.startTick, episode.ticks, episode.reason])).toEqual([
@@ -106,7 +106,9 @@ describe('assembleDisengageEpisodes', () => {
   // precisely so that a later PR making one reachable stops the run instead of
   // silently emitting an episode with the wrong endpoints.
   it('raises on a clear with no open episode rather than inventing a start', () => {
-    expect(() => assembleDisengageEpisodes([{ kind: 'cleared', tick: 5, actorId: actor, targetId: foe, separation: 3.4, reason: 'range' }])).toThrow(
+    expect(() =>
+      assembleDisengageEpisodes([{ kind: 'cleared', tick: 5, actorId: actor, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' }]),
+    ).toThrow(
       /no open episode/,
     )
   })
@@ -131,8 +133,8 @@ describe('assembleDisengageEpisodes', () => {
   it('reports, rather than emits, an episode whose endpoints are against two different opponents', () => {
     const { episodes, unmeasurable } = assembleDisengageEpisodes([
       { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
-      { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 2.0 },
-      { kind: 'cleared', tick: 7, actorId: actor, targetId: otherFoe, separation: 3.4, reason: 'range' },
+      { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 2.0, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 7, actorId: actor, targetId: otherFoe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
     ])
 
     expect(episodes).toEqual([])
@@ -148,7 +150,7 @@ describe('assembleDisengageEpisodes', () => {
     expect(
       assembleDisengageEpisodes([
         { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
-        { kind: 'cleared', tick: 6, actorId: actor, targetId: undefined, separation: Infinity, reason: 'range' },
+        { kind: 'cleared', tick: 6, actorId: actor, targetId: undefined, separation: Infinity, externalSeparationDelta: 0, reason: 'range' },
       ]),
     ).toEqual({ episodes: [], unmeasurable: [{ actorId: actor, startTick: 5, tick: 6, cause: 'no-target' }] })
   })
@@ -160,8 +162,8 @@ describe('assembleDisengageEpisodes', () => {
     const { episodes, unmeasurable } = assembleDisengageEpisodes([
       { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 1.7 },
       { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.6 },
-      { kind: 'cleared', tick: 13, actorId: other, targetId: undefined, separation: Infinity, reason: 'range' },
-      { kind: 'cleared', tick: 14, actorId: actor, targetId: foe, separation: 3.4, reason: 'range' },
+      { kind: 'cleared', tick: 13, actorId: other, targetId: undefined, separation: Infinity, externalSeparationDelta: 0, reason: 'range' },
+      { kind: 'cleared', tick: 14, actorId: actor, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
     ])
 
     expect(episodes.map((episode) => episode.actorId)).toEqual([actor])
@@ -174,11 +176,11 @@ describe('assembleDisengageEpisodes', () => {
   it('puts every stamped episode in exactly one of the two collections', () => {
     const samples: DisengageSample[] = [
       { kind: 'stamped', tick: 1, actorId: actor, targetId: foe, separation: 1.5 },
-      { kind: 'cleared', tick: 2, actorId: actor, targetId: foe, separation: 3.4, reason: 'range' },
+      { kind: 'cleared', tick: 2, actorId: actor, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
       { kind: 'stamped', tick: 3, actorId: other, targetId: undefined, separation: Infinity },
-      { kind: 'cleared', tick: 4, actorId: other, targetId: undefined, separation: Infinity, reason: 'range' },
+      { kind: 'cleared', tick: 4, actorId: other, targetId: undefined, separation: Infinity, externalSeparationDelta: 0, reason: 'range' },
       { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.5 },
-      { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 1.9 },
+      { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 1.9, externalSeparationDelta: 0 },
     ]
     const { episodes, unmeasurable } = assembleDisengageEpisodes(samples)
 
@@ -202,16 +204,37 @@ describe('assembleDisengageEpisodes', () => {
     expect(() =>
       assembleDisengageEpisodes([
         { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
-        { kind: 'cleared', tick: 6, actorId: actor, targetId: foe, separation: Number.NaN, reason: 'range' },
+        { kind: 'cleared', tick: 6, actorId: actor, targetId: foe, separation: Number.NaN, externalSeparationDelta: 0, reason: 'range' },
       ]),
     ).toThrow(/non-finite separation/)
 
     expect(() =>
       assembleDisengageEpisodes([
         { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
-        { kind: 'held', tick: 6, actorId: actor, targetId: otherFoe, separation: Infinity },
+        { kind: 'held', tick: 6, actorId: actor, targetId: otherFoe, separation: Infinity, externalSeparationDelta: 0 },
       ]),
     ).toThrow(/non-finite separation/)
+  })
+
+  it('sums the external component of every tick into the episode', () => {
+    const assembly = assembleDisengageEpisodes([
+      { kind: 'stamped', tick: 10, actorId: 'a', targetId: 'b', separation: 1.0 },
+      { kind: 'held', tick: 11, actorId: 'a', targetId: 'b', separation: 1.4, externalSeparationDelta: 0.3 },
+      { kind: 'held', tick: 12, actorId: 'a', targetId: 'b', separation: 1.7, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 13, actorId: 'a', targetId: 'b', separation: 2.1, externalSeparationDelta: 0.2, reason: 'progress' },
+    ])
+
+    expect(assembly.episodes).toHaveLength(1)
+    expect(assembly.episodes[0].externalGround).toBeCloseTo(0.5, 10)
+  })
+
+  it('reports zero external ground when nothing pushed anyone', () => {
+    const assembly = assembleDisengageEpisodes([
+      { kind: 'stamped', tick: 10, actorId: 'a', targetId: 'b', separation: 1.0 },
+      { kind: 'cleared', tick: 11, actorId: 'a', targetId: 'b', separation: 2.0, externalSeparationDelta: 0, reason: 'progress' },
+    ])
+
+    expect(assembly.episodes[0].externalGround).toBe(0)
   })
 })
 
