@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
+import { SLOW_E2E_SUITES } from './src/testSupport/slowSuites'
 
 export default defineConfig({
   testDir: './tests',
@@ -143,10 +144,33 @@ export default defineConfig({
   // catch. (Dependency projects also ignore `--grep`, so every `-g` run of one
   // legibility test would first replay the entire fast suite.)
   workers: 1,
+  // TWO PROJECTS, AND DELIBERATELY NO `dependencies` BETWEEN THEM.
+  //
+  // The rejection recorded above stands and is not being reversed: a DEPENDENT
+  // project is skipped when its dependency fails, which is how a 47-test
+  // acceptance set once reported "1 did not run" instead of running. These two
+  // are independent — neither can suppress the other, each reports its own
+  // count, and CI invokes them as separate jobs.
+  //
+  // `legibility.spec.ts` is 12.1 of the suite's 13.2 minutes (the other five
+  // spec files are ~1.1 min together), so this is the whole reason a push has
+  // been waiting a quarter of an hour for a browser. Its seed set, its bouts
+  // and its bars are untouched; only its schedule changes. See
+  // `src/testSupport/slowSuites.ts`.
+  //
+  // Snapshot baselines are unaffected: `snapshotPathTemplate` above is keyed on
+  // `{testDir}` and `{platform}`, not on the project name, so splitting one
+  // project into two moves no PNG. Checked rather than assumed.
   projects: [
     {
-      name: 'chromium',
+      name: 'fast',
       use: { ...devices['Desktop Chrome'] },
+      testIgnore: SLOW_E2E_SUITES.map((file) => `**/${file.split('/').pop()}`),
+    },
+    {
+      name: 'slow',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: SLOW_E2E_SUITES.map((file) => `**/${file.split('/').pop()}`),
     },
   ],
 })
