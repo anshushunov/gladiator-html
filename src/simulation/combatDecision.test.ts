@@ -1122,10 +1122,15 @@ describe('decisionIntervalTicks', () => {
 })
 
 describe('forced behavior thresholds', () => {
+  // The three `toBe(true)`/`toBe(false)` pairs below became reason assertions
+  // when the predicate widened its return. The boundaries they pin are
+  // unchanged and one is added: the truthiness itself, asserted separately
+  // from the reason, because "no call site changed meaning" is this PR's whole
+  // claim and `Boolean(undefined) === false` is the thing that carries it.
   it('Fast forced disengage ends once the range has been opened back out to its authored exit, and not before', () => {
-    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE, 10)).toBe(true)
-    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE + 0.01, 10)).toBe(true)
-    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE - 0.01, 10)).toBe(false)
+    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE, 10)).toBe('range')
+    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE + 0.01, 10)).toBe('range')
+    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE - 0.01, 10)).toBeUndefined()
     // The range a burst-lunge actually lands at: the forcing has to survive
     // it, or Fast never disengages at all. Read from the catalog rather than
     // written as a literal, so a future reach change cannot make this vacuous.
@@ -1136,8 +1141,8 @@ describe('forced behavior thresholds', () => {
     // 1.60..2.40 while asserting nothing whatever about the new behaviour. The
     // claim "the forcing survives a lunge" would have been true by accident.
     const lunge = COMBAT_STYLES.attacks['fast-burst-lunge'].contactRange
-    expect(hasFastForcedDisengageEnded(lunge.max, 1)).toBe(false)
-    expect(hasFastForcedDisengageEnded(lunge.min, 1)).toBe(false)
+    expect(hasFastForcedDisengageEnded(lunge.max, 1)).toBeUndefined()
+    expect(hasFastForcedDisengageEnded(lunge.min, 1)).toBeUndefined()
   })
 
   it('Fast forced disengage ends at its authored tick cap even when the range never opened', () => {
@@ -1145,8 +1150,38 @@ describe('forced behavior thresholds', () => {
     // passing against a cap this slice moved to 37, while testing a boundary
     // the kernel no longer has.
     const pinned = COMBAT_STYLES.attacks['fast-burst-lunge'].contactRange.min
-    expect(hasFastForcedDisengageEnded(pinned, FAST_FORCED_DISENGAGE_MAX_TICKS)).toBe(true)
-    expect(hasFastForcedDisengageEnded(pinned, FAST_FORCED_DISENGAGE_MAX_TICKS - 1)).toBe(false)
+    expect(hasFastForcedDisengageEnded(pinned, FAST_FORCED_DISENGAGE_MAX_TICKS)).toBe('cap')
+    expect(hasFastForcedDisengageEnded(pinned, FAST_FORCED_DISENGAGE_MAX_TICKS - 1)).toBeUndefined()
+  })
+
+  // The claim this PR makes is "no call site changed meaning". The reason
+  // assertions above do not prove it -- they would pass just as well if some
+  // future reason were the empty string, which is falsy and would silently
+  // invert `if (hasFastForcedDisengageEnded(...))` in `encounter.ts`. This
+  // asserts the property the call sites actually depend on, across the same
+  // boundaries.
+  it('preserves the exact truthiness the boolean version had, at every boundary', () => {
+    const pinned = COMBAT_STYLES.attacks['fast-burst-lunge'].contactRange.min
+    const cases: readonly [number, number, boolean][] = [
+      [FAST_FORCED_DISENGAGE_END_RANGE, 10, true],
+      [FAST_FORCED_DISENGAGE_END_RANGE + 0.01, 10, true],
+      [FAST_FORCED_DISENGAGE_END_RANGE - 0.01, 10, false],
+      [pinned, FAST_FORCED_DISENGAGE_MAX_TICKS, true],
+      [pinned, FAST_FORCED_DISENGAGE_MAX_TICKS - 1, false],
+      [pinned, 0, false],
+    ]
+    for (const [distance, ticks, expected] of cases) {
+      expect(Boolean(hasFastForcedDisengageEnded(distance, ticks))).toBe(expected)
+    }
+  })
+
+  // Both conditions true at once. The answer is unchanged either way -- the
+  // boolean version returned `true` -- so this pins the LABEL, which is new
+  // and is a design choice: a fighter who reached the exit distance on the
+  // capping tick opened the ground, and reporting that episode as a pin would
+  // understate the escape in the gate this seam feeds.
+  it('reports `range` when the exit distance and the tick cap are reached on the same tick', () => {
+    expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE, FAST_FORCED_DISENGAGE_MAX_TICKS)).toBe('range')
   })
 
   it('Technical forced parry counter starts only within 2.3 units, otherwise clears', () => {

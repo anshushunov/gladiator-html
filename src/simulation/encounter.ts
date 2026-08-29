@@ -69,6 +69,7 @@ import {
 } from './combatDecision'
 import type { ContactCollector, ContactOutcome } from './contactDiagnostics'
 import type { DecisionCollector, DecisionRecord } from './decisionDiagnostics'
+import type { DisengageCollector } from './disengageDiagnostics'
 import { DISPOSITION_IDS, dispositionModifiers, isDispositionId, type DispositionId } from './disposition'
 import type { FighterDefinition } from './fighters'
 import { compareArchetypes, comparisonDamageMultiplier, validateFighterDefinition } from './fighters'
@@ -932,6 +933,7 @@ function completeForcedStateTransitions(
   combatantIds: readonly CombatantId[],
   tick: number,
   cursor: EventIdCursor,
+  disengageCollector?: DisengageCollector,
 ): { combatants: Record<CombatantId, FighterCombatState>; events: EncounterEvent[] } {
   const next: Record<CombatantId, FighterCombatState> = { ...combatants }
   const events: EncounterEvent[] = []
@@ -950,23 +952,83 @@ function completeForcedStateTransitions(
     if (justEndedBurstLunge) {
       const forced = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
       next[id] = { ...forced, forcedDisengageStartTick: tick }
+      // Guarded, not merely short-circuited inside a helper. The stamp branch
+      // never computed a distance before this seam existed, so doing it
+      // unconditionally would add real work to the shipped runtime on every
+      // lunge recovery -- raised in external review as the seam not being
+      // allocation-inert even though state and events were.
+      if (disengageCollector) {
+        const target = phaseTwoTarget(combatant, combatants)
+        disengageCollector.record({ kind: 'stamped', tick, actorId: id, targetId: target?.id, separation: separationTo(combatant, target) })
+      }
       continue
     }
 
     if (combatant.forcedDisengageStartTick === undefined) continue
 
-    const target = combatant.targetId ? combatants[combatant.targetId] : undefined
-    const distanceToTarget = target ? distanceBetween(combatant.position, target.position) : Infinity
+    const target = phaseTwoTarget(combatant, combatants)
+    const separation = separationTo(combatant, target)
     const ticksSinceForced = tick - combatant.forcedDisengageStartTick
 
-    if (hasFastForcedDisengageEnded(distanceToTarget, ticksSinceForced)) {
+    // The reason is taken from the branch that fired, and the SAME number the
+    // predicate judged is what gets recorded. Nothing downstream re-derives
+    // either one; see `disengageDiagnostics.ts` for the inference this
+    // replaces.
+    //
+    // `?.record({...})` rather than a `recordDisengage(collector, {...})`
+    // helper: optional chaining does not evaluate the argument list when the
+    // collector is absent, while a plain call would build the sample object
+    // first and discard it. The previous revision did exactly that.
+    const exit = hasFastForcedDisengageEnded(separation, ticksSinceForced)
+    if (exit) {
       next[id] = { ...combatant, forcedDisengageStartTick: undefined, nextDecisionTick: tick }
+      disengageCollector?.record({ kind: 'cleared', tick, actorId: id, targetId: target?.id, separation, reason: exit })
     } else {
       next[id] = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
+      disengageCollector?.record({ kind: 'held', tick, actorId: id, targetId: target?.id, separation })
     }
   }
 
   return { combatants: next, events }
+}
+
+/**
+ * Who the fighter is measured against in phase 2 -- an existing reference out
+ * of the snapshot, allocating nothing. Resolved through the snapshot rather
+ * than read off `self.targetId`, so a target that is not in the snapshot is
+ * `undefined` here rather than an id whose separation would be `Infinity`.
+ */
+function phaseTwoTarget(
+  self: FighterCombatState,
+  snapshot: Readonly<Record<CombatantId, FighterCombatState>>,
+): FighterCombatState | undefined {
+  return self.targetId ? snapshot[self.targetId] : undefined
+}
+
+/**
+ * Root-to-root separation before this tick's movement; `Infinity` with no
+ * target, which is the value the exit predicate has always been handed in that
+ * case and is preserved here exactly. Both ends of an episode go through this
+ * one expression, so the stamp and the clear cannot drift apart.
+ *
+ * NOTHING IS VALIDATED HERE, DELIBERATELY. An earlier revision raised on a
+ * non-finite separation, copying `recordContact`'s posture on `NaN`, and
+ * external review found that this makes the seam non-inert in exactly the case
+ * it claims to be inert in: `targetId` is legitimately cleared when a target
+ * dies, turns non-hostile, or cannot be reacquired (`retainTarget`,
+ * combatDecision.ts), and in a generic multi-combatant encounter the encounter
+ * keeps running afterwards. Phase 2 then hands the predicate `Infinity`, which
+ * clears the forced state as a range exit -- a transition that completed
+ * without a collector and *threw* with one attached. The justification given
+ * for the raise ("the arena is under 9 units across") was true of the duel
+ * adapter and not of `advanceEncounterTick`, which is the generic kernel.
+ *
+ * So the kernel records what phase 2 saw and nothing else. Deciding whether an
+ * episode is measurable is `assembleDisengageEpisodes`' job, after the tick,
+ * where it cannot perturb a single thing the seam is supposed to observe.
+ */
+function separationTo(self: FighterCombatState, target: FighterCombatState | undefined): number {
+  return target ? distanceBetween(self.position, target.position) : Infinity
 }
 
 /**
@@ -2287,7 +2349,12 @@ function resolveNoHostilePairsCompletion(state: EncounterState): EncounterTransi
  * identity, empty event batch) -- a finished encounter is inert. Never
  * mutates `previous` or anything reachable from it.
  */
-export function advanceEncounterTick(previous: EncounterState, collector?: DecisionCollector, contactCollector?: ContactCollector): EncounterTransition {
+export function advanceEncounterTick(
+  previous: EncounterState,
+  collector?: DecisionCollector,
+  contactCollector?: ContactCollector,
+  disengageCollector?: DisengageCollector,
+): EncounterTransition {
   if (previous.phase !== 'running') {
     return { state: previous, events: [] }
   }
@@ -2304,7 +2371,7 @@ export function advanceEncounterTick(previous: EncounterState, collector?: Decis
   combatants = cleanup.combatants
   events.push(...cleanup.events)
 
-  const forcedTransitions = completeForcedStateTransitions(previous.combatants, combatants, previous.combatantIds, tick, cursor)
+  const forcedTransitions = completeForcedStateTransitions(previous.combatants, combatants, previous.combatantIds, tick, cursor, disengageCollector)
   combatants = forcedTransitions.combatants
   events.push(...forcedTransitions.events)
 

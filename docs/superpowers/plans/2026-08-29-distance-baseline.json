@@ -1,0 +1,307 @@
+{
+  "seeds": 200,
+  "overlay": null,
+  "bands": {
+    "pinFloor": 1.6,
+    "lungeCeiling": 2.4,
+    "murmilloEnvelope": 1.7
+  },
+  "perMatchup": [
+    {
+      "label": "heavy vs heavy",
+      "engaged": {
+        "ticks": 104765,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 1.323009803921547,
+        "p10": 0.90525,
+        "p90": 1.6900000000000002,
+        "pinnedShare": 0.7991982055075646,
+        "lungeBandShare": 0.2002863551758698,
+        "beyondShare": 0.0005154393165656469,
+        "insideEnvelopeShare": 0.9054932467904357
+      },
+      "all": {
+        "ticks": 143516,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 1.4428521688322509,
+        "p10": 0.9293725490196042,
+        "p90": 5.366666666666655,
+        "pinnedShare": 0.6314696619192285,
+        "lungeBandShare": 0.17298419688397113,
+        "beyondShare": 0.19554614119680036,
+        "insideEnvelopeShare": 0.7131051590066613
+      },
+      "bouts": 200,
+      "homeWins": 100,
+      "lungeStarts": 0,
+      "fastFighters": 0,
+      "lungeStartsPer1000EngagedTicksPerFighter": null
+    },
+    {
+      "label": "heavy vs fast",
+      "engaged": {
+        "ticks": 130744,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 1.6231291148033269,
+        "p10": 0.9815717749930778,
+        "p90": 2.4527240035253968,
+        "pinnedShare": 0.48096279752799365,
+        "lungeBandShare": 0.40268004650309003,
+        "beyondShare": 0.11635715596891635,
+        "insideEnvelopeShare": 0.5481092822615187
+      },
+      "all": {
+        "ticks": 185615,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 1.9276666666666729,
+        "p10": 1.0570849594972458,
+        "p90": 6.401462149303889,
+        "pinnedShare": 0.3595991703256741,
+        "lungeBandShare": 0.303633865797484,
+        "beyondShare": 0.33676696387684185,
+        "insideEnvelopeShare": 0.409406567357164
+      },
+      "bouts": 200,
+      "homeWins": 129,
+      "lungeStarts": 492,
+      "fastFighters": 1,
+      "lungeStartsPer1000EngagedTicksPerFighter": 3.7630789940647373
+    },
+    {
+      "label": "heavy vs technical",
+      "engaged": {
+        "ticks": 123868,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 1.4402875071687646,
+        "p10": 1.0646199564486298,
+        "p90": 1.8699999999999986,
+        "pinnedShare": 0.6999870830238641,
+        "lungeBandShare": 0.2921820001937546,
+        "beyondShare": 0.007830916782381245,
+        "insideEnvelopeShare": 0.812187166984209
+      },
+      "all": {
+        "ticks": 160108,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 1.5411400107428797,
+        "p10": 1.1105396944445882,
+        "p90": 5.3426545310445,
+        "pinnedShare": 0.552258475529018,
+        "lungeBandShare": 0.24893821670372498,
+        "beyondShare": 0.1988033077672571,
+        "insideEnvelopeShare": 0.6414232892797361
+      },
+      "bouts": 200,
+      "homeWins": 93,
+      "lungeStarts": 0,
+      "fastFighters": 0,
+      "lungeStartsPer1000EngagedTicksPerFighter": null
+    },
+    {
+      "label": "fast vs heavy",
+      "engaged": {
+        "ticks": 135182,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 1.6282834912851216,
+        "p10": 0.9782838281474409,
+        "p90": 2.452374624673062,
+        "pinnedShare": 0.4777781065526475,
+        "lungeBandShare": 0.4054903759376248,
+        "beyondShare": 0.11673151750972763,
+        "insideEnvelopeShare": 0.5428829282005001
+      },
+      "all": {
+        "ticks": 190267,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 1.924961929591718,
+        "p10": 1.0445758734149575,
+        "p90": 6.400506718844925,
+        "pinnedShare": 0.35953160558583463,
+        "lungeBandShare": 0.306768908954259,
+        "beyondShare": 0.33369948545990635,
+        "insideEnvelopeShare": 0.4082788922934613
+      },
+      "bouts": 200,
+      "homeWins": 72,
+      "lungeStarts": 508,
+      "fastFighters": 1,
+      "lungeStartsPer1000EngagedTicksPerFighter": 3.7578967614031455
+    },
+    {
+      "label": "fast vs fast",
+      "engaged": {
+        "ticks": 99606,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 2.2634907331130614,
+        "p10": 1.2302000667695305,
+        "p90": 3.203388739113882,
+        "pinnedShare": 0.22166335361323616,
+        "lungeBandShare": 0.3436539967471839,
+        "beyondShare": 0.4346826496395799,
+        "insideEnvelopeShare": 0.2628757303776881
+      },
+      "all": {
+        "ticks": 178873,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 2.999677213735297,
+        "p10": 1.467419792313749,
+        "p90": 8.412532317917123,
+        "pinnedShare": 0.13318946962369949,
+        "lungeBandShare": 0.2023670425385609,
+        "beyondShare": 0.6644434878377397,
+        "insideEnvelopeShare": 0.1575810770770323
+      },
+      "bouts": 200,
+      "homeWins": 99,
+      "lungeStarts": 1085,
+      "fastFighters": 2,
+      "lungeStartsPer1000EngagedTicksPerFighter": 5.446459048651688
+    },
+    {
+      "label": "fast vs technical",
+      "engaged": {
+        "ticks": 87680,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 2.1144063810426084,
+        "p10": 1.3125283608248042,
+        "p90": 2.966662535666253,
+        "pinnedShare": 0.23201414233576642,
+        "lungeBandShare": 0.42778284671532846,
+        "beyondShare": 0.3402030109489051,
+        "insideEnvelopeShare": 0.2847741788321168
+      },
+      "all": {
+        "ticks": 146978,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 2.6283731325329214,
+        "p10": 1.463158251573175,
+        "p90": 7.215755664526299,
+        "pinnedShare": 0.1511926955054498,
+        "lungeBandShare": 0.27359876988392823,
+        "beyondShare": 0.575208534610622,
+        "insideEnvelopeShare": 0.1857488875886187
+      },
+      "bouts": 200,
+      "homeWins": 144,
+      "lungeStarts": 617,
+      "fastFighters": 1,
+      "lungeStartsPer1000EngagedTicksPerFighter": 7.036952554744525
+    },
+    {
+      "label": "technical vs heavy",
+      "engaged": {
+        "ticks": 122361,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 1.4361233057241172,
+        "p10": 1.054107870084112,
+        "p90": 1.8757009803921578,
+        "pinnedShare": 0.6957935943642174,
+        "lungeBandShare": 0.29509402505700344,
+        "beyondShare": 0.009112380578779186,
+        "insideEnvelopeShare": 0.8111244595908828
+      },
+      "all": {
+        "ticks": 159609,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 1.551,
+        "p10": 1.1039545515219291,
+        "p90": 5.491562447965836,
+        "pinnedShare": 0.5451446973541593,
+        "lungeBandShare": 0.24831933036357598,
+        "beyondShare": 0.20653597228226478,
+        "insideEnvelopeShare": 0.6359541128633097
+      },
+      "bouts": 200,
+      "homeWins": 110,
+      "lungeStarts": 0,
+      "fastFighters": 0,
+      "lungeStartsPer1000EngagedTicksPerFighter": null
+    },
+    {
+      "label": "technical vs fast",
+      "engaged": {
+        "ticks": 86096,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 2.1251000137237677,
+        "p10": 1.333644236180022,
+        "p90": 2.9822336495586153,
+        "pinnedShare": 0.22063742798736294,
+        "lungeBandShare": 0.4341781267422412,
+        "beyondShare": 0.3451844452703958,
+        "insideEnvelopeShare": 0.27376417022858207
+      },
+      "all": {
+        "ticks": 146777,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 2.6714693655489334,
+        "p10": 1.4910144057391883,
+        "p90": 7.3679906494248515,
+        "pinnedShare": 0.13995380747664826,
+        "lungeBandShare": 0.2730264278463247,
+        "beyondShare": 0.5870197646770271,
+        "insideEnvelopeShare": 0.17354898928306206
+      },
+      "bouts": 200,
+      "homeWins": 63,
+      "lungeStarts": 568,
+      "fastFighters": 1,
+      "lungeStartsPer1000EngagedTicksPerFighter": 6.597286749674781
+    },
+    {
+      "label": "technical vs technical",
+      "engaged": {
+        "ticks": 96397,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 1.7223275372484763,
+        "p10": 1.3453450043012272,
+        "p90": 2.313316783518408,
+        "pinnedShare": 0.3465875494050645,
+        "lungeBandShare": 0.5835243835389068,
+        "beyondShare": 0.06988806705602872,
+        "insideEnvelopeShare": 0.46702698216749483
+      },
+      "all": {
+        "ticks": 134902,
+        "bouts": 200,
+        "unengagedBouts": 0,
+        "median": 1.9827896206130595,
+        "p10": 1.4166221538096897,
+        "p90": 6.165443052864452,
+        "pinnedShare": 0.2492401891743636,
+        "lungeBandShare": 0.43655394286222593,
+        "beyondShare": 0.3142058679634105,
+        "insideEnvelopeShare": 0.3360884197417384
+      },
+      "bouts": 200,
+      "homeWins": 102,
+      "lungeStarts": 0,
+      "fastFighters": 0,
+      "lungeStartsPer1000EngagedTicksPerFighter": null
+    }
+  ],
+  "comparison": {
+    "subject": "fast vs heavy",
+    "comparator": "technical vs heavy",
+    "comparatorMatchups": [
+      "technical vs heavy",
+      "technical vs technical"
+    ]
+  }
+}
