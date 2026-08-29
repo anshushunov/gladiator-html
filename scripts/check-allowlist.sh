@@ -1,130 +1,92 @@
 #!/usr/bin/env bash
 # scripts/check-allowlist.sh — the paths this slice may not touch.
 #
-# RE-SCOPED for the measurement-repair slice (2026-08-27). The list is
-# per-slice by construction and is rebuilt from scratch each time rather than
-# amended, because the shape follows the slice's claim and the claim changes.
-# The two lists this one replaces are worth a sentence each, since the shape
-# has now flipped twice:
-#
-#   readable-gladiator-types — presentational, changed no behaviour. An
-#   ALLOWLIST, keeping the diff OUT of `src/simulation/**`, `src/content/**`
-#   and `src/style.css`.
-#
-#   retiarius-reach — changed behaviour on purpose, so every path that list
-#   protected was a path it had to edit. A DENYLIST over presentation source
-#   and acceptance logic, in two phases, because a single list could not be
-#   both complete and satisfiable while the fixture split was in flight.
+# RE-SCOPED for the Linux-baseline re-capture (2026-08-28). Rebuilt from
+# scratch, as every slice rebuilds it, because the shape follows the claim.
 #
 # ---------------------------------------------------------------------------
-# WHAT THIS SLICE CLAIMS, and therefore what this list protects
+# WHY THIS SLICE EXISTS, since it is a debt rather than a plan
 # ---------------------------------------------------------------------------
 #
-# This slice repairs three MEASURING DEVICES and changes nothing they measure:
+# Two Linux screenshot baselines are stale on `main`: `planning.png` and the
+# season board, 5% of pixels against a `maxDiffPixelRatio` of 0.002. They are
+# stale for a reason worth writing down rather than fixing quietly.
 #
-#   1. `ArenaCamera.test.ts`'s desired-yaw continuity bound, which was named
-#      for axis motion and measured axis motion PLUS released dead-zone
-#      hysteresis, and failed on one tick in 14 848 of the shipped content.
-#   2. `measure-reach.ts`'s gate D comparator, which summed the hoplomachus
-#      across all nine matchups including `technical vs fast`, so the yardstick
-#      moved with the thing it judged.
-#   3. `series.test.ts`'s fixture split, finished in the preparatory PR.
+# `update-baselines.yml` exists precisely because baselines captured in
+# `mcr.microsoft.com/playwright:v1.62.1-noble` render text differently from the
+# `ubuntu-latest` runner that compares them -- its own header says so. The
+# retiarius-reach content PR nevertheless refreshed them the other way:
+# commit `18fa19f`, "refresh the Linux visual baselines in the clean
+# container".
 #
-# So the claim is "the instruments changed, the game did not", and it is the
-# exact inverse of the slice before it. That makes this a DENYLIST again, but
-# over a different set: everything that could make the claim untrue.
+# Nobody caught it because THE E2E STEP NEVER RAN. `npm run check` is
+# `test && build && test:e2e`, the camera metric was failing `npm test`, and CI
+# stopped there. PR #17 went through four CI runs, all red at the same unit
+# test, and was merged anyway; the last green run on `main` is `8d57619`, the
+# merge before it. The measurement-repair slice turned `npm test` green, CI
+# reached e2e for the first time in a week, and these two surfaced immediately.
 #
-# The strongest form of the claim is the one worth gating on, and it is
-# checkable: IF NO BEHAVIOUR CHANGED, NO FROZEN VALUE MAY MOVE. A repaired
-# instrument that also happens to produce nicer numbers is the failure mode
-# this slice is least able to notice about itself — the slice's own risk note
-# records five defects in a row where the instrument was wrong in the flattering
-# direction — so `src/testSupport/frozenFixtures/**` is CLOSED here, having been
-# deliberately open in the slice before. A fixture that needs re-baselining is
-# not a re-baseline this time; it is evidence the repair moved the game.
-#
-# GROUP 1 -- THE GAME. `src/simulation/**` and `src/content/**`, wholesale.
-# Matched wholesale rather than enumerated: the enumeration in the previous list
-# was reviewed and found incomplete twice, and any such list rots the moment a
-# module is added. Wholesale also subsumes, without special-casing them:
-#
-#   * the balance suites (`balance`, `dispositionBalance`, `seasonBalance`,
-#     `encounterCapacity`) — criteria this slice must satisfy and has no
-#     licence to weaken. `src/testSupport/balanceCohorts.ts`, which carries
-#     their metric formulas, is named separately below because it lives
-#     elsewhere;
-#   * `src/simulation/series.test.ts`, WHICH IS NOW CLOSED. The retiarius-reach
-#     list left it open and said why: the preparatory PR's split of that file
-#     was incomplete, and forbidding a file that still holds values which must
-#     move is a rule that cannot be obeyed. That debt is discharged. The
-#     preparatory PR of THIS slice moved the last measured literal (the
-#     leading-slot forfeit score) into `frozenFixtures/seriesTrace.ts` and
-#     deleted the stale copy of the trace hashes, durations and score that had
-#     been left behind in a comment describing a run that no longer existed.
-#     The file now holds criteria only, which is the condition the previous list
-#     named for closing it.
-#
-# GROUP 2 -- PRESENTATION SOURCE, `src/presentation/**` wholesale, `src/style.css`,
-# `index.html`, `src/main.ts`. Nothing here is repaired by this slice, and
-# anything drawn differently would move the screenshot baselines and the
-# legibility checks — which is precisely the signal group 3 exists to read.
-# `ArenaCamera.ts` is the load-bearing member: the spec's camera amendment
-# forbids nudging its constants in place of fixing the metric, and "slew-clamp
-# the desired yaw" is a real, tempting, WRONG fix that would slow a legitimate
-# 12.758-degree turn to hide 4.319 degrees of bookkeeping. The exemption below
-# opens exactly one file in this tree, its test.
-#
-# GROUP 3 -- FROZEN OUTPUTS. `src/testSupport/frozenFixtures/**` and
-# `tests/__screenshots__/**`. Screenshot baselines were never forbidden by
-# either previous list, on the correct grounds that they are outputs of the
-# change rather than levers on it. This slice has no change for them to be an
-# output of, so the reasoning inverts: a moved baseline here is not a
-# regeneration, it is a behaviour change nobody declared.
-#
-# GROUP 4 -- ACCEPTANCE METHOD that lives outside `src/simulation/`:
-# `src/testSupport/balanceCohorts.ts` (cohort seeds, bands, metric formulas),
-# `tests/legibility.spec.ts` and `playwright.config.ts` (viewports and the safe
-# -area/scale-floor criteria the camera work is judged against).
-#
-# WHAT IS DELIBERATELY OPEN, since a denylist is only honest if it says what it
-# lets through: `scripts/measure-reach.ts`, `src/testSupport/reachHarness.ts`
-# and its test, and `src/presentation/ArenaCamera.test.ts`. These are the three
-# instruments being repaired; closing them would forbid the slice's own work.
-# `docs/**` is open, and `scripts/check-allowlist.sh` and `.github/` stay
-# reachable for the same reason every previous revision admitted them: a gate
-# that cannot maintain itself cannot be enforced at all.
+# So the honest framing: this is not a new failure, it is the first look at an
+# old one. Recorded here because the same shape -- a gate that cannot report
+# because an earlier gate is already red -- will happen again, and a list that
+# said only "PNGs may move" would lose the reason.
 #
 # ---------------------------------------------------------------------------
-# TWO PRs, and why this list needs no phases to survive it
+# WHAT THIS LIST PROTECTS
 # ---------------------------------------------------------------------------
 #
-# The retiarius-reach list needed two phases because one list could not be both
-# complete and satisfiable while a fixture split was in flight. This one does
-# not, because the work is split across PRs instead of the list across phases:
+# The claim is the narrowest this repository has made: the Linux baselines are
+# re-captured on the runner image that compares them, and NOTHING ELSE CHANGES
+# AT ALL. A re-baseline is only trustworthy if the thing being baselined did
+# not move in the same diff -- otherwise "the screenshots now match" says
+# nothing about whether they match the right picture.
 #
-#   PREPARATORY PR -- finishes the `series.test.ts` split and nothing else. It
-#   is judged by the PREVIOUS list, still in the tree at that point, which left
-#   `series.test.ts` open for exactly this and keeps
-#   `frozenFixtures/**` writable for exactly this. It touches no path this list
-#   closes for any other reason.
+# So the denylist is everything under `src/`, `scripts/`, `tests/` and
+# `.github/workflows/`, with two exemptions and no others:
 #
-#   REPAIR PR (this one) -- branched from main after that merged, so its diff no
-#   longer contains the split. It ships THIS list as its first commit, before
-#   the three repairs, so the diff is judged by a boundary it did not write.
+#   * `tests/__screenshots__/linux/**` -- the artefact being re-captured, and
+#     ONLY the Linux set. `win32` stays closed, mirroring the rule
+#     `update-baselines.yml` enforces on itself: "a run here must never touch
+#     the win32 baselines a developer captured on their own machine". A slice
+#     that moved both could not tell a genuine content change from a
+#     runner-image difference, which is the exact confusion that produced this
+#     debt.
+#   * `scripts/check-allowlist.sh` -- a gate that cannot maintain itself cannot
+#     be enforced at all, as every revision of this file has said.
 #
-# That ordering is the whole reason `series.test.ts` can be closed here without
-# reintroducing the contradiction: by the time this list is live, the file that
-# had to move has already moved, in a PR this list never judged.
+# `docs/**` is open. Recording what was found is not a lever on the finding.
+#
+# `.github/workflows/` is CLOSED here, unlike in every previous revision. The
+# workflow that captures these baselines is the instrument of this slice, and
+# the slice before this one established the rule the hard way: an instrument
+# may not be adjusted in the diff whose numbers it produces. If
+# `update-baselines.yml` turns out to need a change, that is a finding and a
+# separate PR.
+#
+# THE PNGs MUST COME FROM `update-baselines.yml`, not from a local run and not
+# from a container. This script cannot enforce that -- it sees which paths
+# moved, not where the bytes came from -- so it is stated here and belongs in
+# the PR description as evidence: the workflow run id that produced them.
+# Guessing at a matching local image is the ten-minute round trip that workflow
+# was written to abolish.
+#
+# ---------------------------------------------------------------------------
+# WHAT A REVIEWER MUST CHECK, BECAUSE THIS GATE CANNOT
+# ---------------------------------------------------------------------------
+#
+# This list proves the diff is PNGs and prose. It CANNOT prove the new PNGs are
+# right, and a green gate here must not be read as saying so. Two questions
+# stay human:
+#
+#   1. Does the diff look like the content change it should? Every `maxHp` rose
+#      in the retiarius-reach slice, so the planning screen's stat cards are
+#      expected to move. A diff that moved layout, fonts or colours instead is
+#      a different finding and a different slice.
+#   2. Is the season board the same story? It was not predicted, only observed.
 set -euo pipefail
 BASE="${1:?base sha required}"
-FORBIDDEN='^(src/simulation/|src/content/|src/presentation/|src/style\.css$|index\.html$|src/main\.ts$|src/testSupport/frozenFixtures/|tests/__screenshots__/|src/testSupport/balanceCohorts\.ts$|tests/legibility\.spec\.ts$|playwright\.config\.ts$)'
-# ONE EXEMPTION, and it is the slice's subject rather than an escape hatch.
-# `src/presentation/` is matched wholesale in FORBIDDEN (an enumeration of
-# filenames was reviewed and found incomplete in the previous list, and rots
-# whenever a module is added), so the camera METRIC being repaired has to be
-# named back out. Only the test: `ArenaCamera.ts` itself stays closed, which is
-# the point of the camera amendment this repair answers.
-EXEMPT='^src/presentation/ArenaCamera\.test\.ts$'
+FORBIDDEN='^(src/|scripts/|tests/|\.github/workflows/|index\.html$|playwright\.config\.ts$|package(-lock)?\.json$)'
+EXEMPT='^(tests/__screenshots__/linux/|scripts/check-allowlist\.sh$)'
 # Committed + staged + unstaged + untracked, and both sides of every rename.
 CHANGED="$( { git diff --name-status -z --find-renames "$BASE" HEAD; git diff --name-status -z --find-renames HEAD; git diff --name-status -z --find-renames --cached; } \
   | tr '\0' '\n' | grep -vE '^[A-Z][0-9]*$' | sort -u )"
