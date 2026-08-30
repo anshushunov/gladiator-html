@@ -110,29 +110,66 @@ export function isSuccess(episode: Readonly<DisengageEpisode>): boolean {
 }
 
 /**
+ * The three thresholds a reason is corroborated against. A PARAMETER since
+ * 2026-08-30, because `scripts/sweep-shove.ts` runs cells whose exit rule is
+ * not the shipped one, and corroborating a swept run against the shipped
+ * constants is the same class of error this whole file exists to prevent: at a
+ * cap of 40 a legitimate `cap` record reads as consistent for the wrong reason,
+ * and at a gain of 0.55 every legitimate `progress` record reads as a
+ * contradiction because 0.55 < 0.75.
+ *
+ * The corroboration rule is NOT the exit rule, and the difference is
+ * deliberate. `minGain` here defaults to `DISENGAGE_SUCCESS_GROUND`, the
+ * SUCCESS floor, not to whatever threshold a candidate exits on -- a sweep must
+ * pass the exit's own gain so that the check asks "did this episode do what its
+ * label claims", never "did this episode clear a bar the gate sets".
+ */
+export interface CorroborationRule {
+  endRange: number
+  maxTicks: number
+  minGain: number
+}
+
+/**
+ * The shipped constants, which is what every caller outside the sweep has
+ * always been checked against and still is. Naming them as a value changes no
+ * number: `corroborate(episode)` with no second argument is byte-identical to
+ * the two-constant version it replaces.
+ */
+export const SHIPPED_CORROBORATION_RULE: Readonly<CorroborationRule> = {
+  endRange: FAST_FORCED_DISENGAGE_END_RANGE,
+  maxTicks: FAST_FORCED_DISENGAGE_MAX_TICKS,
+  minGain: DISENGAGE_SUCCESS_GROUND,
+}
+
+/**
  * Checks a self-reported reason against the endpoints recorded beside it, and
  * returns a description of the contradiction, or `undefined` when the record is
  * consistent.
  *
- * `progress` is checked against `DISENGAGE_SUCCESS_GROUND` because that is what
- * the name asserts -- an exit taken on ground made. A candidate that reports
- * `progress` for an episode which opened less than the floor is making the
- * claim the label exists to make, and failing it.
+ * `progress` is checked against `rule.minGain` -- by default
+ * `DISENGAGE_SUCCESS_GROUND` -- because that is what the name asserts: an exit
+ * taken on ground made. A candidate that reports `progress` for an episode
+ * which opened less than the threshold it exits on is making the claim the
+ * label exists to make, and failing it.
  */
-export function corroborate(episode: Readonly<DisengageEpisode>): string | undefined {
+export function corroborate(
+  episode: Readonly<DisengageEpisode>,
+  rule: Readonly<CorroborationRule> = SHIPPED_CORROBORATION_RULE,
+): string | undefined {
   switch (episode.reason) {
     case 'range':
-      return episode.endSeparation >= FAST_FORCED_DISENGAGE_END_RANGE
+      return episode.endSeparation >= rule.endRange
         ? undefined
-        : `episode ${episode.actorId}@${episode.startTick} reports 'range' but ended at ${episode.endSeparation.toFixed(3)}, inside ${FAST_FORCED_DISENGAGE_END_RANGE}`
+        : `episode ${episode.actorId}@${episode.startTick} reports 'range' but ended at ${episode.endSeparation.toFixed(3)}, inside ${rule.endRange}`
     case 'progress':
-      return groundOpened(episode) >= DISENGAGE_SUCCESS_GROUND
+      return groundOpened(episode) >= rule.minGain
         ? undefined
-        : `episode ${episode.actorId}@${episode.startTick} reports 'progress' but opened ${groundOpened(episode).toFixed(3)}, below ${DISENGAGE_SUCCESS_GROUND}`
+        : `episode ${episode.actorId}@${episode.startTick} reports 'progress' but opened ${groundOpened(episode).toFixed(3)}, below ${rule.minGain}`
     case 'cap':
-      return episode.ticks >= FAST_FORCED_DISENGAGE_MAX_TICKS
+      return episode.ticks >= rule.maxTicks
         ? undefined
-        : `episode ${episode.actorId}@${episode.startTick} reports 'cap' after ${episode.ticks} ticks, below ${FAST_FORCED_DISENGAGE_MAX_TICKS}`
+        : `episode ${episode.actorId}@${episode.startTick} reports 'cap' after ${episode.ticks} ticks, below ${rule.maxTicks}`
     case 'censored':
       // The only reason with nothing to corroborate: it means the bout ended,
       // which the episode itself cannot evidence either way.

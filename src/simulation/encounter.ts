@@ -57,14 +57,16 @@ import {
   buildCombatDecisionContext,
   chooseCombatDecision,
   decisionIntervalTicks,
-  hasFastForcedDisengageEnded,
+  fastForcedDisengageExit,
   isDefenseReactionOpportunity,
   processDefenseBatch,
   resolveForcedParryCounterStart,
   retainTarget,
   scoreCombatCandidates,
+  SHIPPED_FAST_FORCED_DISENGAGE_RULE,
   TARGET_ACQUISITION_RADIUS,
   TARGET_RETENTION_RADIUS,
+  type FastForcedDisengageRule,
   type IncomingThreat,
 } from './combatDecision'
 import type { ContactCollector, ContactOutcome } from './contactDiagnostics'
@@ -214,6 +216,28 @@ export interface FighterCombatState {
    * not a persistent multi-tick state like this one.
    */
   forcedDisengageStartTick?: number
+  /**
+   * The root-to-root separation at the instant the disengage was stamped, read
+   * in phase 2 before that tick's movement -- the same instant the diagnostics
+   * seam records, so the number the exit predicate measures its gain against
+   * and the number a measurement reports as the episode's start are ONE number
+   * rather than two that happen to agree.
+   *
+   * WRITTEN ONLY UNDER A PURSUIT-RELATIVE RULE, and that is not an
+   * optimisation. `EncounterState.forcedDisengageRule` below is absent on every
+   * shipped path, so `minGain` is `Infinity`, so no gain is ever consulted and
+   * this field is never created. `stateHash.ts`'s `canonicalJson` walks
+   * `Object.entries`, and an explicitly-`undefined` key serialises as `null`
+   * and moves the digest -- so "the sweep changes no shipped state" has to mean
+   * the key is ABSENT, not merely undefined. It is, and every frozen
+   * determinism baseline is what proves it.
+   *
+   * Set and cleared together with `forcedDisengageStartTick` wherever it is
+   * used at all; `assertCombatantInvariants` checks the direction that holds in
+   * both modes (a separation without a tick is a stale number waiting to be
+   * picked up by the next episode, and is unreachable).
+   */
+  forcedDisengageStartSeparation?: number
 }
 
 export interface EncounterCombatantDefinition {
@@ -266,6 +290,25 @@ export interface EncounterState {
   randomByCombatant: Readonly<Record<CombatantId, CombatantRandomState>>
   nextEventId: number
   result?: Readonly<EncounterResult>
+  /**
+   * Which forced-disengage exit rule this encounter runs. **Absent on every
+   * shipped path**, and absent is not a shorthand for a default -- it is the
+   * statement that nothing outside a measurement has ever chosen a rule, so
+   * `SHIPPED_FAST_FORCED_DISENGAGE_RULE` is read at the one call site and the
+   * state carries nothing.
+   *
+   * Set only by `withForcedDisengageRule` below, which
+   * `scripts/sweep-shove.ts` applies to a freshly created state. It sits beside
+   * `combatStyles` for the same reason `combatStyles` is here: it is a run
+   * parameter the tick loop needs and cannot rediscover, and the alternative --
+   * a module-level mutable override in `combatDecision.ts` -- would make two
+   * concurrent encounters share one rule.
+   *
+   * `?` and never written as `undefined`: see
+   * `FighterCombatState.forcedDisengageStartSeparation` for why an
+   * explicitly-undefined key is not the same as an absent one here.
+   */
+  forcedDisengageRule?: Readonly<FastForcedDisengageRule>
 }
 
 export interface EncounterTransition {
@@ -658,6 +701,45 @@ export function createEncounter(config: EncounterConfig): EncounterTransition {
   return { state, events: [startedEvent] }
 }
 
+/**
+ * A copy of `state` running `rule` instead of the shipped forced-disengage
+ * exit. Returns `state` ITSELF, by reference, for the shipped rule -- so
+ * "applied the shipped rule" and "applied nothing" are the same state object,
+ * not two equal ones, and no caller can accidentally introduce a
+ * `forcedDisengageRule` key into a state a determinism baseline hashes.
+ *
+ * WHY THIS EXISTS AT ALL, rather than a field on `EncounterConfig`. The
+ * measurement that needs it (`scripts/sweep-shove.ts`) goes through
+ * `createBattle`, and `src/simulation/battle.ts` is closed to this slice by
+ * `scripts/check-allowlist.sh`, so there is no config path from the duel
+ * adapter down to `createEncounter`. Doing the substitution here, in the module
+ * that owns the state's shape and its invariants, is honest about that; leaving
+ * the script to spread a raw literal into a kernel state would not be.
+ *
+ * The rule is validated rather than trusted: a sweep cell that fails to parse
+ * its own grid must stop the run, not quietly measure a rule nobody chose.
+ */
+export function withForcedDisengageRule(state: EncounterState, rule: Readonly<FastForcedDisengageRule>): EncounterState {
+  if (!Number.isFinite(rule.endRange) || rule.endRange <= 0) {
+    throw new Error(`FastForcedDisengageRule endRange must be a positive finite number, got ${String(rule.endRange)}`)
+  }
+  if (!Number.isInteger(rule.maxTicks) || rule.maxTicks < 1) {
+    throw new Error(`FastForcedDisengageRule maxTicks must be a positive integer, got ${String(rule.maxTicks)}`)
+  }
+  // `Infinity` is the legal way to say "this rule has no gain clause", which is
+  // what ships; `NaN` and non-positive values are not, because a `minGain <= 0`
+  // exits on the stamp tick and makes the whole mechanic one tick long.
+  if (Number.isNaN(rule.minGain) || rule.minGain <= 0) {
+    throw new Error(`FastForcedDisengageRule minGain must be positive (or Infinity for no gain exit), got ${String(rule.minGain)}`)
+  }
+  if (rule.endRange === SHIPPED_FAST_FORCED_DISENGAGE_RULE.endRange
+    && rule.maxTicks === SHIPPED_FAST_FORCED_DISENGAGE_RULE.maxTicks
+    && rule.minGain === SHIPPED_FAST_FORCED_DISENGAGE_RULE.minGain) {
+    return state
+  }
+  return { ...state, forcedDisengageRule: rule }
+}
+
 // ---------------------------------------------------------------------------
 // Completion
 // ---------------------------------------------------------------------------
@@ -966,10 +1048,17 @@ function completeForcedStateTransitions(
   tick: number,
   cursor: EventIdCursor,
   disengageCollector?: DisengageCollector,
+  rule: Readonly<FastForcedDisengageRule> = SHIPPED_FAST_FORCED_DISENGAGE_RULE,
 ): { combatants: Record<CombatantId, FighterCombatState>; events: EncounterEvent[]; pendingDisengage: PendingDisengageSample[] } {
   const next: Record<CombatantId, FighterCombatState> = { ...combatants }
   const events: EncounterEvent[] = []
   const pendingDisengage: PendingDisengageSample[] = []
+  /**
+   * Whether the rule has a gain clause at all. False for everything that
+   * ships, and it is what keeps the shipped state shape untouched: the stamp
+   * separation below is neither computed nor stored when nothing will read it.
+   */
+  const tracksGain = Number.isFinite(rule.minGain)
 
   for (const id of combatantIds) {
     const previousCombatant = previousCombatants[id]
@@ -984,18 +1073,28 @@ function completeForcedStateTransitions(
 
     if (justEndedBurstLunge) {
       const forced = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
-      next[id] = { ...forced, forcedDisengageStartTick: tick }
       // Guarded, not merely short-circuited inside a helper. The stamp branch
       // never computed a distance before this seam existed, so doing it
       // unconditionally would add real work to the shipped runtime on every
       // lunge recovery -- raised in external review as the seam not being
-      // allocation-inert even though state and events were. Deferred onto
-      // `pendingDisengage` rather than recorded here, same as `held`/`cleared`
-      // below: this tick's own push (needed for `externalSeparationDelta`)
-      // is not known until phase 9.
+      // allocation-inert even though state and events were. `tracksGain` joins
+      // the guard rather than replacing it: a pursuit-relative rule needs the
+      // number whether or not anyone is watching, and a shipped run still needs
+      // it only when someone is.
+      let stampSeparation: number | undefined
+      let stampTarget: FighterCombatState | undefined
+      if (disengageCollector || tracksGain) {
+        stampTarget = phaseTwoTarget(combatant, combatants)
+        stampSeparation = separationTo(combatant, stampTarget)
+      }
+      next[id] = tracksGain
+        ? { ...forced, forcedDisengageStartTick: tick, forcedDisengageStartSeparation: stampSeparation }
+        : { ...forced, forcedDisengageStartTick: tick }
+      // Deferred onto `pendingDisengage` rather than recorded here, same as
+      // `held`/`cleared` below: this tick's own push (needed for
+      // `externalSeparationDelta`) is not known until phase 9.
       if (disengageCollector) {
-        const target = phaseTwoTarget(combatant, combatants)
-        pendingDisengage.push({ kind: 'stamped', tick, actorId: id, actor: combatant, target, separation: separationTo(combatant, target) })
+        pendingDisengage.push({ kind: 'stamped', tick, actorId: id, actor: combatant, target: stampTarget, separation: stampSeparation as number })
       }
       continue
     }
@@ -1015,9 +1114,18 @@ function completeForcedStateTransitions(
     // branch above: with no collector attached, nothing is pushed onto
     // `pendingDisengage` and `advanceEncounterTick` builds no sample from it
     // after phase 9 either.
-    const exit = hasFastForcedDisengageEnded(separation, ticksSinceForced)
+    // Ground opened on the episode's OWN start, which is what a
+    // pursuit-relative rule is measured against. `-Infinity` under the shipped
+    // rule (no start separation was stored, because nothing would read it), so
+    // the gain branch cannot fire -- see `NO_GROUND_OPENED` in
+    // `combatDecision.ts` for why the absent case is `-Infinity` and not `0`.
+    const groundOpenedSoFar =
+      combatant.forcedDisengageStartSeparation === undefined ? Number.NEGATIVE_INFINITY : separation - combatant.forcedDisengageStartSeparation
+    const exit = fastForcedDisengageExit(separation, ticksSinceForced, groundOpenedSoFar, rule)
     if (exit) {
-      next[id] = { ...combatant, forcedDisengageStartTick: undefined, nextDecisionTick: tick }
+      next[id] = tracksGain
+        ? { ...combatant, forcedDisengageStartTick: undefined, forcedDisengageStartSeparation: undefined, nextDecisionTick: tick }
+        : { ...combatant, forcedDisengageStartTick: undefined, nextDecisionTick: tick }
       if (disengageCollector) pendingDisengage.push({ kind: 'cleared', tick, actorId: id, actor: combatant, target, separation, reason: exit })
     } else {
       next[id] = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
@@ -2462,7 +2570,15 @@ export function advanceEncounterTick(
   combatants = cleanup.combatants
   events.push(...cleanup.events)
 
-  const forcedTransitions = completeForcedStateTransitions(previous.combatants, combatants, previous.combatantIds, tick, cursor, disengageCollector)
+  const forcedTransitions = completeForcedStateTransitions(
+    previous.combatants,
+    combatants,
+    previous.combatantIds,
+    tick,
+    cursor,
+    disengageCollector,
+    previous.forcedDisengageRule ?? SHIPPED_FAST_FORCED_DISENGAGE_RULE,
+  )
   combatants = forcedTransitions.combatants
   events.push(...forcedTransitions.events)
 
@@ -2684,6 +2800,34 @@ function assertCombatantInvariants(combatant: FighterCombatState, id: CombatantI
   requireFiniteInteger(combatant.lastResolutionTick, field('lastResolutionTick'))
   if (combatant.forcedDisengageStartTick !== undefined) {
     requireFiniteInteger(combatant.forcedDisengageStartTick, field('forcedDisengageStartTick'))
+  }
+
+  // ONE-DIRECTIONAL ON PURPOSE, and the direction is the one that holds under
+  // both rules. A start separation without a start tick is a stale number left
+  // to be picked up by the NEXT episode, which would silently make that
+  // episode's gain measure ground the fighter opened during a previous one --
+  // unreachable through `completeForcedStateTransitions`, which writes and
+  // clears both together, and checked here so that stays a property rather
+  // than a convention. The converse (a tick with no separation) is the SHIPPED
+  // state on every tick of every bout, because the shipped rule has no gain
+  // clause and therefore stores nothing to measure one against; asserting it
+  // would fail the whole existing suite.
+  if (combatant.forcedDisengageStartSeparation !== undefined) {
+    if (combatant.forcedDisengageStartTick === undefined) {
+      throw new Error(
+        `EncounterState ${field('forcedDisengageStartSeparation')} is set while ${field('forcedDisengageStartTick')} is not; ` +
+          'the disengage start separation would outlive its own episode',
+      )
+    }
+    // `NaN`, not `!isFinite`. `separationTo` returns `Infinity` with no target
+    // and its own header says so is deliberate -- a target can legitimately die
+    // or be dropped on the tick the stamp is taken, and raising on that would
+    // make the rule non-inert in exactly the case the seam was rewritten to
+    // tolerate. `NaN` is the value no arithmetic here can produce and every
+    // comparison silently swallows.
+    if (Number.isNaN(combatant.forcedDisengageStartSeparation)) {
+      throw new Error(`EncounterState ${field('forcedDisengageStartSeparation')} must not be NaN`)
+    }
   }
 
   requireFinite(combatant.travelledDistance, field('travelledDistance'))
