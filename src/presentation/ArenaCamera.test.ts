@@ -1032,8 +1032,38 @@ function unwrapAxisStep(angle: number, previous: number): number {
  * the lag bound below would restate the implementation instead of pinning it. */
 const YAW_DEAD_ZONE_DEGREES = 5
 
+/**
+ * `ArenaCamera.ts`'s `MAX_YAW_RADIANS` and `YAW_DAMPING_TIME_CONSTANT_SECONDS`,
+ * restated as literals for the same reason as `YAW_DEAD_ZONE_DEGREES` above:
+ * imported, the bound below would restate the implementation instead of
+ * pinning it.
+ */
+const MAX_YAW_DEGREES = 90
+const YAW_DAMPING_TIME_CONSTANT_SECONDS = 0.5
+
+/**
+ * THE CAMERA'S OWN PER-TICK YAW GUARANTEE, derived rather than measured.
+ *
+ * `update()` sets `state.yaw = approach(state.yaw, yawReference, tau, dt)`,
+ * i.e. `yaw + (reference - yaw) * (1 - exp(-dt/tau))`. Both operands are
+ * clamped into `[-MAX_YAW_RADIANS, +MAX_YAW_RADIANS]` -- the reference by
+ * `clamp(...)` where it is assigned, the output because it is a convex
+ * combination of two values already inside that interval -- so the gap can
+ * never exceed the interval's full width. The step is therefore bounded by
+ * `2 * MAX_YAW * (1 - exp(-dt/tau))`, whatever the fighters do.
+ *
+ * At the presentation clock's 1/60 s that is 180 deg * 0.032784 = 5.901 deg.
+ * It is a bound, not a fit: the worst step this suite actually measures is
+ * about a third of it, and `ArenaCamera.ts` quotes 1.85 deg from its own
+ * damping measurement. Asserting the measured figure with headroom would be a
+ * different test -- one that fails when a bout reshapes -- and this one is
+ * specifically meant not to be.
+ */
+const yawStepBound = (dtSeconds: number): number =>
+  2 * MAX_YAW_DEGREES * DEGREE * (1 - Math.exp(-dtSeconds / YAW_DAMPING_TIME_CONSTANT_SECONDS))
+
 describe('yaw continuity over real bouts', () => {
-  it('never turns the desired-yaw axis by more than 15 degrees in a tick, and never lags it by more than the dead zone, in any pairing', () => {
+  it("never steps the camera's own yaw past what its clamp and damping guarantee, and never lags the axis by more than the dead zone, in any pairing", () => {
     // Regression note 1: this used to assert on `camera.update(...).yaw`, the
     // damped, dead-zoned, clamped *output*. At any damping time constant of
     // more than a tick or two that output barely moves per tick no matter
@@ -1059,11 +1089,11 @@ describe('yaw continuity over real bouts', () => {
     //
     // Clamping the desired yaw's slew was the obvious fix and is the wrong
     // one: it would slow a legitimate 12.758-degree turn in order to hide
-    // 4.319 degrees of bookkeeping. What the bound wants is the two component
+    // 4.319 degrees of bookkeeping. So the bound was split into two component
     // properties, measured separately against the *actual* spread axis:
     //
     //   1. the axis itself never turns more than 15 degrees in a tick
-    //      (worst measured over all nine pairings at BASELINE_TEST_SEED:
+    //      (worst measured then, over all nine pairings at BASELINE_TEST_SEED:
     //      12.758 degrees, `brutus/drusus` tick 1468 -- three ticks exceed 10
     //      degrees, all of them a `heavy-cleave` push off the separation
     //      floor);
@@ -1072,19 +1102,62 @@ describe('yaw continuity over real bouts', () => {
     //      5 degrees, `aquila/cassius` tick 91 -- it saturates, as a dead zone
     //      should).
     //
-    // Together they bound `unwrappedYaw`'s per-tick step by 15 + 5 = 20
-    // degrees, which is the honest version of what the old assertion was
-    // reaching for. Neither is a restatement of the implementation: (1) is a
-    // property of the *fighters'* motion that the camera does not participate
-    // in, and (2) is checked against an axis chain unwrapped independently of
-    // the camera's own reference.
+    // Together they were said to bound `unwrappedYaw`'s per-tick step by
+    // 15 + 5 = 20 degrees.
+    //
+    // ---------------------------------------------------------------------
+    // Regression note 3 (2026-09-04, the shield-shove slice). PROPERTY 1 IS
+    // FALSE, AND WAS ALREADY FALSE BEFORE THIS SLICE. It is not the camera's
+    // property at all -- it is a claim about how fast two fighters can rotate
+    // about each other, which nothing in the simulation bounds. Measured
+    // during this slice's sweep over 1.45 MILLION ticks with the shove REMOVED
+    // and shipped `main`'s content otherwise intact, the pair axis turns
+    // **16.400 degrees in one tick** (`fast vs heavy`, seed 20260967, tick
+    // 936). This test's window is ~15 000 ticks at ONE seed -- three orders of
+    // magnitude short -- which is the entire reason it had never seen one.
+    // (In that slice's chosen build it climbed to 17.152 degrees, `fast vs
+    // heavy`, seed 20260927, tick 733. The sweep's control cells are the
+    // evidence that the shove SURFACED this rather than caused it:
+    // `docs/superpowers/plans/2026-08-29-shove-sweep.json`.)
+    //
+    // THE SHOVE WAS PARKED and this branch carries only the slice's
+    // instruments, so the 16.400-degree control-cell figure is not a
+    // measurement of some other build -- it is a measurement of THIS one, taken
+    // over 1.45 million ticks of exactly the content that ships here. The
+    // 17.152-degree row is the only figure above that belongs to a build no
+    // longer in the tree, and it is labelled as such.
+    //
+    // Raising 15 to 17, or to 20, would be fitting a number to the longest run
+    // anyone has done so far, and the next longer run would move it again. The
+    // design owner's ruling was instead to stop asserting the PREMISE and
+    // assert the CONCLUSION -- the thing the premise existed to protect, which
+    // is that the camera does not lurch:
+    //
+    //   1'. THE CAMERA'S OWN OUTPUT yaw never steps more than
+    //       `yawStepBound(dt)` in a tick. That is a real guarantee, derived
+    //       from `MAX_YAW_RADIANS` and `YAW_DAMPING_TIME_CONSTANT_SECONDS`
+    //       (see the constant above), and it holds no matter how violently
+    //       the fighters turn -- including at the 16.4 and 17.2 degree ticks
+    //       above, where the pair axis snaps and the camera does not.
+    //   2.  unchanged: the sticky reference never sits further behind the axis
+    //       than the dead zone it is allowed to hold inside. This one never
+    //       depended on the fighters' turn rate.
+    //
+    // The 15-degree figure survives as a REPORTED statistic, printed below.
+    // It is worth watching -- it is how the violation was eventually found --
+    // but it is a fact about the content, not a contract the camera offers,
+    // and a test is the wrong place to enforce it.
     //
     // The real unwrap regression guard stays where it always was: the
     // synthetic "stays continuous when the pair axis crosses the frame
     // vertical" test above. Real bouts do not reliably produce a crossing, so
     // they cannot be that guard -- what they can do, and what property 2 does,
-    // is prove the two chains never fall out of phase over 14 848 real ticks.
+    // is prove the two chains never fall out of phase over ~15 000 real ticks.
+    const DT_SECONDS = 1 / 60
+    const stepBound = yawStepBound(DT_SECONDS)
     let worstAxisStep = 0
+    let worstAxisStepAt = ''
+    let worstYawStep = 0
     let worstLag = 0
     let ticksMeasured = 0
 
@@ -1106,18 +1179,28 @@ describe('yaw continuity over real bouts', () => {
         // start in phase and any later divergence is the camera's, not an
         // artefact of picking a different pi-representative at tick 0.
         let desiredAxisYaw = unwrapAxisStep(-measureSpreadAxisAngle(opening), camera.unwrappedYaw)
+        let previousYaw = camera.state.yaw
         let ticks = 0
         while (battle.phase === 'running' && ticks < 3600) {
           battle = advanceBattleTick(battle)
           const targets = framing(battle)
-          camera.update(targets, 1 / 60)
+          const { yaw } = camera.update(targets, DT_SECONDS)
+
+          // Property 1': the camera's OWN output, against its OWN guarantee.
+          const yawStep = Math.abs(yaw - previousYaw)
+          expect(yawStep, `${home.id}/${away.id} tick ${ticks}`).toBeLessThanOrEqual(stepBound)
+          worstYawStep = Math.max(worstYawStep, yawStep)
+          previousYaw = yaw
 
           const previousAxisYaw = desiredAxisYaw
           desiredAxisYaw = unwrapAxisStep(-measureSpreadAxisAngle(targets), previousAxisYaw)
 
+          // REPORTED, NOT ASSERTED -- see regression note 3 above.
           const axisStep = Math.abs(desiredAxisYaw - previousAxisYaw)
-          expect(axisStep).toBeLessThan(15 * DEGREE)
-          worstAxisStep = Math.max(worstAxisStep, axisStep)
+          if (axisStep > worstAxisStep) {
+            worstAxisStep = axisStep
+            worstAxisStepAt = `${home.id}/${away.id} tick ${ticks}`
+          }
 
           // Unfolded on purpose: comparing `unwrappedYaw` against the chain's
           // representative rather than against "whichever representative is
@@ -1134,12 +1217,24 @@ describe('yaw continuity over real bouts', () => {
       }
     }
 
+    // The 15-degree figure, reported. It is the statistic that found the
+    // premise violation, so it stays visible in the run output even though it
+    // is no longer a contract; a reviewer comparing runs sees it move.
+    console.log(
+      `[camera yaw] pair-axis max step ${(worstAxisStep / DEGREE).toFixed(3)} deg (${worstAxisStepAt}), ` +
+      `camera yaw max step ${(worstYawStep / DEGREE).toFixed(3)} of ${(stepBound / DEGREE).toFixed(3)} deg guaranteed, ` +
+      `max reference lag ${(worstLag / DEGREE).toFixed(5)} of ${YAW_DEAD_ZONE_DEGREES} deg, over ${ticksMeasured} ticks`,
+    )
+
     // The bouts have to actually be long enough for either bound to mean
     // anything, and both have to be exercised rather than vacuously true: the
-    // dead zone is expected to saturate, and the axis is expected to get well
-    // past the sub-degree drift of a pair standing still.
+    // dead zone is expected to saturate, the axis is expected to get well past
+    // the sub-degree drift of a pair standing still, and the camera is
+    // expected to actually turn -- a camera frozen at yaw 0 would satisfy
+    // property 1' perfectly and show nothing.
     expect(ticksMeasured).toBeGreaterThan(10000)
     expect(worstAxisStep).toBeGreaterThan(5 * DEGREE)
+    expect(worstYawStep).toBeGreaterThan(0.5 * DEGREE)
     expect(worstLag).toBeGreaterThan(4.9 * DEGREE)
   })
 
