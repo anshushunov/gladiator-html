@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "models:build": "cmd /d /c \"\"C:/Program Files/Blender Foundation/Blender 5.2/blender.exe\" --background --python tools/blender/build_gladiators.py\"",
     "test": "vitest run --project fast",
     "test:watch": "vitest",
     "test:e2e": "playwright test --project fast",
