@@ -56,6 +56,24 @@
 #     and would not be safe by path alone.
 #   * `src/presentation/ArenaCamera.test.ts` — the yaw assertion re-expressed
 #     against the camera's own guarantee.
+#   * `scripts/measure-reach.ts` — ADDED 2026-09-04, during the review's fix
+#     wave, and the only exemption on this list that is not code. COMMENTS
+#     ONLY: the diff against BASE is 72 added lines, every one of them a `//`
+#     line, and the check below the list would not know that, so it is stated
+#     here where a reviewer can verify it with
+#     `git diff BASE..HEAD -- scripts/measure-reach.ts`.
+#
+#     The reason it has to be exempt at all: this branch moved gates P and Q
+#     from `groundOpened` to `voluntaryGroundOpened` in
+#     `src/testSupport/disengageGates.ts` (already exempt) and left the 0.75
+#     bar where it was. `measure-reach.ts` is those gates' SOLE consumer and
+#     was not told, so it carried stale recorded figures and printed a raw
+#     distribution a dozen lines above a table of voluntary ones. Leaving the
+#     only file that runs the changed gates silent about the change is a
+#     documentation defect this branch introduced, and fixing it cannot be
+#     deferred to a branch that does not also carry the change. It runs no
+#     bout in the suite -- `scripts/` is outside tsconfig's `include` and
+#     unreachable by Vitest -- so it cannot move a digest even in principle.
 #   * this file.
 #
 # `docs/**` is outside the forbidden set entirely, as always: documentation
@@ -130,7 +148,7 @@ set -euo pipefail
 BASE="${1:?base sha required}"
 
 FORBIDDEN='^(src/|scripts/|tests/|\.github/workflows/|index\.html$|playwright\.config\.ts$|vite\.config\.ts$|package(-lock)?\.json$)'
-EXEMPT='^(scripts/check-allowlist\.sh$|scripts/measure-distance\.ts$|src/simulation/encounter(\.test)?\.ts$|src/simulation/combatDecision\.ts$|src/simulation/contactDiagnostics\.ts$|src/simulation/disengageDiagnostics(\.test)?\.ts$|src/testSupport/disengageGates(\.test)?\.ts$|src/testSupport/shoveGates(\.test)?\.ts$|src/presentation/ArenaCamera\.test\.ts$)'
+EXEMPT='^(scripts/check-allowlist\.sh$|scripts/measure-distance\.ts$|scripts/measure-reach\.ts$|src/simulation/encounter(\.test)?\.ts$|src/simulation/combatDecision\.ts$|src/simulation/contactDiagnostics\.ts$|src/simulation/disengageDiagnostics(\.test)?\.ts$|src/testSupport/disengageGates(\.test)?\.ts$|src/testSupport/shoveGates(\.test)?\.ts$|src/presentation/ArenaCamera\.test\.ts$)'
 
 # Committed + staged + unstaged + untracked, and both sides of every rename.
 CHANGED="$( { git diff --name-status -z --find-renames "$BASE" HEAD; git diff --name-status -z --find-renames HEAD; git diff --name-status -z --find-renames --cached; } \
