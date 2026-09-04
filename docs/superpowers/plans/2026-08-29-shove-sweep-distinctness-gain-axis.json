@@ -1,0 +1,2146 @@
+{
+  "seeds": 20,
+  "grid": {
+    "push": [
+      0.5,
+      0.7,
+      0.9,
+      1.1,
+      1.3
+    ],
+    "gain": [
+      0.55,
+      0.7,
+      0.85,
+      1,
+      1.15
+    ],
+    "gainRuleMaxTicks": 40,
+    "shippedRuleMaxTicks": 37,
+    "endRange": 3.35
+  },
+  "cells": [
+    {
+      "rule": "gain",
+      "push": 0.9,
+      "gain": 0.55,
+      "maxTicks": 40,
+      "endRange": 3.35,
+      "caps": {
+        "thisCell": 40,
+        "gainRule": 40,
+        "shippedRule": 37
+      },
+      "perMatchup": [
+        {
+          "label": "heavy vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.45,
+          "engagedTicks": 11837,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 54,
+          "shoveContacts": 42,
+          "shoveMisses": 4,
+          "murmilloAttackStarts": 330,
+          "yawMaxDegrees": 0.8813969866605851
+        },
+        {
+          "label": "heavy vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 11783,
+          "lungeStartsPer1000EngagedTicksPerFighter": 4.667741661716032,
+          "voluntaryGroundShare": 0.7759964424464604,
+          "stats": {
+            "episodes": 50,
+            "successes": 0,
+            "successShare": 0,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": 0.5633333333333286,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 0,
+              "cap": 13,
+              "progress": 36,
+              "censored": 1
+            },
+            "decided": 49
+          },
+          "shoveStarts": 23,
+          "shoveContacts": 11,
+          "shoveMisses": 10,
+          "murmilloAttackStarts": 138,
+          "yawMaxDegrees": 14.573769633245469
+        },
+        {
+          "label": "heavy vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 14403,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 24,
+          "shoveContacts": 22,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 161,
+          "yawMaxDegrees": 12.202208411416587
+        },
+        {
+          "label": "fast vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 15393,
+          "lungeStartsPer1000EngagedTicksPerFighter": 3.8978756577665172,
+          "voluntaryGroundShare": 0.8462615895662634,
+          "stats": {
+            "episodes": 58,
+            "successes": 0,
+            "successShare": 0,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": 0.5633333333333255,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 0,
+              "cap": 14,
+              "progress": 44,
+              "censored": 0
+            },
+            "decided": 58
+          },
+          "shoveStarts": 28,
+          "shoveContacts": 11,
+          "shoveMisses": 15,
+          "murmilloAttackStarts": 172,
+          "yawMaxDegrees": 16.864376752186306
+        },
+        {
+          "label": "fast vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 10162,
+          "lungeStartsPer1000EngagedTicksPerFighter": 6.3963786656170045,
+          "voluntaryGroundShare": 0.8869630037955903,
+          "stats": {
+            "episodes": 104,
+            "successes": 0,
+            "successShare": 0,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": 0.5617222222222251,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": 0.039603960396039604,
+            "byReason": {
+              "range": 15,
+              "cap": 8,
+              "progress": 78,
+              "censored": 3
+            },
+            "decided": 101
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 9.876219201702526
+        },
+        {
+          "label": "fast vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.65,
+          "engagedTicks": 9258,
+          "lungeStartsPer1000EngagedTicksPerFighter": 6.480881399870382,
+          "voluntaryGroundShare": 0.8500011507806928,
+          "stats": {
+            "episodes": 34,
+            "successes": 0,
+            "successShare": 0,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": 0.5750146803698386,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 1,
+              "cap": 0,
+              "progress": 32,
+              "censored": 1
+            },
+            "decided": 33
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 5.959875803670476
+        },
+        {
+          "label": "technical vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.75,
+          "engagedTicks": 12699,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 25,
+          "shoveContacts": 19,
+          "shoveMisses": 2,
+          "murmilloAttackStarts": 149,
+          "yawMaxDegrees": 16.780241667518236
+        },
+        {
+          "label": "technical vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.3,
+          "engagedTicks": 8640,
+          "lungeStartsPer1000EngagedTicksPerFighter": 7.870370370370369,
+          "voluntaryGroundShare": 0.8320170122898857,
+          "stats": {
+            "episodes": 31,
+            "successes": 0,
+            "successShare": 0,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": 0.5666666666666682,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 31,
+              "censored": 0
+            },
+            "decided": 31
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 7.1339168483538185
+        },
+        {
+          "label": "technical vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.55,
+          "engagedTicks": 9887,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 2.0781373662211378
+        }
+      ],
+      "gateW": {
+        "summary": {
+          "shoveStarts": 154,
+          "shoveContacts": 105,
+          "boutsWithAShove": 13,
+          "bouts": 20,
+          "murmilloAttackDecisions": 950,
+          "shoveDecisions": 154,
+          "recoveryWindowContactsPerShove": 0.2857142857142857,
+          "recoveryWindowContactsPerJab": 0.013937282229965157,
+          "jabContacts": 287
+        },
+        "pass": true,
+        "failures": [],
+        "boutsSource": "heavy vs fast"
+      },
+      "gatesPQ": {
+        "failures": [
+          "P1: fast vs heavy success share 0.0% below 25.0%",
+          "P1: heavy vs fast success share 0.0% below 25.0%",
+          "P3: comparator fast vs technical success share 0.0% below its floor 20.8%",
+          "P3: comparator technical vs fast success share 0.0% below its floor 23.7%",
+          "P3: comparator fast vs fast success share 0.0% below its floor 34.0%",
+          "Q: fast vs heavy median voluntary ground over all decided episodes 0.56 below 0.75",
+          "Q: heavy vs fast median voluntary ground over all decided episodes 0.56 below 0.75",
+          "T: heavy vs fast advantaged win rate 40.0% outside 55.0%..75.0%",
+          "T: fast vs heavy wins 40.0% as home, not less than heavy vs fast's 40.0%",
+          "T: fast mirror win rate 40.0% outside 45.0%..55.0%"
+        ],
+        "byGate": {
+          "P": [
+            "P1: fast vs heavy success share 0.0% below 25.0%",
+            "P1: heavy vs fast success share 0.0% below 25.0%",
+            "P3: comparator fast vs technical success share 0.0% below its floor 20.8%",
+            "P3: comparator technical vs fast success share 0.0% below its floor 23.7%",
+            "P3: comparator fast vs fast success share 0.0% below its floor 34.0%"
+          ],
+          "Q": [
+            "Q: fast vs heavy median voluntary ground over all decided episodes 0.56 below 0.75",
+            "Q: heavy vs fast median voluntary ground over all decided episodes 0.56 below 0.75"
+          ],
+          "Q2": [],
+          "R": [],
+          "V": [],
+          "T": [
+            "T: heavy vs fast advantaged win rate 40.0% outside 55.0%..75.0%",
+            "T: fast vs heavy wins 40.0% as home, not less than heavy vs fast's 40.0%",
+            "T: fast mirror win rate 40.0% outside 45.0%..55.0%"
+          ]
+        }
+      },
+      "winRates": {
+        "heavy vs heavy": 0.45,
+        "heavy vs fast": 0.4,
+        "heavy vs technical": 0.4,
+        "fast vs heavy": 0.4,
+        "fast vs fast": 0.4,
+        "fast vs technical": 0.65,
+        "technical vs heavy": 0.75,
+        "technical vs fast": 0.3,
+        "technical vs technical": 0.55
+      },
+      "yaw": {
+        "degrees": 16.864376752186306,
+        "matchup": "fast vs heavy",
+        "seed": 20260832,
+        "tick": 1219,
+        "bound": 15,
+        "exceeded": true,
+        "ticks": 149897
+      },
+      "contradictions": [],
+      "unmeasurableDisengages": 0,
+      "elapsedMs": 2970
+    },
+    {
+      "rule": "gain",
+      "push": 0.9,
+      "gain": 0.7,
+      "maxTicks": 40,
+      "endRange": 3.35,
+      "caps": {
+        "thisCell": 40,
+        "gainRule": 40,
+        "shippedRule": 37
+      },
+      "perMatchup": [
+        {
+          "label": "heavy vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.45,
+          "engagedTicks": 11837,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 54,
+          "shoveContacts": 42,
+          "shoveMisses": 4,
+          "murmilloAttackStarts": 330,
+          "yawMaxDegrees": 0.8813969866605851
+        },
+        {
+          "label": "heavy vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.55,
+          "engagedTicks": 14478,
+          "lungeStartsPer1000EngagedTicksPerFighter": 4.213289128332643,
+          "voluntaryGroundShare": 0.8423499717115063,
+          "stats": {
+            "episodes": 57,
+            "successes": 1,
+            "successShare": 0.017543859649122806,
+            "groundMedianSuccesses": 0.7904365654096821,
+            "groundMedianDecided": 0.7037904240001083,
+            "durationMedianSuccesses": 7,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 1,
+              "cap": 23,
+              "progress": 31,
+              "censored": 2
+            },
+            "decided": 55
+          },
+          "shoveStarts": 32,
+          "shoveContacts": 17,
+          "shoveMisses": 13,
+          "murmilloAttackStarts": 156,
+          "yawMaxDegrees": 16.86439325989445
+        },
+        {
+          "label": "heavy vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 14403,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 24,
+          "shoveContacts": 22,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 161,
+          "yawMaxDegrees": 12.202208411416587
+        },
+        {
+          "label": "fast vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 14809,
+          "lungeStartsPer1000EngagedTicksPerFighter": 3.44385171179688,
+          "voluntaryGroundShare": 0.777328214162436,
+          "stats": {
+            "episodes": 50,
+            "successes": 0,
+            "successShare": 0,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": 0.6792988637950456,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 1,
+              "cap": 19,
+              "progress": 28,
+              "censored": 2
+            },
+            "decided": 48
+          },
+          "shoveStarts": 30,
+          "shoveContacts": 14,
+          "shoveMisses": 12,
+          "murmilloAttackStarts": 164,
+          "yawMaxDegrees": 15.076194746978327
+        },
+        {
+          "label": "fast vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.45,
+          "engagedTicks": 8926,
+          "lungeStartsPer1000EngagedTicksPerFighter": 6.553887519605646,
+          "voluntaryGroundShare": 0.8792003676961666,
+          "stats": {
+            "episodes": 88,
+            "successes": 6,
+            "successShare": 0.06818181818181818,
+            "groundMedianSuccesses": 0.7602500000000001,
+            "groundMedianDecided": 0.6750000000000003,
+            "durationMedianSuccesses": 20,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0.03614457831325301,
+            "byReason": {
+              "range": 22,
+              "cap": 11,
+              "progress": 50,
+              "censored": 5
+            },
+            "decided": 83
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 8.699681270368254
+        },
+        {
+          "label": "fast vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.7,
+          "engagedTicks": 8598,
+          "lungeStartsPer1000EngagedTicksPerFighter": 6.978367062107467,
+          "voluntaryGroundShare": 0.843231693185894,
+          "stats": {
+            "episodes": 34,
+            "successes": 0,
+            "successShare": 0,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": 0.710223549906527,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 4,
+              "cap": 2,
+              "progress": 27,
+              "censored": 1
+            },
+            "decided": 33
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 6.976089780609761
+        },
+        {
+          "label": "technical vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.75,
+          "engagedTicks": 12699,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 25,
+          "shoveContacts": 19,
+          "shoveMisses": 2,
+          "murmilloAttackStarts": 149,
+          "yawMaxDegrees": 16.780241667518236
+        },
+        {
+          "label": "technical vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.35,
+          "engagedTicks": 9098,
+          "lungeStartsPer1000EngagedTicksPerFighter": 7.474170147285117,
+          "voluntaryGroundShare": 0.8234979453480651,
+          "stats": {
+            "episodes": 34,
+            "successes": 2,
+            "successShare": 0.058823529411764705,
+            "groundMedianSuccesses": 0.7693576061007146,
+            "groundMedianDecided": 0.7050569848966686,
+            "durationMedianSuccesses": 8,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 2,
+              "cap": 2,
+              "progress": 30,
+              "censored": 0
+            },
+            "decided": 34
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 7.133916848353825
+        },
+        {
+          "label": "technical vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.55,
+          "engagedTicks": 9887,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 2.0781373662211378
+        }
+      ],
+      "gateW": {
+        "summary": {
+          "shoveStarts": 165,
+          "shoveContacts": 114,
+          "boutsWithAShove": 15,
+          "bouts": 20,
+          "murmilloAttackDecisions": 960,
+          "shoveDecisions": 165,
+          "recoveryWindowContactsPerShove": 0.2982456140350877,
+          "recoveryWindowContactsPerJab": 0.013559322033898305,
+          "jabContacts": 295
+        },
+        "pass": true,
+        "failures": [],
+        "boutsSource": "heavy vs fast"
+      },
+      "gatesPQ": {
+        "failures": [
+          "P1: fast vs heavy success share 0.0% below 25.0%",
+          "P1: heavy vs fast success share 1.8% below 25.0%",
+          "P3: comparator fast vs technical success share 0.0% below its floor 20.8%",
+          "P3: comparator technical vs fast success share 5.9% below its floor 23.7%",
+          "P3: comparator fast vs fast success share 6.8% below its floor 34.0%",
+          "Q: fast vs heavy median voluntary ground over all decided episodes 0.68 below 0.75",
+          "Q: heavy vs fast median voluntary ground over all decided episodes 0.70 below 0.75",
+          "Q2: heavy vs fast median successful episode 7 ticks below 8",
+          "V: fast vs heavy lunge starts 3.44 per 1000 engaged ticks per fighter, below 3.55"
+        ],
+        "byGate": {
+          "P": [
+            "P1: fast vs heavy success share 0.0% below 25.0%",
+            "P1: heavy vs fast success share 1.8% below 25.0%",
+            "P3: comparator fast vs technical success share 0.0% below its floor 20.8%",
+            "P3: comparator technical vs fast success share 5.9% below its floor 23.7%",
+            "P3: comparator fast vs fast success share 6.8% below its floor 34.0%"
+          ],
+          "Q": [
+            "Q: fast vs heavy median voluntary ground over all decided episodes 0.68 below 0.75",
+            "Q: heavy vs fast median voluntary ground over all decided episodes 0.70 below 0.75"
+          ],
+          "Q2": [
+            "Q2: heavy vs fast median successful episode 7 ticks below 8"
+          ],
+          "R": [],
+          "V": [
+            "V: fast vs heavy lunge starts 3.44 per 1000 engaged ticks per fighter, below 3.55"
+          ],
+          "T": []
+        }
+      },
+      "winRates": {
+        "heavy vs heavy": 0.45,
+        "heavy vs fast": 0.55,
+        "heavy vs technical": 0.4,
+        "fast vs heavy": 0.4,
+        "fast vs fast": 0.45,
+        "fast vs technical": 0.7,
+        "technical vs heavy": 0.75,
+        "technical vs fast": 0.35,
+        "technical vs technical": 0.55
+      },
+      "yaw": {
+        "degrees": 16.86439325989445,
+        "matchup": "heavy vs fast",
+        "seed": 20260828,
+        "tick": 727,
+        "bound": 15,
+        "exceeded": true,
+        "ticks": 150570
+      },
+      "contradictions": [],
+      "unmeasurableDisengages": 0,
+      "elapsedMs": 4114
+    },
+    {
+      "rule": "gain",
+      "push": 0.9,
+      "gain": 0.85,
+      "maxTicks": 40,
+      "endRange": 3.35,
+      "caps": {
+        "thisCell": 40,
+        "gainRule": 40,
+        "shippedRule": 37
+      },
+      "perMatchup": [
+        {
+          "label": "heavy vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.45,
+          "engagedTicks": 11837,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 54,
+          "shoveContacts": 42,
+          "shoveMisses": 4,
+          "murmilloAttackStarts": 330,
+          "yawMaxDegrees": 0.8813969866605851
+        },
+        {
+          "label": "heavy vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.6,
+          "engagedTicks": 14562,
+          "lungeStartsPer1000EngagedTicksPerFighter": 3.6396099436890537,
+          "voluntaryGroundShare": 0.8725813702098749,
+          "stats": {
+            "episodes": 50,
+            "successes": 22,
+            "successShare": 0.44,
+            "groundMedianSuccesses": 0.8586120651295839,
+            "groundMedianDecided": 0.7149999999999888,
+            "durationMedianSuccesses": 30,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 1,
+              "cap": 24,
+              "progress": 24,
+              "censored": 1
+            },
+            "decided": 49
+          },
+          "shoveStarts": 33,
+          "shoveContacts": 20,
+          "shoveMisses": 10,
+          "murmilloAttackStarts": 163,
+          "yawMaxDegrees": 16.77254650194075
+        },
+        {
+          "label": "heavy vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 14403,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 24,
+          "shoveContacts": 22,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 161,
+          "yawMaxDegrees": 12.202208411416587
+        },
+        {
+          "label": "fast vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.35,
+          "engagedTicks": 15342,
+          "lungeStartsPer1000EngagedTicksPerFighter": 3.5197497066875245,
+          "voluntaryGroundShare": 0.7658614020801932,
+          "stats": {
+            "episodes": 52,
+            "successes": 22,
+            "successShare": 0.4230769230769231,
+            "groundMedianSuccesses": 0.8644413882166395,
+            "groundMedianDecided": 0.7257601764274246,
+            "durationMedianSuccesses": 26,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 3,
+              "cap": 22,
+              "progress": 25,
+              "censored": 2
+            },
+            "decided": 50
+          },
+          "shoveStarts": 28,
+          "shoveContacts": 13,
+          "shoveMisses": 12,
+          "murmilloAttackStarts": 174,
+          "yawMaxDegrees": 15.076194746978327
+        },
+        {
+          "label": "fast vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.45,
+          "engagedTicks": 9171,
+          "lungeStartsPer1000EngagedTicksPerFighter": 6.051684658161596,
+          "voluntaryGroundShare": 0.9045371700353495,
+          "stats": {
+            "episodes": 82,
+            "successes": 37,
+            "successShare": 0.45121951219512196,
+            "groundMedianSuccesses": 0.8683333333333352,
+            "groundMedianDecided": 0.7232597808362491,
+            "durationMedianSuccesses": 16,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0.05128205128205128,
+            "byReason": {
+              "range": 30,
+              "cap": 11,
+              "progress": 37,
+              "censored": 4
+            },
+            "decided": 78
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 8.699681270368254
+        },
+        {
+          "label": "fast vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.65,
+          "engagedTicks": 9280,
+          "lungeStartsPer1000EngagedTicksPerFighter": 7.219827586206896,
+          "voluntaryGroundShare": 0.8799235460324422,
+          "stats": {
+            "episodes": 41,
+            "successes": 24,
+            "successShare": 0.5853658536585366,
+            "groundMedianSuccesses": 0.8572047629759039,
+            "groundMedianDecided": 0.8519894034555804,
+            "durationMedianSuccesses": 21,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 4,
+              "cap": 6,
+              "progress": 30,
+              "censored": 1
+            },
+            "decided": 40
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 6.924451709997709
+        },
+        {
+          "label": "technical vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.75,
+          "engagedTicks": 12699,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 25,
+          "shoveContacts": 19,
+          "shoveMisses": 2,
+          "murmilloAttackStarts": 149,
+          "yawMaxDegrees": 16.780241667518236
+        },
+        {
+          "label": "technical vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.45,
+          "engagedTicks": 9117,
+          "lungeStartsPer1000EngagedTicksPerFighter": 6.80048261489525,
+          "voluntaryGroundShare": 0.7390765840968332,
+          "stats": {
+            "episodes": 32,
+            "successes": 14,
+            "successShare": 0.4375,
+            "groundMedianSuccesses": 0.856821839307921,
+            "groundMedianDecided": 0.611666666666669,
+            "durationMedianSuccesses": 19,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 5,
+              "cap": 5,
+              "progress": 21,
+              "censored": 1
+            },
+            "decided": 31
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 6.437753442877788
+        },
+        {
+          "label": "technical vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.55,
+          "engagedTicks": 9887,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 2.0781373662211378
+        }
+      ],
+      "gateW": {
+        "summary": {
+          "shoveStarts": 164,
+          "shoveContacts": 116,
+          "boutsWithAShove": 14,
+          "bouts": 20,
+          "murmilloAttackDecisions": 977,
+          "shoveDecisions": 164,
+          "recoveryWindowContactsPerShove": 0.27586206896551724,
+          "recoveryWindowContactsPerJab": 0.013651877133105802,
+          "jabContacts": 293
+        },
+        "pass": true,
+        "failures": [],
+        "boutsSource": "heavy vs fast"
+      },
+      "gatesPQ": {
+        "failures": [
+          "Q: fast vs heavy median voluntary ground over all decided episodes 0.73 below 0.75",
+          "Q: heavy vs fast median voluntary ground over all decided episodes 0.71 below 0.75",
+          "V: fast vs heavy lunge starts 3.52 per 1000 engaged ticks per fighter, below 3.55"
+        ],
+        "byGate": {
+          "P": [],
+          "Q": [
+            "Q: fast vs heavy median voluntary ground over all decided episodes 0.73 below 0.75",
+            "Q: heavy vs fast median voluntary ground over all decided episodes 0.71 below 0.75"
+          ],
+          "Q2": [],
+          "R": [],
+          "V": [
+            "V: fast vs heavy lunge starts 3.52 per 1000 engaged ticks per fighter, below 3.55"
+          ],
+          "T": []
+        }
+      },
+      "winRates": {
+        "heavy vs heavy": 0.45,
+        "heavy vs fast": 0.6,
+        "heavy vs technical": 0.4,
+        "fast vs heavy": 0.35,
+        "fast vs fast": 0.45,
+        "fast vs technical": 0.65,
+        "technical vs heavy": 0.75,
+        "technical vs fast": 0.45,
+        "technical vs technical": 0.55
+      },
+      "yaw": {
+        "degrees": 16.780241667518236,
+        "matchup": "technical vs heavy",
+        "seed": 20260827,
+        "tick": 298,
+        "bound": 15,
+        "exceeded": true,
+        "ticks": 152133
+      },
+      "contradictions": [],
+      "unmeasurableDisengages": 0,
+      "elapsedMs": 4199
+    },
+    {
+      "rule": "gain",
+      "push": 0.9,
+      "gain": 1,
+      "maxTicks": 40,
+      "endRange": 3.35,
+      "caps": {
+        "thisCell": 40,
+        "gainRule": 40,
+        "shippedRule": 37
+      },
+      "perMatchup": [
+        {
+          "label": "heavy vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.45,
+          "engagedTicks": 11837,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 54,
+          "shoveContacts": 42,
+          "shoveMisses": 4,
+          "murmilloAttackStarts": 330,
+          "yawMaxDegrees": 0.8813969866605851
+        },
+        {
+          "label": "heavy vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.55,
+          "engagedTicks": 14973,
+          "lungeStartsPer1000EngagedTicksPerFighter": 3.6732785680892275,
+          "voluntaryGroundShare": 0.78560772695957,
+          "stats": {
+            "episodes": 53,
+            "successes": 12,
+            "successShare": 0.22641509433962265,
+            "groundMedianSuccesses": 1.0187586549972978,
+            "groundMedianDecided": 0.5858321717460633,
+            "durationMedianSuccesses": 28,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 2,
+              "cap": 37,
+              "progress": 12,
+              "censored": 2
+            },
+            "decided": 51
+          },
+          "shoveStarts": 34,
+          "shoveContacts": 19,
+          "shoveMisses": 13,
+          "murmilloAttackStarts": 158,
+          "yawMaxDegrees": 15.631510608560486
+        },
+        {
+          "label": "heavy vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 14403,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 24,
+          "shoveContacts": 22,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 161,
+          "yawMaxDegrees": 12.202208411416587
+        },
+        {
+          "label": "fast vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.3,
+          "engagedTicks": 15759,
+          "lungeStartsPer1000EngagedTicksPerFighter": 3.3631575607589315,
+          "voluntaryGroundShare": 0.7785254029646285,
+          "stats": {
+            "episodes": 52,
+            "successes": 13,
+            "successShare": 0.25,
+            "groundMedianSuccesses": 1.0206666666666642,
+            "groundMedianDecided": 0.6792988637950456,
+            "durationMedianSuccesses": 27,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 2,
+              "cap": 32,
+              "progress": 17,
+              "censored": 1
+            },
+            "decided": 51
+          },
+          "shoveStarts": 31,
+          "shoveContacts": 16,
+          "shoveMisses": 14,
+          "murmilloAttackStarts": 175,
+          "yawMaxDegrees": 16.77254650194075
+        },
+        {
+          "label": "fast vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.35,
+          "engagedTicks": 9064,
+          "lungeStartsPer1000EngagedTicksPerFighter": 6.2334510150044125,
+          "voluntaryGroundShare": 0.90731343578488,
+          "stats": {
+            "episodes": 84,
+            "successes": 41,
+            "successShare": 0.4880952380952381,
+            "groundMedianSuccesses": 1.0116666666666678,
+            "groundMedianDecided": 0.7649999999999988,
+            "durationMedianSuccesses": 20,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0.07228915662650602,
+            "byReason": {
+              "range": 30,
+              "cap": 16,
+              "progress": 37,
+              "censored": 1
+            },
+            "decided": 83
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 8.699681270368254
+        },
+        {
+          "label": "fast vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.7,
+          "engagedTicks": 8798,
+          "lungeStartsPer1000EngagedTicksPerFighter": 6.706069561263924,
+          "voluntaryGroundShare": 0.8333625025874241,
+          "stats": {
+            "episodes": 41,
+            "successes": 19,
+            "successShare": 0.4634146341463415,
+            "groundMedianSuccesses": 1.0323393329266664,
+            "groundMedianDecided": 0.9350809963830686,
+            "durationMedianSuccesses": 24,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 3,
+              "cap": 14,
+              "progress": 22,
+              "censored": 2
+            },
+            "decided": 39
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 6.283432584519679
+        },
+        {
+          "label": "technical vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.75,
+          "engagedTicks": 12699,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 25,
+          "shoveContacts": 19,
+          "shoveMisses": 2,
+          "murmilloAttackStarts": 149,
+          "yawMaxDegrees": 16.780241667518236
+        },
+        {
+          "label": "technical vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 8820,
+          "lungeStartsPer1000EngagedTicksPerFighter": 7.029478458049887,
+          "voluntaryGroundShare": 0.76626479435238,
+          "stats": {
+            "episodes": 30,
+            "successes": 12,
+            "successShare": 0.4,
+            "groundMedianSuccesses": 1.0028535539184316,
+            "groundMedianDecided": 0.7226555430354863,
+            "durationMedianSuccesses": 23,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 6,
+              "cap": 7,
+              "progress": 17,
+              "censored": 0
+            },
+            "decided": 30
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 5.8187476188132505
+        },
+        {
+          "label": "technical vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.55,
+          "engagedTicks": 9887,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 2.0781373662211378
+        }
+      ],
+      "gateW": {
+        "summary": {
+          "shoveStarts": 168,
+          "shoveContacts": 118,
+          "boutsWithAShove": 14,
+          "bouts": 20,
+          "murmilloAttackDecisions": 973,
+          "shoveDecisions": 168,
+          "recoveryWindowContactsPerShove": 0.288135593220339,
+          "recoveryWindowContactsPerJab": 0.0136986301369863,
+          "jabContacts": 292
+        },
+        "pass": true,
+        "failures": [],
+        "boutsSource": "heavy vs fast"
+      },
+      "gatesPQ": {
+        "failures": [
+          "P1: heavy vs fast success share 22.6% below 25.0%",
+          "Q: fast vs heavy median voluntary ground over all decided episodes 0.68 below 0.75",
+          "Q: heavy vs fast median voluntary ground over all decided episodes 0.59 below 0.75",
+          "V: fast vs heavy lunge starts 3.36 per 1000 engaged ticks per fighter, below 3.55",
+          "T: fast mirror win rate 35.0% outside 45.0%..55.0%"
+        ],
+        "byGate": {
+          "P": [
+            "P1: heavy vs fast success share 22.6% below 25.0%"
+          ],
+          "Q": [
+            "Q: fast vs heavy median voluntary ground over all decided episodes 0.68 below 0.75",
+            "Q: heavy vs fast median voluntary ground over all decided episodes 0.59 below 0.75"
+          ],
+          "Q2": [],
+          "R": [],
+          "V": [
+            "V: fast vs heavy lunge starts 3.36 per 1000 engaged ticks per fighter, below 3.55"
+          ],
+          "T": [
+            "T: fast mirror win rate 35.0% outside 45.0%..55.0%"
+          ]
+        }
+      },
+      "winRates": {
+        "heavy vs heavy": 0.45,
+        "heavy vs fast": 0.55,
+        "heavy vs technical": 0.4,
+        "fast vs heavy": 0.3,
+        "fast vs fast": 0.35,
+        "fast vs technical": 0.7,
+        "technical vs heavy": 0.75,
+        "technical vs fast": 0.4,
+        "technical vs technical": 0.55
+      },
+      "yaw": {
+        "degrees": 16.780241667518236,
+        "matchup": "technical vs heavy",
+        "seed": 20260827,
+        "tick": 298,
+        "bound": 15,
+        "exceeded": true,
+        "ticks": 152075
+      },
+      "contradictions": [],
+      "unmeasurableDisengages": 0,
+      "elapsedMs": 5037
+    },
+    {
+      "rule": "gain",
+      "push": 0.9,
+      "gain": 1.15,
+      "maxTicks": 40,
+      "endRange": 3.35,
+      "caps": {
+        "thisCell": 40,
+        "gainRule": 40,
+        "shippedRule": 37
+      },
+      "perMatchup": [
+        {
+          "label": "heavy vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.45,
+          "engagedTicks": 11837,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 54,
+          "shoveContacts": 42,
+          "shoveMisses": 4,
+          "murmilloAttackStarts": 330,
+          "yawMaxDegrees": 0.8813969866605851
+        },
+        {
+          "label": "heavy vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.6,
+          "engagedTicks": 13959,
+          "lungeStartsPer1000EngagedTicksPerFighter": 4.011748692599756,
+          "voluntaryGroundShare": 0.7826787599281962,
+          "stats": {
+            "episodes": 55,
+            "successes": 9,
+            "successShare": 0.16363636363636364,
+            "groundMedianSuccesses": 1.159166666666667,
+            "groundMedianDecided": 0.5165157034852768,
+            "durationMedianSuccesses": 33,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 3,
+              "cap": 41,
+              "progress": 8,
+              "censored": 3
+            },
+            "decided": 52
+          },
+          "shoveStarts": 29,
+          "shoveContacts": 13,
+          "shoveMisses": 13,
+          "murmilloAttackStarts": 151,
+          "yawMaxDegrees": 15.631510608560486
+        },
+        {
+          "label": "heavy vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 14403,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 24,
+          "shoveContacts": 22,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 161,
+          "yawMaxDegrees": 12.202208411416587
+        },
+        {
+          "label": "fast vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.2,
+          "engagedTicks": 14656,
+          "lungeStartsPer1000EngagedTicksPerFighter": 3.206877729257642,
+          "voluntaryGroundShare": 0.7912650920830544,
+          "stats": {
+            "episodes": 48,
+            "successes": 10,
+            "successShare": 0.20833333333333334,
+            "groundMedianSuccesses": 1.1683333333333366,
+            "groundMedianDecided": 0.7257601764274246,
+            "durationMedianSuccesses": 34,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 2,
+              "cap": 31,
+              "progress": 12,
+              "censored": 3
+            },
+            "decided": 45
+          },
+          "shoveStarts": 29,
+          "shoveContacts": 17,
+          "shoveMisses": 11,
+          "murmilloAttackStarts": 170,
+          "yawMaxDegrees": 16.77254650194075
+        },
+        {
+          "label": "fast vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 9063,
+          "lungeStartsPer1000EngagedTicksPerFighter": 5.958291956305859,
+          "voluntaryGroundShare": 0.924141215585518,
+          "stats": {
+            "episodes": 91,
+            "successes": 46,
+            "successShare": 0.5054945054945055,
+            "groundMedianSuccesses": 1.0799999999999992,
+            "groundMedianDecided": 0.765928691575132,
+            "durationMedianSuccesses": 24,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0.09090909090909091,
+            "byReason": {
+              "range": 41,
+              "cap": 18,
+              "progress": 29,
+              "censored": 3
+            },
+            "decided": 88
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 8.699681270368254
+        },
+        {
+          "label": "fast vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.55,
+          "engagedTicks": 10085,
+          "lungeStartsPer1000EngagedTicksPerFighter": 6.346058502726822,
+          "voluntaryGroundShare": 0.8985612088880219,
+          "stats": {
+            "episodes": 44,
+            "successes": 24,
+            "successShare": 0.5454545454545454,
+            "groundMedianSuccesses": 1.1669999999999996,
+            "groundMedianDecided": 0.9996681877369649,
+            "durationMedianSuccesses": 27,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 11,
+              "cap": 14,
+              "progress": 16,
+              "censored": 3
+            },
+            "decided": 41
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 6.54796839061158
+        },
+        {
+          "label": "technical vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.75,
+          "engagedTicks": 12699,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 25,
+          "shoveContacts": 19,
+          "shoveMisses": 2,
+          "murmilloAttackStarts": 149,
+          "yawMaxDegrees": 16.780241667518236
+        },
+        {
+          "label": "technical vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.5,
+          "engagedTicks": 8951,
+          "lungeStartsPer1000EngagedTicksPerFighter": 6.703161657915317,
+          "voluntaryGroundShare": 0.7770449768217299,
+          "stats": {
+            "episodes": 32,
+            "successes": 17,
+            "successShare": 0.53125,
+            "groundMedianSuccesses": 1.0251001907760617,
+            "groundMedianDecided": 0.8643222097021525,
+            "durationMedianSuccesses": 26,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 9,
+              "cap": 11,
+              "progress": 12,
+              "censored": 0
+            },
+            "decided": 32
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 6.326846314800798
+        },
+        {
+          "label": "technical vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.55,
+          "engagedTicks": 9887,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 2.0781373662211378
+        }
+      ],
+      "gateW": {
+        "summary": {
+          "shoveStarts": 161,
+          "shoveContacts": 113,
+          "boutsWithAShove": 12,
+          "bouts": 20,
+          "murmilloAttackDecisions": 961,
+          "shoveDecisions": 161,
+          "recoveryWindowContactsPerShove": 0.2743362831858407,
+          "recoveryWindowContactsPerJab": 0.0165016501650165,
+          "jabContacts": 303
+        },
+        "pass": true,
+        "failures": [],
+        "boutsSource": "heavy vs fast"
+      },
+      "gatesPQ": {
+        "failures": [
+          "P1: fast vs heavy success share 20.8% below 25.0%",
+          "P1: heavy vs fast success share 16.4% below 25.0%",
+          "P2: fast vs heavy success share 20.8% below half the lowest comparator 50.5%",
+          "P2: heavy vs fast success share 16.4% below half the lowest comparator 50.5%",
+          "Q: fast vs heavy median voluntary ground over all decided episodes 0.73 below 0.75",
+          "Q: heavy vs fast median voluntary ground over all decided episodes 0.52 below 0.75",
+          "V: fast vs heavy lunge starts 3.21 per 1000 engaged ticks per fighter, below 3.55",
+          "T: fast mirror win rate 40.0% outside 45.0%..55.0%"
+        ],
+        "byGate": {
+          "P": [
+            "P1: fast vs heavy success share 20.8% below 25.0%",
+            "P1: heavy vs fast success share 16.4% below 25.0%",
+            "P2: fast vs heavy success share 20.8% below half the lowest comparator 50.5%",
+            "P2: heavy vs fast success share 16.4% below half the lowest comparator 50.5%"
+          ],
+          "Q": [
+            "Q: fast vs heavy median voluntary ground over all decided episodes 0.73 below 0.75",
+            "Q: heavy vs fast median voluntary ground over all decided episodes 0.52 below 0.75"
+          ],
+          "Q2": [],
+          "R": [],
+          "V": [
+            "V: fast vs heavy lunge starts 3.21 per 1000 engaged ticks per fighter, below 3.55"
+          ],
+          "T": [
+            "T: fast mirror win rate 40.0% outside 45.0%..55.0%"
+          ]
+        }
+      },
+      "winRates": {
+        "heavy vs heavy": 0.45,
+        "heavy vs fast": 0.6,
+        "heavy vs technical": 0.4,
+        "fast vs heavy": 0.2,
+        "fast vs fast": 0.4,
+        "fast vs technical": 0.55,
+        "technical vs heavy": 0.75,
+        "technical vs fast": 0.5,
+        "technical vs technical": 0.55
+      },
+      "yaw": {
+        "degrees": 16.780241667518236,
+        "matchup": "technical vs heavy",
+        "seed": 20260827,
+        "tick": 298,
+        "bound": 15,
+        "exceeded": true,
+        "ticks": 151375
+      },
+      "contradictions": [],
+      "unmeasurableDisengages": 0,
+      "elapsedMs": 4208
+    },
+    {
+      "rule": "shipped",
+      "push": 0.9,
+      "gain": null,
+      "maxTicks": 37,
+      "endRange": 3.35,
+      "caps": {
+        "thisCell": 37,
+        "gainRule": 40,
+        "shippedRule": 37
+      },
+      "perMatchup": [
+        {
+          "label": "heavy vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.45,
+          "engagedTicks": 11837,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 54,
+          "shoveContacts": 42,
+          "shoveMisses": 4,
+          "murmilloAttackStarts": 330,
+          "yawMaxDegrees": 0.8813969866605851
+        },
+        {
+          "label": "heavy vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.55,
+          "engagedTicks": 13530,
+          "lungeStartsPer1000EngagedTicksPerFighter": 4.50849963045085,
+          "voluntaryGroundShare": 0.846937858943356,
+          "stats": {
+            "episodes": 55,
+            "successes": 2,
+            "successShare": 0.03636363636363636,
+            "groundMedianSuccesses": 1.0403721770081926,
+            "groundMedianDecided": 0.6520239298587431,
+            "durationMedianSuccesses": 33,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 3,
+              "cap": 50,
+              "progress": 0,
+              "censored": 2
+            },
+            "decided": 53
+          },
+          "shoveStarts": 23,
+          "shoveContacts": 10,
+          "shoveMisses": 11,
+          "murmilloAttackStarts": 151,
+          "yawMaxDegrees": 16.80075873190483
+        },
+        {
+          "label": "heavy vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 14403,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 24,
+          "shoveContacts": 22,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 161,
+          "yawMaxDegrees": 12.202208411416587
+        },
+        {
+          "label": "fast vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.15,
+          "engagedTicks": 16857,
+          "lungeStartsPer1000EngagedTicksPerFighter": 3.381384588004983,
+          "voluntaryGroundShare": 0.7802302992743289,
+          "stats": {
+            "episodes": 58,
+            "successes": 0,
+            "successShare": 0,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": 0.6312686269885068,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 1,
+              "cap": 54,
+              "progress": 0,
+              "censored": 3
+            },
+            "decided": 55
+          },
+          "shoveStarts": 31,
+          "shoveContacts": 14,
+          "shoveMisses": 14,
+          "murmilloAttackStarts": 187,
+          "yawMaxDegrees": 15.171466516670051
+        },
+        {
+          "label": "fast vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.4,
+          "engagedTicks": 9014,
+          "lungeStartsPer1000EngagedTicksPerFighter": 5.6578655424894615,
+          "voluntaryGroundShare": 0.940429466485164,
+          "stats": {
+            "episodes": 74,
+            "successes": 30,
+            "successShare": 0.40540540540540543,
+            "groundMedianSuccesses": 1.2437499999999968,
+            "groundMedianDecided": 0.8166789882606019,
+            "durationMedianSuccesses": 23,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0.1095890410958904,
+            "byReason": {
+              "range": 48,
+              "cap": 25,
+              "progress": 0,
+              "censored": 1
+            },
+            "decided": 73
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 8.967972022692486
+        },
+        {
+          "label": "fast vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.6,
+          "engagedTicks": 9359,
+          "lungeStartsPer1000EngagedTicksPerFighter": 6.304092317555295,
+          "voluntaryGroundShare": 0.8870733258886584,
+          "stats": {
+            "episodes": 34,
+            "successes": 5,
+            "successShare": 0.14705882352941177,
+            "groundMedianSuccesses": 1.1350000000000038,
+            "groundMedianDecided": 0.9083714146473869,
+            "durationMedianSuccesses": 25,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 8,
+              "cap": 24,
+              "progress": 0,
+              "censored": 2
+            },
+            "decided": 32
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 6.6043817272474685
+        },
+        {
+          "label": "technical vs heavy",
+          "bouts": 20,
+          "homeWinRate": 0.75,
+          "engagedTicks": 12699,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 25,
+          "shoveContacts": 19,
+          "shoveMisses": 2,
+          "murmilloAttackStarts": 149,
+          "yawMaxDegrees": 16.780241667518236
+        },
+        {
+          "label": "technical vs fast",
+          "bouts": 20,
+          "homeWinRate": 0.45,
+          "engagedTicks": 8878,
+          "lungeStartsPer1000EngagedTicksPerFighter": 6.870916873169633,
+          "voluntaryGroundShare": 0.7686097592174664,
+          "stats": {
+            "episodes": 33,
+            "successes": 8,
+            "successShare": 0.24242424242424243,
+            "groundMedianSuccesses": 1.0002108839301922,
+            "groundMedianDecided": 0.7732733902267745,
+            "durationMedianSuccesses": 28,
+            "subFourTickSuccessShare": 0,
+            "immediateShare": 0,
+            "byReason": {
+              "range": 10,
+              "cap": 22,
+              "progress": 0,
+              "censored": 1
+            },
+            "decided": 32
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 6.199238709544719
+        },
+        {
+          "label": "technical vs technical",
+          "bouts": 20,
+          "homeWinRate": 0.55,
+          "engagedTicks": 9887,
+          "lungeStartsPer1000EngagedTicksPerFighter": null,
+          "voluntaryGroundShare": null,
+          "stats": {
+            "episodes": 0,
+            "successes": 0,
+            "successShare": null,
+            "groundMedianSuccesses": null,
+            "groundMedianDecided": null,
+            "durationMedianSuccesses": null,
+            "subFourTickSuccessShare": null,
+            "immediateShare": null,
+            "byReason": {
+              "range": 0,
+              "cap": 0,
+              "progress": 0,
+              "censored": 0
+            },
+            "decided": 0
+          },
+          "shoveStarts": 0,
+          "shoveContacts": 0,
+          "shoveMisses": 0,
+          "murmilloAttackStarts": 0,
+          "yawMaxDegrees": 2.0781373662211378
+        }
+      ],
+      "gateW": {
+        "summary": {
+          "shoveStarts": 157,
+          "shoveContacts": 107,
+          "boutsWithAShove": 12,
+          "bouts": 20,
+          "murmilloAttackDecisions": 978,
+          "shoveDecisions": 157,
+          "recoveryWindowContactsPerShove": 0.308411214953271,
+          "recoveryWindowContactsPerJab": 0.012903225806451613,
+          "jabContacts": 310
+        },
+        "pass": true,
+        "failures": [],
+        "boutsSource": "heavy vs fast"
+      },
+      "gatesPQ": {
+        "failures": [
+          "P1: fast vs heavy success share 0.0% below 25.0%",
+          "P1: heavy vs fast success share 3.6% below 25.0%",
+          "P2: fast vs heavy success share 0.0% below half the lowest comparator 14.7%",
+          "P2: heavy vs fast success share 3.6% below half the lowest comparator 14.7%",
+          "P3: comparator fast vs technical success share 14.7% below its floor 20.8%",
+          "Q: fast vs heavy median voluntary ground over all decided episodes 0.63 below 0.75",
+          "Q: heavy vs fast median voluntary ground over all decided episodes 0.65 below 0.75",
+          "R: fast vs fast episodes clearing within one tick 11.0% above 10.0%",
+          "V: fast vs heavy lunge starts 3.38 per 1000 engaged ticks per fighter, below 3.55",
+          "T: fast mirror win rate 40.0% outside 45.0%..55.0%"
+        ],
+        "byGate": {
+          "P": [
+            "P1: fast vs heavy success share 0.0% below 25.0%",
+            "P1: heavy vs fast success share 3.6% below 25.0%",
+            "P2: fast vs heavy success share 0.0% below half the lowest comparator 14.7%",
+            "P2: heavy vs fast success share 3.6% below half the lowest comparator 14.7%",
+            "P3: comparator fast vs technical success share 14.7% below its floor 20.8%"
+          ],
+          "Q": [
+            "Q: fast vs heavy median voluntary ground over all decided episodes 0.63 below 0.75",
+            "Q: heavy vs fast median voluntary ground over all decided episodes 0.65 below 0.75"
+          ],
+          "Q2": [],
+          "R": [
+            "R: fast vs fast episodes clearing within one tick 11.0% above 10.0%"
+          ],
+          "V": [
+            "V: fast vs heavy lunge starts 3.38 per 1000 engaged ticks per fighter, below 3.55"
+          ],
+          "T": [
+            "T: fast mirror win rate 40.0% outside 45.0%..55.0%"
+          ]
+        }
+      },
+      "winRates": {
+        "heavy vs heavy": 0.45,
+        "heavy vs fast": 0.55,
+        "heavy vs technical": 0.4,
+        "fast vs heavy": 0.15,
+        "fast vs fast": 0.4,
+        "fast vs technical": 0.6,
+        "technical vs heavy": 0.75,
+        "technical vs fast": 0.45,
+        "technical vs technical": 0.55
+      },
+      "yaw": {
+        "degrees": 16.80075873190483,
+        "matchup": "heavy vs fast",
+        "seed": 20260822,
+        "tick": 1123,
+        "bound": 15,
+        "exceeded": true,
+        "ticks": 152299
+      },
+      "contradictions": [],
+      "unmeasurableDisengages": 0,
+      "elapsedMs": 4702
+    }
+  ]
+}

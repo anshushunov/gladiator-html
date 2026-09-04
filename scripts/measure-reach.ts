@@ -71,6 +71,78 @@
 // the catalog before the run and validates the result, so candidate numbers are
 // measured without editing content and an invalid candidate fails loudly.
 //
+// ---------------------------------------------------------------------------
+// GATES P AND Q CHANGED THE QUANTITY THEY MEASURE (2026-08-29). THE BAR DID NOT.
+// ---------------------------------------------------------------------------
+//
+// This file is the only consumer of `src/testSupport/disengageGates.ts`, and
+// that file moved underneath it. `isSuccess` (`disengageGates.ts:108`) and both
+// of `disengageStats`'s ground medians (`:233-234`) now read
+// `voluntaryGroundOpened` -- the raw endpoint difference LESS the episode's
+// recorded `externalGround` -- where they used to read `groundOpened`. So gate
+// P's success predicate and both of gate Q's medians are now about ground the
+// fighter opened with his own legs, not ground that opened for any reason.
+// A shove, or any authored pushback, moves the retiarius and used to register
+// as an escape he did not make.
+//
+// **The bar was ruled not-retuned.** `DISENGAGE_SUCCESS_GROUND` stays at
+// `0.75` by the design owner's decision of 2026-08-29: nobody recalibrates a
+// threshold mid-slice against the very measurement it exists to judge. So the
+// numerator got strictly smaller and the bar it is compared against did not
+// move, which makes P and Q materially STRICTER than the runs that produced
+// this file's recorded figures. That is intended, and it is why the next two
+// paragraphs exist.
+//
+// **Every P/Q figure recorded before that date is stale.** They were measured
+// on raw ground and are not comparable to a run of this file. Concretely, the
+// three comparator shares written into `P3_FLOORS`' docblock below -- 26.0%,
+// 29.7% and 42.5% at 200 seeds -- re-measure on the voluntary quantity as
+// **24.1%, 25.6% and 41.6%**. The frozen floors (0.208, 0.237, 0.340) still
+// pass, so P3 is unaffected; it is the recorded shares behind them that no
+// longer describe what the gate reads. Do not re-derive anything from the old
+// numbers.
+//
+// **`:485` IS STILL RAW, ON PURPOSE.** `disengageGained`, and the `separation
+// gained med=/p10=` distribution printed under SIGNATURE MECHANICS from it,
+// are built from `groundOpened` and stay that way: they feed the eye and gate
+// E's pooled clause, and gate E is one of A-G, frozen by the spec's gate S.
+// The per-matchup table below it and gates P/Q report the voluntary quantity.
+// These are two different measurements printed a dozen lines apart, and a
+// reader who takes the printed median as the number Q gates on will be wrong
+// by the whole external share.
+//
+// THE VERDICT, MEASURED. `node node_modules/vite-node/vite-node.mjs
+// scripts/measure-reach.ts -- --gate` at the default 200 seeds, on this
+// branch's content (which contains no shove -- the mechanic is parked), exits
+// 1 and reports:
+//
+//     A-G, the previous slice's frozen gates (spec gate S): all pass
+//     P, Q, Q2, R, this slice's gates: 6 FAILED
+//     FAIL P1: fast vs heavy success share 1.3% below 25%
+//     FAIL P1: heavy vs fast success share 1.1% below 25%
+//     FAIL P2: fast vs heavy success share 1.3% below half the lowest comparator 24.1%
+//     FAIL P2: heavy vs fast success share 1.1% below half the lowest comparator 24.1%
+//     FAIL Q: fast vs heavy median ground over all decided episodes 0.66 below 0.75
+//     FAIL Q: heavy vs fast median ground over all decided episodes 0.64 below 0.75
+//
+// So it is not only Q that is red: P1 and P2 are red too, and every red clause
+// is on one of the two murmillo matchups. Q's success-only clause passes in
+// both (1.13 and 1.00); it is the all-decided-episodes clause that fails.
+// Nothing inherited moved -- A-G are green, so this is not a regression in the
+// previous slice's behaviour.
+//
+// WHAT THIS RUN DOES NOT ESTABLISH, stated because the obvious reading is the
+// unsafe one. These reds are the murmillo pin the slice exists to measure --
+// 449 of 474 and 457 of 475 episodes exit on `cap`, i.e. the retiarius is
+// still inside the exit distance when the tick cap fires. But this run alone
+// cannot separate "shipped content pins the retiarius" from "the voluntary
+// switch tightened P past what shipped content ever cleared", because the
+// pre-switch figures for the two MURMILLO matchups were never recorded on
+// this instrument (only the three comparator ones were). Doing that split
+// needs a raw-ground comparison run, which this branch did not make. Whoever
+// takes the candidate exit rule off `experiment/murmillo-pursuit-exit` should
+// make it before reading these two reds as a baseline.
+//
 // Usage:
 //   npm run measure:reach -- --seeds 200
 //   npm run measure:reach -- --seeds 200 --gate

@@ -94,9 +94,55 @@ export function groundOpened(episode: Readonly<DisengageEpisode>): number {
   return episode.endSeparation - episode.startSeparation
 }
 
+/**
+ * Ground the fighter opened by his own locomotion: the endpoints' difference
+ * less the external displacement recorded alongside them. This -- not
+ * `groundOpened` -- is what P and Q count, because a murmillo shove moves the
+ * retiarius and would otherwise register as an escape he did not make.
+ */
+export function voluntaryGroundOpened(episode: Readonly<DisengageEpisode>): number {
+  return groundOpened(episode) - episode.externalGround
+}
+
 /** Both conditions, ground first because it is the binding one. */
 export function isSuccess(episode: Readonly<DisengageEpisode>): boolean {
-  return groundOpened(episode) >= DISENGAGE_SUCCESS_GROUND && SUCCESS_EXIT_REASONS.has(episode.reason)
+  return voluntaryGroundOpened(episode) >= DISENGAGE_SUCCESS_GROUND && SUCCESS_EXIT_REASONS.has(episode.reason)
+}
+
+/**
+ * The three thresholds a reason is corroborated against. A PARAMETER since
+ * 2026-08-30, because a sweep runs cells whose exit rule is not the shipped
+ * one, and corroborating a swept run against the shipped constants is the same
+ * class of error this whole file exists to prevent: at a cap of 40 a legitimate
+ * `cap` record reads as consistent for the wrong reason, and at a gain of 0.55
+ * every legitimate `progress` record reads as a contradiction because
+ * 0.55 < 0.75. (The sweep that established this, `scripts/sweep-shove.ts`, is
+ * parked on `feature/shield-shove`; the parameter is kept because the next
+ * candidate exit rule will need it and because every caller on this branch
+ * takes the default, which is byte-identical to the two-constant version.)
+ *
+ * The corroboration rule is NOT the exit rule, and the difference is
+ * deliberate. `minGain` here defaults to `DISENGAGE_SUCCESS_GROUND`, the
+ * SUCCESS floor, not to whatever threshold a candidate exits on -- a sweep must
+ * pass the exit's own gain so that the check asks "did this episode do what its
+ * label claims", never "did this episode clear a bar the gate sets".
+ */
+export interface CorroborationRule {
+  endRange: number
+  maxTicks: number
+  minGain: number
+}
+
+/**
+ * The shipped constants, which is what every caller outside the sweep has
+ * always been checked against and still is. Naming them as a value changes no
+ * number: `corroborate(episode)` with no second argument is byte-identical to
+ * the two-constant version it replaces.
+ */
+export const SHIPPED_CORROBORATION_RULE: Readonly<CorroborationRule> = {
+  endRange: FAST_FORCED_DISENGAGE_END_RANGE,
+  maxTicks: FAST_FORCED_DISENGAGE_MAX_TICKS,
+  minGain: DISENGAGE_SUCCESS_GROUND,
 }
 
 /**
@@ -104,25 +150,29 @@ export function isSuccess(episode: Readonly<DisengageEpisode>): boolean {
  * returns a description of the contradiction, or `undefined` when the record is
  * consistent.
  *
- * `progress` is checked against `DISENGAGE_SUCCESS_GROUND` because that is what
- * the name asserts -- an exit taken on ground made. A candidate that reports
- * `progress` for an episode which opened less than the floor is making the
- * claim the label exists to make, and failing it.
+ * `progress` is checked against `rule.minGain` -- by default
+ * `DISENGAGE_SUCCESS_GROUND` -- because that is what the name asserts: an exit
+ * taken on ground made. A candidate that reports `progress` for an episode
+ * which opened less than the threshold it exits on is making the claim the
+ * label exists to make, and failing it.
  */
-export function corroborate(episode: Readonly<DisengageEpisode>): string | undefined {
+export function corroborate(
+  episode: Readonly<DisengageEpisode>,
+  rule: Readonly<CorroborationRule> = SHIPPED_CORROBORATION_RULE,
+): string | undefined {
   switch (episode.reason) {
     case 'range':
-      return episode.endSeparation >= FAST_FORCED_DISENGAGE_END_RANGE
+      return episode.endSeparation >= rule.endRange
         ? undefined
-        : `episode ${episode.actorId}@${episode.startTick} reports 'range' but ended at ${episode.endSeparation.toFixed(3)}, inside ${FAST_FORCED_DISENGAGE_END_RANGE}`
+        : `episode ${episode.actorId}@${episode.startTick} reports 'range' but ended at ${episode.endSeparation.toFixed(3)}, inside ${rule.endRange}`
     case 'progress':
-      return groundOpened(episode) >= DISENGAGE_SUCCESS_GROUND
+      return groundOpened(episode) >= rule.minGain
         ? undefined
-        : `episode ${episode.actorId}@${episode.startTick} reports 'progress' but opened ${groundOpened(episode).toFixed(3)}, below ${DISENGAGE_SUCCESS_GROUND}`
+        : `episode ${episode.actorId}@${episode.startTick} reports 'progress' but opened ${groundOpened(episode).toFixed(3)}, below ${rule.minGain}`
     case 'cap':
-      return episode.ticks >= FAST_FORCED_DISENGAGE_MAX_TICKS
+      return episode.ticks >= rule.maxTicks
         ? undefined
-        : `episode ${episode.actorId}@${episode.startTick} reports 'cap' after ${episode.ticks} ticks, below ${FAST_FORCED_DISENGAGE_MAX_TICKS}`
+        : `episode ${episode.actorId}@${episode.startTick} reports 'cap' after ${episode.ticks} ticks, below ${rule.maxTicks}`
     case 'censored':
       // The only reason with nothing to corroborate: it means the bout ended,
       // which the episode itself cannot evidence either way.
@@ -137,9 +187,18 @@ export interface DisengageStats {
   successes: number
   /** `successes / episodes`, gate P's quantity. `NaN` with no episodes, never a silent 0. */
   successShare: number
-  /** Gate Q, over successes only. Censored cannot be a success, so this is censored-free by construction. */
+  /**
+   * Gate Q, over successes only, of `voluntaryGroundOpened` -- not
+   * `groundOpened`. Censored cannot be a success, so this is censored-free by
+   * construction. Reading the raw ground here, over a population `isSuccess`
+   * already selected by the voluntary measure, would report a mixed
+   * quantity: a success let in by ground it did not make itself would then
+   * also inflate the median with ground it did not make itself. The spec's
+   * P/Q addendum ("A P or Q success whose ground is majority external does
+   * not count toward P or Q") binds the quantity, not just the membership.
+   */
   groundMedianSuccesses: number
-  /** Gate Q, over every non-censored episode. */
+  /** Gate Q, over every non-censored episode, of `voluntaryGroundOpened`. Same reasoning as `groundMedianSuccesses`. */
   groundMedianDecided: number
   /** Gate Q2, over successes. */
   durationMedianSuccesses: number
@@ -171,8 +230,8 @@ export function disengageStats(episodes: readonly DisengageEpisode[]): Disengage
     episodes: episodes.length,
     successes: successes.length,
     successShare: share(successes.length, episodes.length),
-    groundMedianSuccesses: medianOf(successes.map(groundOpened)),
-    groundMedianDecided: medianOf(decided.map(groundOpened)),
+    groundMedianSuccesses: medianOf(successes.map(voluntaryGroundOpened)),
+    groundMedianDecided: medianOf(decided.map(voluntaryGroundOpened)),
     durationMedianSuccesses: medianOf(successes.map((episode) => episode.ticks)),
     subFourTickSuccessShare: share(successes.filter((episode) => episode.ticks < 4).length, successes.length),
     immediateShare: share(decided.filter((episode) => episode.ticks <= 1).length, decided.length),

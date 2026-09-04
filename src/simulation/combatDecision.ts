@@ -1033,8 +1033,95 @@ export const FAST_FORCED_DISENGAGE_MAX_TICKS = 37
  * would report the same episode as a pin.
  */
 export function hasFastForcedDisengageEnded(distanceToTarget: number, ticksSinceForced: number): DisengagePredicateExit | undefined {
-  if (distanceToTarget >= FAST_FORCED_DISENGAGE_END_RANGE) return 'range'
-  if (ticksSinceForced >= FAST_FORCED_DISENGAGE_MAX_TICKS) return 'cap'
+  return fastForcedDisengageExit(distanceToTarget, ticksSinceForced, NO_GROUND_OPENED, SHIPPED_FAST_FORCED_DISENGAGE_RULE)
+}
+
+/**
+ * The three thresholds the forced-disengage exit is expressed over, gathered
+ * into one value so a measurement can reach BOTH candidate rules without a
+ * rebuild per cell.
+ *
+ * `minGain` is the pursuit-relative exit parked on
+ * `experiment/murmillo-pursuit-exit`: the disengage ends once the fighter has
+ * opened this much ground **on where the episode started**, whether or not
+ * that reaches any absolute distance. `Infinity` disables it, and that is the
+ * shipped rule -- not a special case bolted on for the sweep but the honest
+ * statement of what ships today, which is a rule with no gain clause at all.
+ *
+ * WHY THIS IS A PARAMETER AND NOT A CONSTANT. §5 of the shield-shove spec
+ * sweeps `pushDistance` and this threshold JOINTLY, because a push adds
+ * separation instantly and therefore does not lengthen a retreat -- it ENDS
+ * one. Above the gain threshold the episode terminates at `start + push`;
+ * below it the push is a cheap way to satisfy the exit. Measuring either alone
+ * measures a fight that will not exist. Thirty cells cannot each be a rebuild.
+ *
+ * THE SWEEP RAN AND ITS MECHANICS WERE PARKED (2026-09-04): no build passed the
+ * slow suite, so neither the shove nor a gain clause ships, and `minGain` is
+ * `Infinity` on every path a bout takes. The parameter is kept anyway. It costs
+ * one field and one branch that provably never fires -- every frozen
+ * determinism digest is byte-identical to the pre-parameter tree, which is the
+ * evidence -- and it is the difference between the next candidate exit rule
+ * being a measurement and being a rebuild.
+ */
+export interface FastForcedDisengageRule {
+  /** The absolute separation the fighter may open up to, ending the episode. */
+  endRange: number
+  /** The outer bound in ticks, whichever comes first. */
+  maxTicks: number
+  /** Ground opened on the episode's own start separation, or `Infinity` for no such exit. */
+  minGain: number
+}
+
+/**
+ * WHAT SHIPS, stated as a value so that "the shipped rule" is one object every
+ * caller shares rather than a convention each one re-implements. Byte-identical
+ * to the two-branch predicate this file has always exported: `minGain` is
+ * `Infinity`, so the `progress` branch is unreachable and the remaining two
+ * branches test the same two constants in the same order.
+ */
+export const SHIPPED_FAST_FORCED_DISENGAGE_RULE: Readonly<FastForcedDisengageRule> = {
+  endRange: FAST_FORCED_DISENGAGE_END_RANGE,
+  maxTicks: FAST_FORCED_DISENGAGE_MAX_TICKS,
+  minGain: Number.POSITIVE_INFINITY,
+}
+
+/**
+ * What a caller with no start separation to measure against passes for
+ * `groundOpenedSoFar`. `-Infinity` rather than `0`: it cannot satisfy any
+ * threshold, including a `minGain` of `0`, so a caller that does not track the
+ * episode's start cannot accidentally trip the gain branch. `0` would fire it
+ * for any non-positive threshold.
+ */
+const NO_GROUND_OPENED = Number.NEGATIVE_INFINITY
+
+/**
+ * The exit predicate over an explicit `rule`. `hasFastForcedDisengageEnded`
+ * above is this function at `SHIPPED_FAST_FORCED_DISENGAGE_RULE` with no
+ * ground to report, and is the ONLY form the shipped kernel path uses.
+ *
+ * BRANCH ORDER IS LOAD-BEARING FOR THE LABEL, not for the answer, and it is
+ * the parked branch's order kept exactly. `range` first: an episode that
+ * reaches the exit distance on the same tick another branch would fire is
+ * reported as `range`, because the fighter did open the ground -- reversing it
+ * would report the same episode as a pin. `progress` before `cap` for the
+ * mirror-image reason: an episode that made its ground on the cap tick made
+ * the ground.
+ *
+ * WITH NO TARGET, `distanceToTarget` is `Infinity` (encounter.ts reads it that
+ * way and always has), so `range` fires before the gain branch is consulted --
+ * which matters, because the gain would be `Infinity - Infinity`, i.e. `NaN`,
+ * and `NaN >= x` is false for every `x`. The answer is the same either way;
+ * the ordering is what makes it the same for a reason rather than by luck.
+ */
+export function fastForcedDisengageExit(
+  distanceToTarget: number,
+  ticksSinceForced: number,
+  groundOpenedSoFar: number,
+  rule: Readonly<FastForcedDisengageRule>,
+): DisengagePredicateExit | undefined {
+  if (distanceToTarget >= rule.endRange) return 'range'
+  if (groundOpenedSoFar >= rule.minGain) return 'progress'
+  if (ticksSinceForced >= rule.maxTicks) return 'cap'
   return undefined
 }
 

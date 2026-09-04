@@ -51,14 +51,14 @@ const otherFoe = 'other-foe' as CombatantId
 describe('assembleDisengageEpisodes', () => {
   it('pairs a stamp with its clear and reports the endpoints, elapsed ticks and reason', () => {
     const { episodes } = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 100, actorId: actor, targetId: foe, separation: 1.8 },
-      { kind: 'held', tick: 101, actorId: actor, targetId: foe, separation: 2.1 },
-      { kind: 'held', tick: 102, actorId: actor, targetId: foe, separation: 2.9 },
-      { kind: 'cleared', tick: 103, actorId: actor, targetId: foe, separation: 3.4, reason: 'range' },
+      { kind: 'stamped', tick: 100, actorId: actor, targetId: foe, separation: 1.8, externalSeparationDelta: 0 },
+      { kind: 'held', tick: 101, actorId: actor, targetId: foe, separation: 2.1, externalSeparationDelta: 0 },
+      { kind: 'held', tick: 102, actorId: actor, targetId: foe, separation: 2.9, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 103, actorId: actor, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
     ])
 
     expect(episodes).toEqual<DisengageEpisode[]>([
-      { actorId: actor, targetId: foe, startTick: 100, endTick: 103, ticks: 3, startSeparation: 1.8, endSeparation: 3.4, reason: 'range' },
+      { actorId: actor, targetId: foe, startTick: 100, endTick: 103, ticks: 3, startSeparation: 1.8, endSeparation: 3.4, reason: 'range', externalGround: 0 },
     ])
   })
 
@@ -68,31 +68,31 @@ describe('assembleDisengageEpisodes', () => {
   // exists to measure.
   it('keeps an episode still open at the end of the bout, as `censored`, with its last observed endpoint', () => {
     const { episodes } = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 40, actorId: actor, targetId: foe, separation: 1.6 },
-      { kind: 'held', tick: 41, actorId: actor, targetId: foe, separation: 1.9 },
-      { kind: 'held', tick: 42, actorId: actor, targetId: foe, separation: 2.2 },
+      { kind: 'stamped', tick: 40, actorId: actor, targetId: foe, separation: 1.6, externalSeparationDelta: 0 },
+      { kind: 'held', tick: 41, actorId: actor, targetId: foe, separation: 1.9, externalSeparationDelta: 0 },
+      { kind: 'held', tick: 42, actorId: actor, targetId: foe, separation: 2.2, externalSeparationDelta: 0 },
     ])
 
     expect(episodes).toEqual<DisengageEpisode[]>([
-      { actorId: actor, targetId: foe, startTick: 40, endTick: 42, ticks: 2, startSeparation: 1.6, endSeparation: 2.2, reason: 'censored' },
+      { actorId: actor, targetId: foe, startTick: 40, endTick: 42, ticks: 2, startSeparation: 1.6, endSeparation: 2.2, reason: 'censored', externalGround: 0 },
     ])
   })
 
   it('censors an episode stamped on the very last tick as a zero-tick episode rather than dropping it', () => {
-    const { episodes } = assembleDisengageEpisodes([{ kind: 'stamped', tick: 900, actorId: actor, targetId: foe, separation: 1.55 }])
+    const { episodes } = assembleDisengageEpisodes([{ kind: 'stamped', tick: 900, actorId: actor, targetId: foe, separation: 1.55, externalSeparationDelta: 0 }])
 
     expect(episodes).toEqual<DisengageEpisode[]>([
-      { actorId: actor, targetId: foe, startTick: 900, endTick: 900, ticks: 0, startSeparation: 1.55, endSeparation: 1.55, reason: 'censored' },
+      { actorId: actor, targetId: foe, startTick: 900, endTick: 900, ticks: 0, startSeparation: 1.55, endSeparation: 1.55, reason: 'censored', externalGround: 0 },
     ])
   })
 
   it('keeps two fighters’ interleaved episodes apart and orders the output deterministically', () => {
     const { episodes } = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 2.0 },
-      { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.7 },
-      { kind: 'held', tick: 11, actorId: other, targetId: foe, separation: 2.4 },
-      { kind: 'cleared', tick: 12, actorId: other, targetId: foe, separation: 3.4, reason: 'range' },
-      { kind: 'cleared', tick: 48, actorId: actor, targetId: foe, separation: 1.2, reason: 'cap' },
+      { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 2.0, externalSeparationDelta: 0 },
+      { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
+      { kind: 'held', tick: 11, actorId: other, targetId: foe, separation: 2.4, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 12, actorId: other, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
+      { kind: 'cleared', tick: 48, actorId: actor, targetId: foe, separation: 1.2, externalSeparationDelta: 0, reason: 'cap' },
     ])
 
     expect(episodes.map((episode) => [episode.actorId, episode.startTick, episode.ticks, episode.reason])).toEqual([
@@ -106,7 +106,9 @@ describe('assembleDisengageEpisodes', () => {
   // precisely so that a later PR making one reachable stops the run instead of
   // silently emitting an episode with the wrong endpoints.
   it('raises on a clear with no open episode rather than inventing a start', () => {
-    expect(() => assembleDisengageEpisodes([{ kind: 'cleared', tick: 5, actorId: actor, targetId: foe, separation: 3.4, reason: 'range' }])).toThrow(
+    expect(() =>
+      assembleDisengageEpisodes([{ kind: 'cleared', tick: 5, actorId: actor, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' }]),
+    ).toThrow(
       /no open episode/,
     )
   })
@@ -114,8 +116,8 @@ describe('assembleDisengageEpisodes', () => {
   it('raises on a second stamp before the first was cleared', () => {
     expect(() =>
       assembleDisengageEpisodes([
-        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
-        { kind: 'stamped', tick: 6, actorId: actor, targetId: foe, separation: 1.9 },
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
+        { kind: 'stamped', tick: 6, actorId: actor, targetId: foe, separation: 1.9, externalSeparationDelta: 0 },
       ]),
     ).toThrow(/still open/)
   })
@@ -130,9 +132,9 @@ describe('assembleDisengageEpisodes', () => {
   // would read as a textbook 1.7-unit successful escape.
   it('reports, rather than emits, an episode whose endpoints are against two different opponents', () => {
     const { episodes, unmeasurable } = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
-      { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 2.0 },
-      { kind: 'cleared', tick: 7, actorId: actor, targetId: otherFoe, separation: 3.4, reason: 'range' },
+      { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
+      { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 2.0, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 7, actorId: actor, targetId: otherFoe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
     ])
 
     expect(episodes).toEqual([])
@@ -140,15 +142,17 @@ describe('assembleDisengageEpisodes', () => {
   })
 
   it('reports an episode with no target rather than treating an infinite separation as an escape', () => {
-    expect(assembleDisengageEpisodes([{ kind: 'stamped', tick: 5, actorId: actor, targetId: undefined, separation: Infinity }])).toEqual({
+    expect(
+      assembleDisengageEpisodes([{ kind: 'stamped', tick: 5, actorId: actor, targetId: undefined, separation: Infinity, externalSeparationDelta: 0 }]),
+    ).toEqual({
       episodes: [],
       unmeasurable: [{ actorId: actor, startTick: 5, tick: 5, cause: 'no-target' }],
     })
 
     expect(
       assembleDisengageEpisodes([
-        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
-        { kind: 'cleared', tick: 6, actorId: actor, targetId: undefined, separation: Infinity, reason: 'range' },
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
+        { kind: 'cleared', tick: 6, actorId: actor, targetId: undefined, separation: Infinity, externalSeparationDelta: 0, reason: 'range' },
       ]),
     ).toEqual({ episodes: [], unmeasurable: [{ actorId: actor, startTick: 5, tick: 6, cause: 'no-target' }] })
   })
@@ -158,10 +162,10 @@ describe('assembleDisengageEpisodes', () => {
   // in a free-for-all. One bad episode must not take the other 2414 with it.
   it('keeps every measurable episode in a stream that also contains an unmeasurable one', () => {
     const { episodes, unmeasurable } = assembleDisengageEpisodes([
-      { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 1.7 },
-      { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.6 },
-      { kind: 'cleared', tick: 13, actorId: other, targetId: undefined, separation: Infinity, reason: 'range' },
-      { kind: 'cleared', tick: 14, actorId: actor, targetId: foe, separation: 3.4, reason: 'range' },
+      { kind: 'stamped', tick: 10, actorId: other, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
+      { kind: 'stamped', tick: 11, actorId: actor, targetId: foe, separation: 1.6, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 13, actorId: other, targetId: undefined, separation: Infinity, externalSeparationDelta: 0, reason: 'range' },
+      { kind: 'cleared', tick: 14, actorId: actor, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
     ])
 
     expect(episodes.map((episode) => episode.actorId)).toEqual([actor])
@@ -173,12 +177,12 @@ describe('assembleDisengageEpisodes', () => {
   // of episodes.
   it('puts every stamped episode in exactly one of the two collections', () => {
     const samples: DisengageSample[] = [
-      { kind: 'stamped', tick: 1, actorId: actor, targetId: foe, separation: 1.5 },
-      { kind: 'cleared', tick: 2, actorId: actor, targetId: foe, separation: 3.4, reason: 'range' },
-      { kind: 'stamped', tick: 3, actorId: other, targetId: undefined, separation: Infinity },
-      { kind: 'cleared', tick: 4, actorId: other, targetId: undefined, separation: Infinity, reason: 'range' },
-      { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.5 },
-      { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 1.9 },
+      { kind: 'stamped', tick: 1, actorId: actor, targetId: foe, separation: 1.5, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 2, actorId: actor, targetId: foe, separation: 3.4, externalSeparationDelta: 0, reason: 'range' },
+      { kind: 'stamped', tick: 3, actorId: other, targetId: undefined, separation: Infinity, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 4, actorId: other, targetId: undefined, separation: Infinity, externalSeparationDelta: 0, reason: 'range' },
+      { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.5, externalSeparationDelta: 0 },
+      { kind: 'held', tick: 6, actorId: actor, targetId: foe, separation: 1.9, externalSeparationDelta: 0 },
     ]
     const { episodes, unmeasurable } = assembleDisengageEpisodes(samples)
 
@@ -195,23 +199,69 @@ describe('assembleDisengageEpisodes', () => {
   // sample that both retargeted and went non-finite took the `target-changed`
   // branch instead.
   it('raises on a resolved target reporting a non-finite separation, whichever sample carries it', () => {
-    expect(() => assembleDisengageEpisodes([{ kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: Number.NaN }])).toThrow(
-      /non-finite separation/,
-    )
+    expect(() =>
+      assembleDisengageEpisodes([{ kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: Number.NaN, externalSeparationDelta: 0 }]),
+    ).toThrow(/non-finite separation/)
 
     expect(() =>
       assembleDisengageEpisodes([
-        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
-        { kind: 'cleared', tick: 6, actorId: actor, targetId: foe, separation: Number.NaN, reason: 'range' },
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
+        { kind: 'cleared', tick: 6, actorId: actor, targetId: foe, separation: Number.NaN, externalSeparationDelta: 0, reason: 'range' },
       ]),
     ).toThrow(/non-finite separation/)
 
     expect(() =>
       assembleDisengageEpisodes([
-        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7 },
-        { kind: 'held', tick: 6, actorId: actor, targetId: otherFoe, separation: Infinity },
+        { kind: 'stamped', tick: 5, actorId: actor, targetId: foe, separation: 1.7, externalSeparationDelta: 0 },
+        { kind: 'held', tick: 6, actorId: actor, targetId: otherFoe, separation: Infinity, externalSeparationDelta: 0 },
       ]),
     ).toThrow(/non-finite separation/)
+  })
+
+  // Finding 1 (fix round 1): the window is `[startTick, endTick)` -- the same
+  // ticks the raw endpoints span -- not "every held/cleared sample". The
+  // stamp's own tick's push is inside that window (it happens before the
+  // FIRST held reading, same as any other tick's), so it must count; the
+  // clear's own tick's push happens strictly after `endSeparation` was
+  // already read at phase 2, so it must not.
+  it('sums the external component of every tick the raw endpoints span -- the stamp and the holds, not the clear', () => {
+    const assembly = assembleDisengageEpisodes([
+      { kind: 'stamped', tick: 10, actorId: 'a', targetId: 'b', separation: 1.0, externalSeparationDelta: 0.05 },
+      { kind: 'held', tick: 11, actorId: 'a', targetId: 'b', separation: 1.4, externalSeparationDelta: 0.3 },
+      { kind: 'held', tick: 12, actorId: 'a', targetId: 'b', separation: 1.7, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 13, actorId: 'a', targetId: 'b', separation: 2.1, externalSeparationDelta: 0.2, reason: 'progress' },
+    ])
+
+    expect(assembly.episodes).toHaveLength(1)
+    // 0.05 (stamp, tick 10) + 0.3 (held, tick 11) + 0 (held, tick 12) = 0.35.
+    // NOT 0.5: that would be what you get by also folding in the clear's own
+    // 0.2 (tick 13) -- the exact off-by-one-at-both-ends bug this test guards
+    // against regressing to.
+    expect(assembly.episodes[0].externalGround).toBeCloseTo(0.35, 10)
+  })
+
+  it('reports zero external ground when nothing pushed anyone', () => {
+    const assembly = assembleDisengageEpisodes([
+      { kind: 'stamped', tick: 10, actorId: 'a', targetId: 'b', separation: 1.0, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 11, actorId: 'a', targetId: 'b', separation: 2.0, externalSeparationDelta: 0, reason: 'progress' },
+    ])
+
+    expect(assembly.episodes[0].externalGround).toBe(0)
+  })
+
+  // The other half of Finding 1's fix, isolated: a push recorded on the
+  // CLEAR sample must never reach `externalGround`, even when it is the only
+  // nonzero value in the stream. A version that summed every held/cleared
+  // sample (this file's pre-fix-round behaviour) would report `0.4` here;
+  // the corrected window reports `0`.
+  it('never lets the clearing tick’s own push into externalGround, even alone', () => {
+    const assembly = assembleDisengageEpisodes([
+      { kind: 'stamped', tick: 20, actorId: 'a', targetId: 'b', separation: 1.0, externalSeparationDelta: 0 },
+      { kind: 'held', tick: 21, actorId: 'a', targetId: 'b', separation: 1.3, externalSeparationDelta: 0 },
+      { kind: 'cleared', tick: 22, actorId: 'a', targetId: 'b', separation: 1.6, externalSeparationDelta: 0.4, reason: 'progress' },
+    ])
+
+    expect(assembly.episodes[0].externalGround).toBe(0)
   })
 })
 
@@ -293,6 +343,99 @@ describe('the disengage seam against a real bout', () => {
   // tick. None of them fall at `BASELINE_TEST_SEED`, hence the pinned seed
   // here; it was found by that sweep and a content change may well move it, in
   // which case this test should be re-pinned rather than deleted.
+  // What Task 3 adds: the kernel projects each tick's real `pushByTarget`
+  // (phase 9) onto the actor->target axis instead of writing the literal `0`
+  // Task 2 left behind. Deliberately run against the SAME fixture as the rest
+  // of this describe block -- `aquila vs drusus` at `BASELINE_TEST_SEED` --
+  // rather than a bespoke encounter, and it is not a hunt: this Fast mirror
+  // trades `fast-slash` hits (`pushDistance` 0.18) throughout its several
+  // forced-disengage windows, so a push landing inside an open episode is the
+  // ordinary case here, not a rare one.
+  //
+  // The sign matters more than the presence of a number: `>` 0, not `!==` 0,
+  // because the whole point of `externalGround` is that a push which moved
+  // the pair apart must read positive. Verified by flipping the subtraction
+  // in `externalSeparationDeltaFor` (`encounter.ts`) locally while writing
+  // this test -- every value below goes negative and this assertion fails,
+  // which is what earns the `>` here instead of a weaker `!== 0`.
+  it('gives a real episode a positive externalGround when a push landed inside it', () => {
+    const { episodes } = collectEpisodes()
+    const pushed = episodes.filter((episode) => episode.externalGround !== 0)
+
+    // Coverage guard, same reasoning as the reason-set guard above: if a
+    // later change stops any push from ever landing inside an open episode
+    // at this pinned seed, the loop below goes vacuous and this catches it.
+    expect(pushed.length).toBeGreaterThan(0)
+    for (const episode of pushed) {
+      expect(episode.externalGround).toBeGreaterThan(0)
+    }
+  }, 30_000)
+
+  // THE KERNEL HALF OF THE ATTRIBUTION WINDOW, which nothing above covers.
+  //
+  // The window fix has two halves and only one of them was tested. The
+  // ASSEMBLER half -- `assembleDisengageEpisodes` opening `externalGround` from
+  // the stamp sample's own delta instead of from `0`, and excluding the
+  // `cleared` tick's -- is pinned by the unit tests at the top of this file.
+  // The KERNEL half is the reason there is a delta on a `stamped` sample at
+  // all: `encounter.ts` defers the stamp observation onto `pendingDisengage`
+  // and finishes it AFTER phase 9, so it carries its own tick's `pushByTarget`
+  // rather than the literal `0` an in-phase-2 emission would have to write.
+  //
+  // That half had no covering test. Reverting the stamp's delta to `0` in
+  // `encounter.ts` -- emitting `externalSeparationDelta: 0` for `kind ===
+  // 'stamped'` -- left the whole suite green, including the test directly
+  // above, because that one only asks that episodes with SOME external ground
+  // have it positive, and held-tick pushes supply that on their own.
+  //
+  // What makes this test bite is the fixture, not the assertion. At
+  // `BASELINE_TEST_SEED + 2` the mirror produces exactly one episode whose
+  // external ground comes ENTIRELY from its stamp tick: one `fast-slash` lands
+  // on the tick the field is stamped (`pushDistance` 0.18) and not one lands on
+  // any of the 37 held ticks that follow. So the held-only sum is 0, the
+  // episode's `externalGround` is 0.18, and the two numbers disagree by exactly
+  // the quantity the kernel half contributes. Under the reversion the stamped
+  // sample's delta is `0`, the filter below finds nothing, and this fails on
+  // its first assertion.
+  //
+  // The seed is pinned and was found by sweeping the shipped pairings; a
+  // content change may well move it, in which case re-pin it against a fresh
+  // sweep rather than deleting the test -- the property is not seed-specific,
+  // only this clean single-source-of-ground instance of it is.
+  it('counts the stamp tick’s own push, which no held sample could supply', () => {
+    const samples: DisengageSample[] = []
+    runBout({ record: (sample) => samples.push(sample) }, BASELINE_TEST_SEED + 2)
+
+    const pushedStamps = samples.filter(
+      (sample): sample is Extract<DisengageSample, { kind: 'stamped' }> =>
+        sample.kind === 'stamped' && sample.externalSeparationDelta !== 0,
+    )
+    // The kernel half, directly: a `stamped` sample carrying a push at all is
+    // only possible because the observation is finished after phase 9.
+    expect(pushedStamps).toHaveLength(1)
+    const [stamp] = pushedStamps
+    expect(stamp.externalSeparationDelta).toBeGreaterThan(0)
+
+    const { episodes } = assembleDisengageEpisodes(samples)
+    const episode = episodes.find((candidate) => candidate.actorId === stamp.actorId && candidate.startTick === stamp.tick)
+    expect(episode).toBeDefined()
+
+    // Everything the episode would have been able to see WITHOUT the stamp
+    // tick: the `held` ticks strictly inside `(startTick, endTick)`. The
+    // `cleared` tick is outside the window by construction and excluded here
+    // for the same reason the assembler excludes it.
+    const heldOnlyGround = samples
+      .filter((sample) => sample.kind === 'held' && sample.actorId === stamp.actorId && sample.tick > episode!.startTick && sample.tick < episode!.endTick)
+      .reduce((total, sample) => total + sample.externalSeparationDelta, 0)
+
+    // The difference IS the kernel half. Asserted as a disagreement between two
+    // computed numbers rather than against a literal, so the test states the
+    // property instead of memorising this seed's arithmetic.
+    expect(heldOnlyGround).toBe(0)
+    expect(episode!.externalGround).toBeCloseTo(stamp.externalSeparationDelta, 12)
+    expect(episode!.externalGround).toBeGreaterThan(heldOnlyGround)
+  }, 30_000)
+
   it('keeps a real bout’s still-open episode instead of dropping it', () => {
     const { episodes } = collectEpisodes(20260836)
     const censored = episodes.filter((episode) => episode.reason === 'censored')
@@ -368,16 +511,28 @@ describe('the disengage seam against a real bout', () => {
 // `advanceEncounterTick` is the GENERIC kernel, not the duel adapter, and the
 // first version of this seam was reviewed against the duel and justified with
 // a fact about the duel's arena. Both of the states below were argued to be
-// unreachable; both turn out to be ordinary in a three-fighter free-for-all,
-// measured across 40 seeds:
+// unreachable; both turn out to be ordinary in a three-fighter free-for-all.
 //
-//   - a fighter with NO target during an open episode: 12 of 40 seeds;
-//   - a fighter RETARGETED during an open episode: 3 of 40 seeds
-//     (20260829, 20260835, 20260837), 8 to 21 samples each.
+// RE-MEASURED 2026-09-04, on THIS build -- the shipped catalogue, with no
+// shield shove in it -- across 300 consecutive seeds from `BASELINE_TEST_SEED`:
 //
-// The baseline seed is one of the twelve. So the old kernel, which raised on a
+//   - a fighter with NO target during an open episode: 109 of 300 seeds (36%);
+//   - a fighter RETARGETED during an open episode: 16 of 300 seeds (5.3%),
+//     one episode each.
+//
+// The baseline seed is one of the 109. So the old kernel, which raised on a
 // non-finite separation, would have thrown on the very first FFA anyone
 // attached a collector to.
+//
+// The retarget seed LIST is deliberately not written down here, and the reason
+// is the measurement's own history. An earlier revision of this comment named
+// three seeds (20260829, 20260835, 20260837) from a 40-seed sample of this same
+// content. On the shield-shove build only one of the three still retargeted and
+// two that had not then did; on this build all three retarget again. Which
+// seeds carry a 5%-incidence phenomenon is a property of the content, not of
+// the seam, and recording it invites the next reader to treat a re-roll as a
+// regression -- which is exactly what happened to the test below before it was
+// rewritten.
 describe('the disengage seam outside the duel', () => {
   const threeWayFfa = (seed: number) => ({
     seed,
@@ -425,18 +580,125 @@ describe('the disengage seam outside the duel', () => {
     expect(episodes.length + unmeasurable.length).toBe(samples.filter((sample) => sample.kind === 'stamped').length)
   }, 30_000)
 
-  it('sets aside a real episode whose target changed while it was open', () => {
+  /**
+   * `runFfa`'s samples without its rolling canonical hash. That hash exists for
+   * the determinism test above, which needs two runs to agree bit for bit; the
+   * batch below only needs the samples, and at 200 seeds the per-tick hash is
+   * essentially the entire cost.
+   */
+  function ffaSamples(seed: number): DisengageSample[] {
     const samples: DisengageSample[] = []
-    runFfa(20260837, { record: (sample) => samples.push(sample) })
-    const { episodes, unmeasurable } = assembleDisengageEpisodes(samples)
-
-    expect(unmeasurable.some((episode) => episode.cause === 'target-changed')).toBe(true)
-    expect(episodes.length + unmeasurable.length).toBe(samples.filter((sample) => sample.kind === 'stamped').length)
-    // Not a synthetic stream: this seed retargets the Fast fighter 21 times
-    // inside open episodes. Assembling it before the fix produced episodes
-    // whose two endpoints were measured against two different opponents.
-    for (const episode of episodes) {
-      expect(episode.targetId).toBeDefined()
+    const collector: DisengageCollector = { record: (sample) => samples.push(sample) }
+    const created = createEncounter(threeWayFfa(seed))
+    let state = created.state
+    for (let i = 0; i < MAX_BOUT_TICKS && state.phase === 'running'; i += 1) {
+      state = advanceEncounterTick(state, undefined, undefined, collector).state
     }
-  }, 30_000)
+    return samples
+  }
+
+  /**
+   * Chosen from the measurement, not from what passes.
+   *
+   * A retarget inside an open episode occurs on **5.3% of seeds** (16 of 300,
+   * re-measured 2026-09-04 on this build -- see this describe block's header).
+   * Two numbers set the batch size, and the second is the one that matters:
+   *
+   *   - as a probability, `0.947^N` is the chance a re-rolled build sees none:
+   *     33% at N=20, 6.5% at N=50, 0.4% at N=100, **0.002% at N=200**;
+   *   - as a fact about THIS content, the longest observed run of consecutive
+   *     seeds containing no retarget at all is **49**. A batch has to clear
+   *     that stretch, not merely beat the average, so anything at or below
+   *     ~50 is one unlucky alignment away from red.
+   *
+   * 200 is ~4x the worst observed dry stretch and currently contains **13**
+   * retargeting seeds, so the assertion below passes with thirteen-fold margin
+   * rather than by one seed's grace. It costs ~7s.
+   *
+   * The batch size is kept at the value the shield-shove slice chose even
+   * though this build's incidence is HIGHER (5.3% against 4.0%) and its worst
+   * dry stretch SHORTER (49 against 82), both of which would justify a smaller
+   * batch. Shrinking it would tune the sample to one build's luck, which is the
+   * defect this test was rewritten to escape.
+   */
+  const RETARGET_BATCH_SEEDS = 200
+
+  /**
+   * WHY THIS NO LONGER NAMES A SEED. It used to assert against `20260837`
+   * alone, and across the four builds of the shield-shove slice that assertion
+   * went green, red, green, red -- not because the assembler changed (it did
+   * not) but because content changes re-roll which seeds happen to retarget. A
+   * hand-picked seed that has flapped four times will flap a fifth, and the
+   * next person to see it red cannot tell "I broke the instrument" from "I lost
+   * a coin toss". That ambiguity is the defect; the seed was only its carrier.
+   *
+   * On THIS build 20260837 retargets, so the single-seed version would be green
+   * here and the rewrite looks unnecessary. It is not: the seed was green on
+   * this content before the slice too, and went red twice in between. What is
+   * being removed is a test whose colour tracks the catalogue, and it is being
+   * removed on the build where it happens to be green precisely so that the
+   * change cannot be mistaken for a failing assertion being widened.
+   *
+   * The `target-changed` BRANCH is not what this test covers -- that is pinned
+   * synthetically, on a crafted sample stream, in this file's first describe
+   * block, and a synthetic stream needs no luck at all. What this test adds is
+   * corroboration that the branch is reachable from a real kernel run, and
+   * corroboration does not need one blessed seed: it needs enough seeds that
+   * observing none of the phenomenon is real evidence about the seam rather
+   * than about the draw.
+   */
+  it('sets aside real episodes whose target changed while they were open, over a batch of seeds rather than one blessed seed', () => {
+    let seedsWithRetarget = 0
+    let retargetEpisodes = 0
+
+    for (let index = 0; index < RETARGET_BATCH_SEEDS; index += 1) {
+      const samples = ffaSamples(BASELINE_TEST_SEED + index)
+      const { episodes, unmeasurable } = assembleDisengageEpisodes(samples)
+
+      // The totals identity, kept -- and now checked on all 200 runs instead of
+      // one, so "nothing is dropped and nothing double-counted" is asserted
+      // against every shape of run the batch happens to contain.
+      expect(episodes.length + unmeasurable.length).toBe(samples.filter((sample) => sample.kind === 'stamped').length)
+      // Every episode that survived assembly is measurable: a retarget must
+      // have been set aside, never folded into an episode whose two endpoints
+      // were measured against two different opponents.
+      for (const episode of episodes) {
+        expect(episode.targetId).toBeDefined()
+      }
+
+      const retargets = unmeasurable.filter((episode) => episode.cause === 'target-changed').length
+      if (retargets > 0) {
+        seedsWithRetarget += 1
+        retargetEpisodes += retargets
+      }
+    }
+
+    // The corroboration itself. The message carries the measured incidence so a
+    // future failure can be read without re-deriving it: at 5.3% of seeds,
+    // finding none in 200 is a ~0.002% draw, so it is evidence that the seam
+    // stopped setting retargets aside -- not that the batch got unlucky.
+    expect(
+      seedsWithRetarget,
+      `no retarget was set aside in ${RETARGET_BATCH_SEEDS} FFA seeds; measured incidence is 5.3% of seeds, so this is not a draw`,
+    ).toBeGreaterThan(0)
+
+    // ...and it stays the exception. The assertion above only proves the
+    // spoiling path is REACHABLE; this one proves it is still rare, which is
+    // the opposite failure and the one that would follow from an assembler
+    // that spoiled episodes it should have kept. Measured at 13 of 200 seeds
+    // (6.5%), so half the batch is ~8x the observed rate -- a bound on the
+    // wrong behaviour, not a pin on the right one.
+    expect(
+      seedsWithRetarget,
+      `${seedsWithRetarget} of ${RETARGET_BATCH_SEEDS} seeds spoiled an episode by retarget; measured incidence is 5.3%, so a majority means episodes are being set aside that should have been measured`,
+    ).toBeLessThan(RETARGET_BATCH_SEEDS / 2)
+
+    // NOT asserted, deliberately: across 300 seeds on this build every retargeting seed
+    // produced exactly ONE such episode, so `retargetEpisodes === seedsWithRetarget`
+    // held throughout. It is a measured regularity, not a law -- nothing stops
+    // a run from opening a second episode and having that retargeted too, and
+    // pinning a 5%-incidence coincidence is how the single-seed version of this
+    // test became a flapper in the first place. Recorded here instead.
+    expect(retargetEpisodes).toBeGreaterThan(0)
+  }, 60_000)
 })

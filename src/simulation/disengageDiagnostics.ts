@@ -45,34 +45,53 @@
 // at its recorded end separation -- and a label the endpoints contradict fails
 // the run.
 //
-// WHAT "INERT" MEANS HERE, AND WHAT IT DOES NOT. `record` is invoked
-// synchronously inside phase 2, exactly as `contactDiagnostics.ts` is invoked
-// inside phase 9 and `decisionDiagnostics` inside phase 4. Three rounds of
-// external review pushed on this and the third one was right, so the claim is
-// stated as narrowly as the measurement supports:
+// WHERE `record` IS ACTUALLY CALLED FROM, AND WHAT "INERT" MEANS GIVEN THAT.
+// `separation` (every kind) and `reason` (`cleared`) are still captured in
+// phase 2, before this tick's movement -- unchanged from the window described
+// above. `externalSeparationDelta` (every kind, INCLUDING `stamped` -- see the
+// P/Q addendum this slice's spec added) is different: it needs THIS tick's own
+// push, which is phase 9's `pushByTarget` (`encounter.ts`) and has not been
+// computed yet when phase 2 runs. So `record` is called for every kind right
+// after phase 9, from a pending list phase 2 built
+// (`encounter.ts`'s `PendingDisengageSample`) -- not synchronously inside
+// phase 2, and not from inside phase 9 either, unlike `contactDiagnostics.ts`
+// (called from inside phase 9's own resolution) and `decisionDiagnostics.ts`
+// (called from inside phase 4's). Three rounds of external review pushed on
+// the original synchronous-phase-2 claim before this revision moved the call
+// site, so the claim stays as narrow as the measurement supports:
 //
 //   **Inert for a collector that returns AND does not write to state it
 //   captured from outside the tick.**
 //
-// The second clause is not hypothetical and is not hedging. Measured: a
-// collector that returns normally but mutates `previous.encounter.combatants[
-// id].position` from inside `record` moves the bout's digest from `7e5009f3`
-// to `c13df37` and its length from 1175 ticks to 1687. `transitionExpiredPhases`
-// shallow-copies the combatant map, so those position objects stay shared and
-// every later phase reads the mutation. Two earlier revisions of this comment
-// claimed more than that -- first "inert", then "inert for a collector that
-// returns" -- and both were false.
+// The second clause is not hypothetical and is not hedging. Measured against
+// THIS SEAM'S ORIGINAL phase-2 call site, before `externalSeparationDelta`
+// existed: a collector that returns normally but mutates
+// `previous.encounter.combatants[id].position` from inside `record` moved the
+// bout's digest from `7e5009f3` to `c13df37` and its length from 1175 ticks to
+// 1687. `transitionExpiredPhases` shallow-copies the combatant map, so those
+// position objects stay shared and every later phase reads the mutation --
+// and that mechanism does not depend on which phase `record` happens to be
+// called from, since `combatants` is reassigned (never mutated in place)
+// through every phase regardless. The digests above were not re-measured
+// against the post-phase-9 call site introduced by this revision; the
+// mechanism they demonstrate is unchanged by moving the call, which is why
+// the claim above still holds without re-measuring. Two earlier revisions of
+// this comment claimed more than the boxed claim -- first "inert", then
+// "inert for a collector that returns" -- and both were false.
 //
 // What IS guaranteed, and is worth having:
 //
 //   - the sample handed to `record` is **only primitives** -- a tick, two ids,
 //     a number, a string reason. Nothing reachable from the kernel is passed
 //     out, so a collector has to go looking for state to break it;
-//   - when no collector is attached, nothing is built at all. The call sites
-//     use `collector?.record({...})`, and optional chaining does not evaluate
-//     its argument list on the nullish path, so the sample object is never
-//     allocated; the stamp branch, which computed no distance before this seam
-//     existed, is additionally behind an explicit `if`.
+//   - when no collector is attached, nothing is built at all. Every call site
+//     -- the stamp branch inside phase 2's `completeForcedStateTransitions`,
+//     and the post-phase-9 loop in `advanceEncounterTick` that finishes every
+//     pending `held`/`cleared`/`stamped` observation -- is behind an explicit
+//     `if (disengageCollector)` (or, at the final `record` call itself,
+//     `?.record({...})`, which does not evaluate its argument list on the
+//     nullish path), so no `PendingDisengageSample` and no `DisengageSample`
+//     is ever allocated.
 //
 // The same hostile collector perturbs the merged `contactDiagnostics` seam
 // identically (digest `7e5009f3` to `1499c999`), so this is a property of the
@@ -113,14 +132,25 @@ export type DisengageExitReason = 'range' | 'cap' | 'progress' | 'censored'
 export type DisengagePredicateExit = Exclude<DisengageExitReason, 'censored'>
 
 /**
- * One phase-2 observation of one fighter's forced disengage.
+ * One observation of one fighter's forced disengage.
  *
- * `separation` is root-to-root, read from the phase-2 state *before* this
- * tick's movement, and on `held`/`cleared` it is literally the number the exit
- * predicate was handed -- not a recomputation of it, so a record can never
- * disagree with the decision it describes. It is `Infinity`, and `targetId` is
- * `undefined`, exactly when phase 2 found no target; the kernel records that
- * rather than raising, and the assembler rejects the episode.
+ * `separation` (every kind) is root-to-root, read from the phase-2 state
+ * *before* this tick's movement, and on `held`/`cleared` it is literally the
+ * number the exit predicate was handed -- not a recomputation of it, so a
+ * record can never disagree with the decision it describes. It is `Infinity`,
+ * and `targetId` is `undefined`, exactly when phase 2 found no target; the
+ * kernel records that rather than raising, and the assembler rejects the
+ * episode.
+ *
+ * `externalSeparationDelta` (every kind, INCLUDING `stamped`) is this
+ * sample's OWN tick's push, projected onto the actor->target axis. It is not
+ * captured alongside `separation` in phase 2 -- phase 9 is what computes the
+ * push, so `record` for every kind is actually called after phase 9 (see the
+ * module header). Positive when that tick's push moved the pair apart.
+ * `stamped` carries it (not just `0`) because `assembleDisengageEpisodes`
+ * opens `DisengageEpisode.externalGround` from it: the stamp tick's own push
+ * is inside the window the raw endpoints span (`[startTick, endTick)`), and
+ * omitting it would silently drop the episode's first tick from the sum.
  *
  * `targetId` is carried on every sample because `actorId` alone is not enough
  * to make an episode meaningful. Phase 3 can replace a fighter's target while
@@ -136,9 +166,17 @@ export type DisengagePredicateExit = Exclude<DisengageExitReason, 'censored'>
  * already computes that distance every tick to feed the predicate.
  */
 export type DisengageSample =
-  | { kind: 'stamped'; tick: number; actorId: CombatantId; targetId: CombatantId | undefined; separation: number }
-  | { kind: 'held'; tick: number; actorId: CombatantId; targetId: CombatantId | undefined; separation: number }
-  | { kind: 'cleared'; tick: number; actorId: CombatantId; targetId: CombatantId | undefined; separation: number; reason: DisengagePredicateExit }
+  | { kind: 'stamped'; tick: number; actorId: CombatantId; targetId: CombatantId | undefined; separation: number; externalSeparationDelta: number }
+  | { kind: 'held'; tick: number; actorId: CombatantId; targetId: CombatantId | undefined; separation: number; externalSeparationDelta: number }
+  | {
+      kind: 'cleared'
+      tick: number
+      actorId: CombatantId
+      targetId: CombatantId | undefined
+      separation: number
+      externalSeparationDelta: number
+      reason: DisengagePredicateExit
+    }
 
 /** The kernel's whole view of this module: somewhere to write, nothing to read. */
 export interface DisengageCollector {
@@ -166,6 +204,33 @@ export interface DisengageEpisode {
   /** Separation at the clear, phase 2, before that tick's ordinary decision and movement. */
   endSeparation: number
   reason: DisengageExitReason
+  /**
+   * The sum of `externalSeparationDelta` for every tick in `[startTick,
+   * endTick)` -- the stamp's own tick and every `held` tick's, but NOT the
+   * clear's. Those are exactly the ticks `endSeparation - startSeparation`
+   * (the raw ground) is driven by: `startSeparation` is read at phase 2 of
+   * `startTick`, before that tick's own retreat and push; `endSeparation` is
+   * read at phase 2 of `endTick`, before *that* tick's own decision, movement
+   * and push. `cleared`'s own tick's push therefore happens strictly after
+   * `endSeparation` was already read and cannot have contributed to it, so
+   * `assembleDisengageEpisodes` excludes it from this sum -- summing it, an
+   * earlier revision of this attribution did, overcounts by exactly one
+   * boundary tick's push and undercounts by the stamp tick's, both against
+   * `DISENGAGE_SUCCESS_GROUND`'s 0.75 floor with authored pushes of
+   * 0.18-0.70, an error the same order as the bar it feeds.
+   *
+   * The remainder (`endSeparation - startSeparation - externalGround`) is the
+   * actor's own locomotion; `voluntaryGroundOpened`
+   * (`src/testSupport/disengageGates.ts`) is exactly that quantity. Still an
+   * approximation in exactly one direction beyond the window above: the arena
+   * clamp and collision resolution can shorten a push after it is recorded,
+   * so this OVERSTATES the external share rather than flattering the
+   * fighter -- and for a `censored` episode specifically, the last `held`
+   * sample's own tick's push is included even though the bout ends before any
+   * later reading could confirm it actually landed, which overstates in the
+   * same direction rather than a new one.
+   */
+  externalGround: number
 }
 
 /**
@@ -245,6 +310,13 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
     startSeparation: number
     lastTick: number
     lastSeparation: number
+    /**
+     * Running sum of `externalSeparationDelta`: the opening `stamped`
+     * sample's own value, plus every `held` sample's since. NOT `cleared`'s --
+     * see `DisengageEpisode.externalGround`'s doc for why that tick is
+     * excluded from the window.
+     */
+    externalGround: number
     /** Set once and never overwritten, so the reported tick is where it FIRST became unmeasurable. */
     spoiled?: { tick: number; cause: UnmeasurableCause }
   }
@@ -275,6 +347,7 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
       startSeparation: current.startSeparation,
       endSeparation,
       reason,
+      externalGround: current.externalGround,
     })
   }
 
@@ -305,6 +378,9 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
         startSeparation: sample.separation,
         lastTick: sample.tick,
         lastSeparation: sample.separation,
+        // The stamp tick's own push is inside `[startTick, endTick)`, so it
+        // opens the sum rather than starting it at `0`.
+        externalGround: sample.externalSeparationDelta,
       }
       if (sample.targetId === undefined) spoil(opened, sample.tick, 'no-target')
       open.set(sample.actorId, opened)
@@ -324,9 +400,15 @@ export function assembleDisengageEpisodes(samples: readonly DisengageSample[]): 
     if (sample.kind === 'held') {
       current.lastTick = sample.tick
       current.lastSeparation = sample.separation
+      current.externalGround += sample.externalSeparationDelta
       continue
     }
 
+    // `sample.externalSeparationDelta` (this `cleared` tick's own push) is
+    // deliberately NOT added here: it happens after `sample.separation` --
+    // about to become `endSeparation` -- was already read at phase 2, so it
+    // is outside `[startTick, endTick)` and cannot have contributed to the
+    // raw ground this episode reports.
     open.delete(sample.actorId)
     close(sample.actorId, current, sample.tick, sample.separation, sample.reason)
   }

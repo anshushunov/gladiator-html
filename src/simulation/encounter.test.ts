@@ -4,7 +4,7 @@ import { BASELINE_TEST_SEED, homeRoster, opponents } from '../content/mvpSeries'
 import { combatant, duelArena, freeArena, traceHash } from '../testSupport/combatFixtures'
 // Read rather than restated: the retiarius-reach slice moved both, and every
 // literal 2.4/30 in this file asserted a boundary the kernel no longer has.
-import { FAST_FORCED_DISENGAGE_END_RANGE, FAST_FORCED_DISENGAGE_MAX_TICKS } from './combatDecision'
+import { FAST_FORCED_DISENGAGE_END_RANGE, FAST_FORCED_DISENGAGE_MAX_TICKS, SHIPPED_FAST_FORCED_DISENGAGE_RULE } from './combatDecision'
 import type { AttackActionId, CombatActionState } from './combatActions'
 import {
   advanceEncounterTick,
@@ -14,6 +14,7 @@ import {
   createEncounter,
   finishEncounter,
   sortContactIntents,
+  withForcedDisengageRule,
   type ContactIntent,
   type EncounterCombatantDefinition,
   type EncounterConfig,
@@ -1211,6 +1212,127 @@ describe("advanceEncounterTick: Fast's forced disengage (design.md; Task 7's has
     expect(next.combatants.self.locomotionIntent).toBe('disengage')
     expect(next.randomByCombatant.self.decision).toEqual(decisionStreamBefore)
     expect(events.some((event) => event.type === 'movement-intent-changed' || event.type === 'action-started')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The swept exit rule (shield-shove slice, spec §5)
+//
+// `scripts/sweep-shove.ts` ran thirty cells whose forced-disengage exit rule
+// is not the shipped one. That script is parked on `feature/shield-shove` with
+// the mechanic it was fitting, so these two tests are now the ONLY exercise of
+// the non-shipped path anywhere in the tree -- which makes them more load-
+// bearing than when they were written, not less. The claim that carried the
+// sweep is the claim this branch makes about itself: that nothing outside it
+// moved. The two properties it rests on are pinned here rather than left to a
+// run someone did once:
+//
+//   1. the shipped rule writes NO new state, not even an undefined key
+//      (`stateHash.ts`'s `canonicalJson` walks `Object.entries`, so an
+//      explicitly-undefined key serialises as `null` and moves every frozen
+//      determinism digest); and
+//   2. `withForcedDisengageRule` at the shipped thresholds is the identity, by
+//      reference -- so "ran the control row" and "ran nothing" cannot diverge.
+//
+// The rule's own behaviour is exercised by the sweep, not here: this file's
+// business is what the kernel does with it.
+// ---------------------------------------------------------------------------
+
+describe('advanceEncounterTick: the forced-disengage exit rule is selectable, and the shipped default is untouched', () => {
+  /** A fast fighter mid-forced-disengage at `separation`, `ticksSinceForced` ticks in. */
+  function forcedAt(separation: number, tick: number, rule?: Parameters<typeof withForcedDisengageRule>[1]): EncounterState {
+    const created = createEncounter({
+      seed: 1,
+      combatants: [
+        combatant('self', 'home', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
+        combatant('other', 'away', { archetype: 'fast', startPosition: { x: separation, z: 0 } }),
+      ],
+      arena: freeArena,
+      hostility: { mode: 'different-factions' },
+      combatStyles: COMBAT_STYLES,
+    })
+    const base = patchCombatant(created.state, 'other', { nextDecisionTick: 999_999 })
+    const state = patchCombatant(base, 'self', {
+      targetId: 'other',
+      nextDecisionTick: 999_999,
+      locomotionIntent: 'disengage',
+      forcedDisengageStartTick: 0,
+      action: { type: 'neutral' },
+    })
+    const withTick: EncounterState = { ...state, tick }
+    return rule ? withForcedDisengageRule(withTick, rule) : withTick
+  }
+
+  it('writes no forcedDisengageStartSeparation anywhere on the shipped path, so no determinism digest can move', () => {
+    // Not `toBeUndefined()`: the field must be ABSENT. `'x' in obj` is the only
+    // assertion that tells an absent key from one explicitly set to undefined,
+    // and that difference is exactly what `canonicalJson` serialises.
+    let state = createEncounter(duelEncounterConfig({ seed: BASELINE_TEST_SEED })).state
+    for (let tick = 0; tick < 400 && state.phase === 'running'; tick += 1) {
+      state = advanceEncounterTick(state).state
+      for (const id of state.combatantIds) {
+        expect('forcedDisengageStartSeparation' in state.combatants[id]).toBe(false)
+      }
+    }
+    expect('forcedDisengageRule' in state).toBe(false)
+    // And the run actually exercised the mechanic, so this is not vacuous.
+    expect(state.tick).toBeGreaterThan(100)
+  })
+
+  it('returns the state itself, by reference, for a rule equal to the shipped one', () => {
+    const state = forcedAt(1.2, 4)
+    expect(withForcedDisengageRule(state, SHIPPED_FAST_FORCED_DISENGAGE_RULE)).toBe(state)
+    expect(withForcedDisengageRule(state, {
+      endRange: FAST_FORCED_DISENGAGE_END_RANGE,
+      maxTicks: FAST_FORCED_DISENGAGE_MAX_TICKS,
+      minGain: Number.POSITIVE_INFINITY,
+    })).toBe(state)
+  })
+
+  it('ends the disengage on ground opened relative to the start under a gain rule, where the shipped rule runs to its cap', () => {
+    // Pinned INSIDE the exit range and one tick short of the shipped cap, so
+    // only a gain clause can end it early. The fighter is stamped at 1.2 and
+    // the arena is free, so a `disengage` intent opens real ground each tick.
+    const gainRule = { endRange: FAST_FORCED_DISENGAGE_END_RANGE, maxTicks: 40, minGain: 0.2 }
+    const swept = forcedAt(1.2, 4, gainRule)
+    // The sweep's own stamp path is not reachable from a hand-built fixture, so
+    // the start separation is set the way phase 2 would have set it.
+    const stamped = patchCombatant(swept, 'self', { forcedDisengageStartSeparation: 1.2 })
+
+    let state = stamped
+    let clearedAt: number | undefined
+    for (let i = 0; i < 20 && clearedAt === undefined; i += 1) {
+      state = advanceEncounterTick(state).state
+      if (state.combatants.self.forcedDisengageStartTick === undefined) clearedAt = state.tick
+    }
+
+    expect(clearedAt).toBeDefined()
+    // Well before the shipped cap would have fired, and both halves of the
+    // paired state are cleared together.
+    expect(clearedAt as number).toBeLessThan(FAST_FORCED_DISENGAGE_MAX_TICKS)
+    expect(state.combatants.self.forcedDisengageStartSeparation).toBeUndefined()
+
+    // The same fixture on the shipped rule is still forced at that tick, which
+    // is what makes the comparison a measurement of the rule rather than of
+    // the fixture.
+    let shipped: EncounterState = forcedAt(1.2, 4)
+    for (let tick = 4; tick < (clearedAt as number); tick += 1) shipped = advanceEncounterTick(shipped).state
+    expect(shipped.combatants.self.forcedDisengageStartTick).toBe(0)
+  })
+
+  it('rejects a rule it cannot measure rather than quietly running one nobody chose', () => {
+    const state = forcedAt(1.2, 4)
+    const shipped = SHIPPED_FAST_FORCED_DISENGAGE_RULE
+    expect(() => withForcedDisengageRule(state, { ...shipped, endRange: 0 })).toThrow(/endRange/)
+    expect(() => withForcedDisengageRule(state, { ...shipped, maxTicks: 0 })).toThrow(/maxTicks/)
+    expect(() => withForcedDisengageRule(state, { ...shipped, minGain: 0 })).toThrow(/minGain/)
+    expect(() => withForcedDisengageRule(state, { ...shipped, minGain: Number.NaN })).toThrow(/minGain/)
+  })
+
+  it('raises when a start separation outlives its own episode', () => {
+    const state = forcedAt(1.2, 4)
+    const orphaned = patchCombatant(state, 'self', { forcedDisengageStartTick: undefined, forcedDisengageStartSeparation: 1.2 })
+    expect(() => assertEncounterInvariants(orphaned)).toThrow(/forcedDisengageStartSeparation/)
   })
 })
 

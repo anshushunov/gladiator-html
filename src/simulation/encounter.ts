@@ -57,19 +57,21 @@ import {
   buildCombatDecisionContext,
   chooseCombatDecision,
   decisionIntervalTicks,
-  hasFastForcedDisengageEnded,
+  fastForcedDisengageExit,
   isDefenseReactionOpportunity,
   processDefenseBatch,
   resolveForcedParryCounterStart,
   retainTarget,
   scoreCombatCandidates,
+  SHIPPED_FAST_FORCED_DISENGAGE_RULE,
   TARGET_ACQUISITION_RADIUS,
   TARGET_RETENTION_RADIUS,
+  type FastForcedDisengageRule,
   type IncomingThreat,
 } from './combatDecision'
 import type { ContactCollector, ContactOutcome } from './contactDiagnostics'
 import type { DecisionCollector, DecisionRecord } from './decisionDiagnostics'
-import type { DisengageCollector } from './disengageDiagnostics'
+import type { DisengageCollector, DisengagePredicateExit } from './disengageDiagnostics'
 import { DISPOSITION_IDS, dispositionModifiers, isDispositionId, type DispositionId } from './disposition'
 import type { FighterDefinition } from './fighters'
 import { compareArchetypes, comparisonDamageMultiplier, validateFighterDefinition } from './fighters'
@@ -214,6 +216,28 @@ export interface FighterCombatState {
    * not a persistent multi-tick state like this one.
    */
   forcedDisengageStartTick?: number
+  /**
+   * The root-to-root separation at the instant the disengage was stamped, read
+   * in phase 2 before that tick's movement -- the same instant the diagnostics
+   * seam records, so the number the exit predicate measures its gain against
+   * and the number a measurement reports as the episode's start are ONE number
+   * rather than two that happen to agree.
+   *
+   * WRITTEN ONLY UNDER A PURSUIT-RELATIVE RULE, and that is not an
+   * optimisation. `EncounterState.forcedDisengageRule` below is absent on every
+   * shipped path, so `minGain` is `Infinity`, so no gain is ever consulted and
+   * this field is never created. `stateHash.ts`'s `canonicalJson` walks
+   * `Object.entries`, and an explicitly-`undefined` key serialises as `null`
+   * and moves the digest -- so "the sweep changes no shipped state" has to mean
+   * the key is ABSENT, not merely undefined. It is, and every frozen
+   * determinism baseline is what proves it.
+   *
+   * Set and cleared together with `forcedDisengageStartTick` wherever it is
+   * used at all; `assertCombatantInvariants` checks the direction that holds in
+   * both modes (a separation without a tick is a stale number waiting to be
+   * picked up by the next episode, and is unreachable).
+   */
+  forcedDisengageStartSeparation?: number
 }
 
 export interface EncounterCombatantDefinition {
@@ -266,6 +290,33 @@ export interface EncounterState {
   randomByCombatant: Readonly<Record<CombatantId, CombatantRandomState>>
   nextEventId: number
   result?: Readonly<EncounterResult>
+  /**
+   * Which forced-disengage exit rule this encounter runs. **Absent on every
+   * shipped path**, and absent is not a shorthand for a default -- it is the
+   * statement that nothing outside a measurement has ever chosen a rule, so
+   * `SHIPPED_FAST_FORCED_DISENGAGE_RULE` is read at the one call site and the
+   * state carries nothing.
+   *
+   * Set only by `withForcedDisengageRule` below, which a sweep applies to a
+   * freshly created state. It sits beside `combatStyles` for the same reason
+   * `combatStyles` is here: it is a run parameter the tick loop needs and
+   * cannot rediscover, and the alternative -- a module-level mutable override
+   * in `combatDecision.ts` -- would make two concurrent encounters share one
+   * rule.
+   *
+   * NO PRODUCTION OR SCRIPT CALLER SETS IT ON THIS BRANCH. The sweep that did
+   * (`scripts/sweep-shove.ts`) is parked on `feature/shield-shove` along with
+   * the mechanic it was fitting; only `encounter.test.ts` exercises the
+   * non-shipped path. That is the intended state, not an oversight: the
+   * apparatus for measuring a candidate exit rule is worth keeping on `main`,
+   * and it is only worth keeping if the shipped path through it is provably
+   * the one that always ran -- which is what every unmoved frozen digest says.
+   *
+   * `?` and never written as `undefined`: see
+   * `FighterCombatState.forcedDisengageStartSeparation` for why an
+   * explicitly-undefined key is not the same as an absent one here.
+   */
+  forcedDisengageRule?: Readonly<FastForcedDisengageRule>
 }
 
 export interface EncounterTransition {
@@ -658,6 +709,49 @@ export function createEncounter(config: EncounterConfig): EncounterTransition {
   return { state, events: [startedEvent] }
 }
 
+/**
+ * A copy of `state` running `rule` instead of the shipped forced-disengage
+ * exit. Returns `state` ITSELF, by reference, for the shipped rule -- so
+ * "applied the shipped rule" and "applied nothing" are the same state object,
+ * not two equal ones, and no caller can accidentally introduce a
+ * `forcedDisengageRule` key into a state a determinism baseline hashes.
+ *
+ * WHY THIS EXISTS AT ALL, rather than a field on `EncounterConfig`. The
+ * measurement that needed it (`scripts/sweep-shove.ts`, parked on
+ * `feature/shield-shove` with the mechanic it was fitting) goes through
+ * `createBattle`, and `src/simulation/battle.ts` was closed to that slice by
+ * `scripts/check-allowlist.sh`, so there is no config path from the duel
+ * adapter down to `createEncounter`. Doing the substitution here, in the module
+ * that owns the state's shape and its invariants, is honest about that; leaving
+ * the script to spread a raw literal into a kernel state would not be.
+ *
+ * It therefore has NO caller on this branch outside `encounter.test.ts`. See
+ * `EncounterState.forcedDisengageRule` for why that is the intended state.
+ *
+ * The rule is validated rather than trusted: a sweep cell that fails to parse
+ * its own grid must stop the run, not quietly measure a rule nobody chose.
+ */
+export function withForcedDisengageRule(state: EncounterState, rule: Readonly<FastForcedDisengageRule>): EncounterState {
+  if (!Number.isFinite(rule.endRange) || rule.endRange <= 0) {
+    throw new Error(`FastForcedDisengageRule endRange must be a positive finite number, got ${String(rule.endRange)}`)
+  }
+  if (!Number.isInteger(rule.maxTicks) || rule.maxTicks < 1) {
+    throw new Error(`FastForcedDisengageRule maxTicks must be a positive integer, got ${String(rule.maxTicks)}`)
+  }
+  // `Infinity` is the legal way to say "this rule has no gain clause", which is
+  // what ships; `NaN` and non-positive values are not, because a `minGain <= 0`
+  // exits on the stamp tick and makes the whole mechanic one tick long.
+  if (Number.isNaN(rule.minGain) || rule.minGain <= 0) {
+    throw new Error(`FastForcedDisengageRule minGain must be positive (or Infinity for no gain exit), got ${String(rule.minGain)}`)
+  }
+  if (rule.endRange === SHIPPED_FAST_FORCED_DISENGAGE_RULE.endRange
+    && rule.maxTicks === SHIPPED_FAST_FORCED_DISENGAGE_RULE.maxTicks
+    && rule.minGain === SHIPPED_FAST_FORCED_DISENGAGE_RULE.minGain) {
+    return state
+  }
+  return { ...state, forcedDisengageRule: rule }
+}
+
 // ---------------------------------------------------------------------------
 // Completion
 // ---------------------------------------------------------------------------
@@ -911,6 +1005,38 @@ function forceLocomotionIntent(
 }
 
 /**
+ * A `stamped`/`held`/`cleared` disengage observation whose `separation`
+ * (phase 2, pre-movement, exactly as before) and `reason` (`cleared` only)
+ * are already final, but whose `externalSeparationDelta` is not: that needs
+ * THIS tick's `pushByTarget`, which phase 9 has not computed yet when phase 2
+ * runs. `advanceEncounterTick` finishes each of these into a `DisengageSample`
+ * right after phase 9, using `actor`/`target` (the same phase-2 snapshot
+ * `separation` was read from) to build the axis.
+ *
+ * `stamped` is deferred exactly like `held`/`cleared`, not recorded
+ * immediately, because `assembleDisengageEpisodes` opens
+ * `DisengageEpisode.externalGround` from the stamp sample's own
+ * `externalSeparationDelta`: the stamp tick's push is inside the window the
+ * raw endpoints span, so it has to be measured the same way the others are.
+ *
+ * A discriminated union, not one shape with an optional `reason`: only
+ * `cleared` carries one, so a `held`/`stamped` record with a `reason` is
+ * unrepresentable and the emission site below needs no `!` to satisfy it.
+ */
+type PendingDisengageSample =
+  | { kind: 'stamped'; tick: number; actorId: CombatantId; actor: Readonly<FighterCombatState>; target: FighterCombatState | undefined; separation: number }
+  | { kind: 'held'; tick: number; actorId: CombatantId; actor: Readonly<FighterCombatState>; target: FighterCombatState | undefined; separation: number }
+  | {
+      kind: 'cleared'
+      tick: number
+      actorId: CombatantId
+      actor: Readonly<FighterCombatState>
+      target: FighterCombatState | undefined
+      separation: number
+      reason: DisengagePredicateExit
+    }
+
+/**
  * Wires Fast's forced disengage (design.md's locomotion section): the
  * instant a `fast-burst-lunge` action's `recovery` phase ends (detected off
  * `previousCombatants`, the tick's pre-phase-1 snapshot, exactly like
@@ -934,9 +1060,17 @@ function completeForcedStateTransitions(
   tick: number,
   cursor: EventIdCursor,
   disengageCollector?: DisengageCollector,
-): { combatants: Record<CombatantId, FighterCombatState>; events: EncounterEvent[] } {
+  rule: Readonly<FastForcedDisengageRule> = SHIPPED_FAST_FORCED_DISENGAGE_RULE,
+): { combatants: Record<CombatantId, FighterCombatState>; events: EncounterEvent[]; pendingDisengage: PendingDisengageSample[] } {
   const next: Record<CombatantId, FighterCombatState> = { ...combatants }
   const events: EncounterEvent[] = []
+  const pendingDisengage: PendingDisengageSample[] = []
+  /**
+   * Whether the rule has a gain clause at all. False for everything that
+   * ships, and it is what keeps the shipped state shape untouched: the stamp
+   * separation below is neither computed nor stored when nothing will read it.
+   */
+  const tracksGain = Number.isFinite(rule.minGain)
 
   for (const id of combatantIds) {
     const previousCombatant = previousCombatants[id]
@@ -951,15 +1085,28 @@ function completeForcedStateTransitions(
 
     if (justEndedBurstLunge) {
       const forced = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
-      next[id] = { ...forced, forcedDisengageStartTick: tick }
       // Guarded, not merely short-circuited inside a helper. The stamp branch
       // never computed a distance before this seam existed, so doing it
       // unconditionally would add real work to the shipped runtime on every
       // lunge recovery -- raised in external review as the seam not being
-      // allocation-inert even though state and events were.
+      // allocation-inert even though state and events were. `tracksGain` joins
+      // the guard rather than replacing it: a pursuit-relative rule needs the
+      // number whether or not anyone is watching, and a shipped run still needs
+      // it only when someone is.
+      let stampSeparation: number | undefined
+      let stampTarget: FighterCombatState | undefined
+      if (disengageCollector || tracksGain) {
+        stampTarget = phaseTwoTarget(combatant, combatants)
+        stampSeparation = separationTo(combatant, stampTarget)
+      }
+      next[id] = tracksGain
+        ? { ...forced, forcedDisengageStartTick: tick, forcedDisengageStartSeparation: stampSeparation }
+        : { ...forced, forcedDisengageStartTick: tick }
+      // Deferred onto `pendingDisengage` rather than recorded here, same as
+      // `held`/`cleared` below: this tick's own push (needed for
+      // `externalSeparationDelta`) is not known until phase 9.
       if (disengageCollector) {
-        const target = phaseTwoTarget(combatant, combatants)
-        disengageCollector.record({ kind: 'stamped', tick, actorId: id, targetId: target?.id, separation: separationTo(combatant, target) })
+        pendingDisengage.push({ kind: 'stamped', tick, actorId: id, actor: combatant, target: stampTarget, separation: stampSeparation as number })
       }
       continue
     }
@@ -975,21 +1122,30 @@ function completeForcedStateTransitions(
     // either one; see `disengageDiagnostics.ts` for the inference this
     // replaces.
     //
-    // `?.record({...})` rather than a `recordDisengage(collector, {...})`
-    // helper: optional chaining does not evaluate the argument list when the
-    // collector is absent, while a plain call would build the sample object
-    // first and discard it. The previous revision did exactly that.
-    const exit = hasFastForcedDisengageEnded(separation, ticksSinceForced)
+    // Guarded by `if (disengageCollector)`, same reasoning as the stamp
+    // branch above: with no collector attached, nothing is pushed onto
+    // `pendingDisengage` and `advanceEncounterTick` builds no sample from it
+    // after phase 9 either.
+    // Ground opened on the episode's OWN start, which is what a
+    // pursuit-relative rule is measured against. `-Infinity` under the shipped
+    // rule (no start separation was stored, because nothing would read it), so
+    // the gain branch cannot fire -- see `NO_GROUND_OPENED` in
+    // `combatDecision.ts` for why the absent case is `-Infinity` and not `0`.
+    const groundOpenedSoFar =
+      combatant.forcedDisengageStartSeparation === undefined ? Number.NEGATIVE_INFINITY : separation - combatant.forcedDisengageStartSeparation
+    const exit = fastForcedDisengageExit(separation, ticksSinceForced, groundOpenedSoFar, rule)
     if (exit) {
-      next[id] = { ...combatant, forcedDisengageStartTick: undefined, nextDecisionTick: tick }
-      disengageCollector?.record({ kind: 'cleared', tick, actorId: id, targetId: target?.id, separation, reason: exit })
+      next[id] = tracksGain
+        ? { ...combatant, forcedDisengageStartTick: undefined, forcedDisengageStartSeparation: undefined, nextDecisionTick: tick }
+        : { ...combatant, forcedDisengageStartTick: undefined, nextDecisionTick: tick }
+      if (disengageCollector) pendingDisengage.push({ kind: 'cleared', tick, actorId: id, actor: combatant, target, separation, reason: exit })
     } else {
       next[id] = forceLocomotionIntent(combatant, 'disengage', tick, cursor, events)
-      disengageCollector?.record({ kind: 'held', tick, actorId: id, targetId: target?.id, separation })
+      if (disengageCollector) pendingDisengage.push({ kind: 'held', tick, actorId: id, actor: combatant, target, separation })
     }
   }
 
-  return { combatants: next, events }
+  return { combatants: next, events, pendingDisengage }
 }
 
 /**
@@ -1029,6 +1185,61 @@ function phaseTwoTarget(
  */
 function separationTo(self: FighterCombatState, target: FighterCombatState | undefined): number {
   return target ? distanceBetween(self.position, target.position) : Infinity
+}
+
+const ZERO_VEC: Readonly<Vec2> = { x: 0, z: 0 }
+
+/**
+ * Below this separation the actor->target axis is not well-defined, so
+ * `externalSeparationDeltaFor` returns `0` explicitly rather than asking
+ * `normalizeVec2` to fall back to its arbitrary fixed direction (positive
+ * x) -- a real push projected onto a meaningless axis is worse than no
+ * number. Matches `movement.ts`'s own private `EPSILON`; not imported from
+ * there since nothing in `movement.ts` exports it, and this slice's
+ * allowlist does not open that file. Effectively unreachable in a real
+ * encounter: contact resolution and the arena's `minimumSeparation` keep
+ * fighters apart by more than this.
+ */
+const DEGENERATE_AXIS_EPSILON = 1e-9
+
+/**
+ * The part of this tick's contact resolution attributable to external
+ * displacement, projected onto the actor->target axis recorded alongside
+ * this tick's disengage sample. Positive when this tick's pushes moved the
+ * pair apart: a push on the target moves the far end away (adds); a push on
+ * the actor moves the near end towards or past the target (subtracts).
+ *
+ * `actor`/`target` are the SAME phase-2, pre-movement `FighterCombatState`s
+ * `separationTo` was already called with for this sample -- the axis these
+ * two positions describe, not any position phases 7-10 move them to
+ * afterwards. `pushByTarget` is phase 9's own result for THIS tick
+ * (`ContactResolutionResult`, computed after phase 2 within the same
+ * `advanceEncounterTick` call), which is why the sample this feeds is built
+ * after phase 9 rather than inside phase 2 alongside `separation`
+ * (`PendingDisengageSample`, above).
+ *
+ * Zero with no target: `separationTo` already reports `Infinity` in that
+ * case, and `assembleDisengageEpisodes` marks the episode unmeasurable
+ * regardless of what this returns, so there is no axis worth constructing.
+ * Zero with a coincident actor and target too, for the same reason -- see
+ * `DEGENERATE_AXIS_EPSILON`.
+ */
+function externalSeparationDeltaFor(
+  actor: Readonly<FighterCombatState>,
+  target: FighterCombatState | undefined,
+  pushByTarget: Readonly<Record<CombatantId, Vec2>>,
+): number {
+  if (!target) return 0
+  if (distanceBetween(actor.position, target.position) <= DEGENERATE_AXIS_EPSILON) return 0
+  const axis = normalizeVec2({ x: target.position.x - actor.position.x, z: target.position.z - actor.position.z })
+  const targetPush = pushByTarget[target.id] ?? ZERO_VEC
+  const actorPush = pushByTarget[actor.id] ?? ZERO_VEC
+  // Inline dot product, matching `combatActions.ts`'s existing
+  // `actorFacing.x * dx + actorFacing.z * dz` idiom for a one-off projection
+  // rather than adding a shared helper for two call sites.
+  const targetPushAlongAxis = targetPush.x * axis.x + targetPush.z * axis.z
+  const actorPushAlongAxis = actorPush.x * axis.x + actorPush.z * axis.z
+  return targetPushAlongAxis - actorPushAlongAxis
 }
 
 /**
@@ -2371,7 +2582,15 @@ export function advanceEncounterTick(
   combatants = cleanup.combatants
   events.push(...cleanup.events)
 
-  const forcedTransitions = completeForcedStateTransitions(previous.combatants, combatants, previous.combatantIds, tick, cursor, disengageCollector)
+  const forcedTransitions = completeForcedStateTransitions(
+    previous.combatants,
+    combatants,
+    previous.combatantIds,
+    tick,
+    cursor,
+    disengageCollector,
+    previous.forcedDisengageRule ?? SHIPPED_FAST_FORCED_DISENGAGE_RULE,
+  )
   combatants = forcedTransitions.combatants
   events.push(...forcedTransitions.events)
 
@@ -2433,6 +2652,43 @@ export function advanceEncounterTick(
   const contactResolution = resolveContactIntents(combatants, previous.combatantIds, previous.combatStyles, previous.seed, tick, cursor, previous.arena, contactCollector)
   combatants = contactResolution.combatants
   events.push(...contactResolution.events)
+
+  // Every disengage sample phase 2 deferred (`PendingDisengageSample`, above
+  // `completeForcedStateTransitions`, ALL THREE kinds -- `stamped` included):
+  // `separation`/`reason` were already final at phase 2, but
+  // `externalSeparationDelta` needed this tick's own push, which phase 9 has
+  // only just computed. Finished here, in the same combatantIds order phase 2
+  // produced them in, so per-actor ordering is exactly what phase 2 would
+  // have produced -- and per-actor is the only ordering `assembleDisengageEpisodes`
+  // relies on: each actor emits at most one pending record per tick (the
+  // `stamped` branch and the `held`/`cleared` branch are mutually exclusive in
+  // the loop above), and this loop preserves tick order within an actor
+  // because `forcedTransitions.pendingDisengage` does. Interleaving with
+  // OTHER actors' records is irrelevant: the assembler tracks one open episode
+  // per actor in a `Map` and never compares across actors.
+  for (const pending of forcedTransitions.pendingDisengage) {
+    const externalSeparationDelta = externalSeparationDeltaFor(pending.actor, pending.target, contactResolution.pushByTarget)
+    if (pending.kind === 'cleared') {
+      disengageCollector?.record({
+        kind: 'cleared',
+        tick: pending.tick,
+        actorId: pending.actorId,
+        targetId: pending.target?.id,
+        separation: pending.separation,
+        externalSeparationDelta,
+        reason: pending.reason,
+      })
+    } else {
+      disengageCollector?.record({
+        kind: pending.kind,
+        tick: pending.tick,
+        actorId: pending.actorId,
+        targetId: pending.target?.id,
+        separation: pending.separation,
+        externalSeparationDelta,
+      })
+    }
+  }
 
   // Phase 10
   combatants = applyAccumulatedPush(combatants, previous.combatantIds, contactResolution.pushByTarget, previous.arena)
@@ -2556,6 +2812,34 @@ function assertCombatantInvariants(combatant: FighterCombatState, id: CombatantI
   requireFiniteInteger(combatant.lastResolutionTick, field('lastResolutionTick'))
   if (combatant.forcedDisengageStartTick !== undefined) {
     requireFiniteInteger(combatant.forcedDisengageStartTick, field('forcedDisengageStartTick'))
+  }
+
+  // ONE-DIRECTIONAL ON PURPOSE, and the direction is the one that holds under
+  // both rules. A start separation without a start tick is a stale number left
+  // to be picked up by the NEXT episode, which would silently make that
+  // episode's gain measure ground the fighter opened during a previous one --
+  // unreachable through `completeForcedStateTransitions`, which writes and
+  // clears both together, and checked here so that stays a property rather
+  // than a convention. The converse (a tick with no separation) is the SHIPPED
+  // state on every tick of every bout, because the shipped rule has no gain
+  // clause and therefore stores nothing to measure one against; asserting it
+  // would fail the whole existing suite.
+  if (combatant.forcedDisengageStartSeparation !== undefined) {
+    if (combatant.forcedDisengageStartTick === undefined) {
+      throw new Error(
+        `EncounterState ${field('forcedDisengageStartSeparation')} is set while ${field('forcedDisengageStartTick')} is not; ` +
+          'the disengage start separation would outlive its own episode',
+      )
+    }
+    // `NaN`, not `!isFinite`. `separationTo` returns `Infinity` with no target
+    // and its own header says so is deliberate -- a target can legitimately die
+    // or be dropped on the tick the stamp is taken, and raising on that would
+    // make the rule non-inert in exactly the case the seam was rewritten to
+    // tolerate. `NaN` is the value no arithmetic here can produce and every
+    // comparison silently swallows.
+    if (Number.isNaN(combatant.forcedDisengageStartSeparation)) {
+      throw new Error(`EncounterState ${field('forcedDisengageStartSeparation')} must not be NaN`)
+    }
   }
 
   requireFinite(combatant.travelledDistance, field('travelledDistance'))

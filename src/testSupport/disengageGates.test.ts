@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { FAST_FORCED_DISENGAGE_END_RANGE, FAST_FORCED_DISENGAGE_MAX_TICKS } from '../simulation/combatDecision'
 import type { DisengageEpisode, DisengageExitReason } from '../simulation/disengageDiagnostics'
-import { corroborate, disengageStats, DISENGAGE_SUCCESS_GROUND, groundOpened, isSuccess, SUCCESS_EXIT_REASONS } from './disengageGates'
+import { corroborate, disengageStats, DISENGAGE_SUCCESS_GROUND, groundOpened, isSuccess, SUCCESS_EXIT_REASONS, voluntaryGroundOpened } from './disengageGates'
 
 let nextStart = 0
 
@@ -16,6 +16,7 @@ function episodeAt(startSeparation: number, endSeparation: number, reason: Disen
     startSeparation,
     endSeparation,
     reason,
+    externalGround: 0,
   }
 }
 
@@ -53,6 +54,29 @@ describe('what counts as a success', () => {
 
   it('measures ground from the endpoints, signed', () => {
     expect(groundOpened(episode(-0.4, 'cap', FAST_FORCED_DISENGAGE_MAX_TICKS))).toBeCloseTo(-0.4, 10)
+  })
+
+  it('does not count an escape the pursuer created', () => {
+    const episode = {
+      actorId: 'a', targetId: 'b', startTick: 0, endTick: 20, ticks: 20,
+      startSeparation: 1.2, endSeparation: 2.2, externalGround: 0.9,
+      reason: 'progress' as const,
+    }
+
+    expect(groundOpened(episode)).toBeCloseTo(1.0, 10)      // the raw endpoints still say 1.0
+    expect(voluntaryGroundOpened(episode)).toBeCloseTo(0.1, 10)
+    expect(isSuccess(episode)).toBe(false)                   // 0.1 < DISENGAGE_SUCCESS_GROUND
+  })
+
+  it('still counts an escape the fighter made himself', () => {
+    const episode = {
+      actorId: 'a', targetId: 'b', startTick: 0, endTick: 20, ticks: 20,
+      startSeparation: 1.2, endSeparation: 2.2, externalGround: 0,
+      reason: 'progress' as const,
+    }
+
+    expect(voluntaryGroundOpened(episode)).toBeCloseTo(1.0, 10)
+    expect(isSuccess(episode)).toBe(true)
   })
 })
 
@@ -171,5 +195,56 @@ describe('disengageStats', () => {
     const stats = disengageStats([rangeEpisode(1.0), episode(0.1, 'cap', FAST_FORCED_DISENGAGE_MAX_TICKS), episode(0.1, 'censored')])
 
     expect(stats.byReason).toEqual({ range: 1, cap: 1, progress: 0, censored: 1 })
+  })
+
+  // Finding 3 (fix round 1): Q's medians must read `voluntaryGroundOpened`,
+  // not `groundOpened` -- `isSuccess` already selects the population by the
+  // voluntary measure, so reporting the raw one back out mixes two different
+  // quantities. Three successes, each opening 0.75+ voluntary ground so all
+  // three pass `isSuccess`, but each with a different external component so
+  // raw and voluntary disagree on which one is the median:
+  //
+  //   raw ground:       [0.80, 1.30, 1.00] -> sorted [0.80, 1.00, 1.30] -> median 1.00
+  //   voluntary ground:  [0.80, 0.90, 0.90] -> sorted [0.80, 0.90, 0.90] -> median 0.90
+  //
+  // A version still reading `groundOpened` here reports `1.00`; this asserts
+  // `0.90` and would fail under that regression.
+  it('reads Q’s medians off voluntary ground, not raw ground', () => {
+    const madeItHimself: DisengageEpisode = {
+      actorId: 'home' as DisengageEpisode['actorId'],
+      targetId: 'away' as DisengageEpisode['targetId'],
+      startTick: 0,
+      endTick: 12,
+      ticks: 12,
+      startSeparation: 1.0,
+      endSeparation: 1.8, // raw ground 0.80
+      externalGround: 0,
+      reason: 'progress',
+    }
+    const mostlyPushedButOverTheBar: DisengageEpisode = {
+      ...madeItHimself,
+      startTick: 20,
+      endTick: 32,
+      startSeparation: 1.0,
+      endSeparation: 2.3, // raw ground 1.30
+      externalGround: 0.4, // voluntary 0.90
+    }
+    const partlyPushed: DisengageEpisode = {
+      ...madeItHimself,
+      startTick: 40,
+      endTick: 52,
+      startSeparation: 1.0,
+      endSeparation: 2.0, // raw ground 1.00
+      externalGround: 0.1, // voluntary 0.90
+    }
+
+    const stats = disengageStats([madeItHimself, mostlyPushedButOverTheBar, partlyPushed])
+
+    // All three clear the 0.75 voluntary floor, so all three are successes
+    // and all three are also the entire `decided` population here.
+    expect(stats.successes).toBe(3)
+    expect(stats.decided).toBe(3)
+    expect(stats.groundMedianSuccesses).toBeCloseTo(0.9, 10)
+    expect(stats.groundMedianDecided).toBeCloseTo(0.9, 10)
   })
 })
