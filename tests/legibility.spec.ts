@@ -607,10 +607,12 @@ test('pins the widest pairing\'s band edge to the camera\'s own flat region', as
   const widest = Math.max(constants.radii.heavy, constants.radii.fast, constants.radii.technical)
   const widestBandHigh = BAND_SEPARATION_HIGH + EQUIPMENT_MARGIN * 2 * widest
   // Three decimals, not exact equality, and the residual is understood rather
-  // than absorbed: `ArenaCamera` states the widest radius as the four-decimal
-  // literal `1.3511`, while the rig measures 1.3511202..., so the two edges
-  // differ by 2.2 x 2.0e-5 = 4.4e-5 of extent. Measured, and stable: anything
-  // larger than half a thousandth means a real constant moved, not a rounding.
+  // than absorbed: `ArenaCamera` states the widest radius as a literal
+  // (`WIDEST_EQUIPMENT_RADIUS`, refreshed for Task 7's skinned-model rig to
+  // `1.8127755462598738` -- previously the four-decimal `1.3511` against a rig
+  // measuring `1.3511202...`), so any residual against the live measurement
+  // here is rounding, not drift. Measured, and stable: anything larger than
+  // half a thousandth means a real constant moved, not a rounding.
   expect(constants.flatRegionEdgeExtent).toBeCloseTo(widestBandHigh, 3)
   report(
     `band edge: widest pairing ${widestBandHigh.toFixed(5)}, camera flat region ends at ${constants.flatRegionEdgeExtent.toFixed(5)} ` +

@@ -36,23 +36,35 @@ export interface RecordedCameraTrace {
   crossings: number
 }
 
-// RE-RECORDED by the retiarius-reach slice, from a probe run over the changed
-// build. The three OPENING DISTANCES are unchanged to the last digit -- the
-// camera's reset framing is a pure function of the two start positions and the
-// rigs' radii, none of which this slice touches -- so what moved is exactly
-// what should have: bout length, and how often the framing crossed the band
-// edge while the fighters were actually fighting.
+// RE-RECORDED by Task 7 (skinned gladiators): Task 6 replaced the procedural
+// rig with skinned models, which changed each archetype's
+// `horizontalEquipmentRadius` -- the camera's framing input -- so OPENING
+// DISTANCE and CROSSINGS both move here. `ticks` must NOT move: the
+// simulation is untouched by this slice, only the camera's framing radii are,
+// so an unchanged bout length is exactly what confirms this is a re-recording
+// and not a re-baseline of something that actually broke. All three traces
+// below kept their original tick counts.
 //
-//   01 murmillo vs retiarius   2106 -> 1827 ticks   crossings 1 -> 1
-//   04 retiarius vs retiarius  1721 -> 1705 ticks   crossings 1 -> 5
-//   07 hoplomachus vs retiarius 1689 -> 1261 ticks  crossings 5 -> 5
+// First pass (radii refreshed, `ArenaCamera.ts`'s `WIDEST_EQUIPMENT_RADIUS`
+// still stale) produced a real regression: crossings spiked to 5/25/15 and two
+// pairings broke the reversal ceiling in `expectSmoothFraming` -- the tactical
+// band's flat region no longer covered the `technical` archetype's real
+// footwork. Per the coordinator's decision, `WIDEST_EQUIPMENT_RADIUS` is a
+// measured constant (not a swept one) and was refreshed to the technical
+// archetype's new radius, which restored the band. The final numbers below,
+// after that fix, land close to the PRE-Task-7 values (crossings back to
+// 1/5/5) because a correctly-sized band absorbs the wider equipment the same
+// way it always did:
 //
-// The retiarius-vs-retiarius trace gaining four band-edge crossings is the
-// visible face of the change: two fighters who now hold a real distance and
-// close for a committed attack cross the framing band where two fighters
-// locked at the arena floor never did.
+//   01 murmillo vs retiarius    1827 -> 1827 ticks   opening 15.0829 -> 15.5660   crossings 1 -> 1
+//   04 retiarius vs retiarius   1705 -> 1705 ticks   opening 15.9315 -> 15.8849   crossings 5 -> 5
+//   07 hoplomachus vs retiarius 1261 -> 1261 ticks   opening 16.2972 -> 16.2754   crossings 5 -> 5
+//
+// See the task-7 report for the full before/after (including the intermediate,
+// regressed pass) and the `ArenaCamera.ts` diff that refreshed
+// `WIDEST_EQUIPMENT_RADIUS`.
 export const RECORDED_TRACES: readonly RecordedCameraTrace[] = [
-  { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 1827, openingDistance: 15.082901146815477, crossings: 1 },
-  { label: '04 retiarius vs retiarius', lineup: ['aquila', 'nerva', 'brutus'], ticks: 1705, openingDistance: 15.931454116156672, crossings: 5 },
-  { label: '07 hoplomachus vs retiarius', lineup: ['nerva', 'brutus', 'aquila'], ticks: 1261, openingDistance: 16.29718777542238, crossings: 5 },
+  { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 1827, openingDistance: 15.565956748047434, crossings: 1 },
+  { label: '04 retiarius vs retiarius', lineup: ['aquila', 'nerva', 'brutus'], ticks: 1705, openingDistance: 15.884910243078675, crossings: 5 },
+  { label: '07 hoplomachus vs retiarius', lineup: ['nerva', 'brutus', 'aquila'], ticks: 1261, openingDistance: 16.275379050367395, crossings: 5 },
 ]

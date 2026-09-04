@@ -150,20 +150,31 @@ const MIN_DEAD_ZONE_REFERENCE = 1e-6
 /** design.md: the tactical band's upper edge, in PAIR SEPARATION -- the longest authored attack reach. */
 const BAND_HIGH_SEPARATION = 3.1
 
-/** The widest `horizontalEquipmentRadius` in the roster: the hoplomachus', measured off the built rig. */
-const WIDEST_EQUIPMENT_RADIUS = 1.3511
+/**
+ * The widest `horizontalEquipmentRadius` in the roster: the hoplomachus'
+ * (the `technical` archetype, the spear), measured off the skinned models'
+ * rest-pose `Box3` via `getArenaDebugSnapshot().framingTargets`. Task 6
+ * replaced the procedural rig with skinned models, which changed every
+ * archetype's radius -- `technical` 1.3511 -> 1.8127755462598738 (still
+ * widest), `heavy` -> 1.4275666701603713, `fast` -> 1.5955894278773255. This
+ * constant tracks the measurement, not a swept tuning value: `FLAT_DISTANCE`
+ * and `EASE_WIDTH_EXTENT` below are the swept pair, and stay put.
+ */
+const WIDEST_EQUIPMENT_RADIUS = 1.8127755462598738
 
 /**
  * The same band edge, expressed in the GROUP EXTENT that `extentToDistance`
  * below actually consumes.
  *
  * Extent adds both fighters' equipment radii with this module's own margin, so
- * the band's edges differ per pairing -- from 2.46-4.66 (murmillo vs murmillo,
- * the narrowest) to 3.87-6.07 (hoplomachus vs hoplomachus, the widest). The
- * flat region has to cover the band for EVERY pairing, so it ends at the widest
- * one's upper edge, which is what this arithmetic spells out (6.07242). Written
- * as the derivation rather than as the number so that it stays correct if the
- * margin changes, and so it is checkable without a spreadsheet.
+ * the band's edges differ per pairing -- from 4.04-6.24 (murmillo vs murmillo,
+ * the narrowest) to 4.89-7.09 (hoplomachus vs hoplomachus, the widest; both
+ * ranges widened under Task 7's skinned-model radii, from 2.46-4.66 and
+ * 3.87-6.07). The flat region has to cover the band for EVERY pairing, so it
+ * ends at the widest one's upper edge, which is what this arithmetic spells
+ * out (7.088106201771723). Written as the derivation rather than as the
+ * number so that it stays correct if the margin changes, and so it is
+ * checkable without a spreadsheet.
  */
 const BAND_HIGH_EXTENT = BAND_HIGH_SEPARATION + 2 * WIDEST_EQUIPMENT_RADIUS * (1 + EQUIPMENT_MARGIN_FRACTION)
 
@@ -230,9 +241,11 @@ export const FLAT_DISTANCE = 8.81
  * close while the pair spreads right out, and they then crop horizontally on
  * the narrow 542 px canvas at 1024x768.
  *
- * At `7.00` the far clamp is reached at extent `6.07 + 7.00 = 13.07`, above the
- * widest extent the nine pairings actually produce (11.37) -- so in play the
- * camera tops out near 16.6 and `maxDistance` is a guard rather than a framing
+ * At `7.00` the far clamp is reached at extent `BAND_HIGH_EXTENT + 7.00 =
+ * 14.09` (`7.09 + 7.00`; was `6.07 + 7.00 = 13.07` before Task 7's
+ * skinned-model radii widened `BAND_HIGH_EXTENT`), above the widest extent the
+ * nine pairings actually produce (12.36, was 11.37) -- so in play the camera
+ * still tops out near 16.6 and `maxDistance` is a guard rather than a framing
  * the fight sits at.
  */
 const EASE_WIDTH_EXTENT = 7.0
