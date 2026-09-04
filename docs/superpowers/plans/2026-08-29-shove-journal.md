@@ -20,8 +20,8 @@ are invisible to it. The count in §6 is therefore a floor, not a total.
 The slice built the murmillo's **shield shove** and adopted the murmillo-pin
 slice's parked **pursuit-relative forced-disengage exit** so the two could be
 fitted in one sweep, as §9.1 of the previous spec required. Thirty cells at 200
-seeds were measured, a finalist was chosen, and then **four builds were run
-against the full slow suite. All four failed gate T. `main` passes it.**
+seeds were measured, a finalist was chosen, and then **three candidate builds
+were run against the full slow suite. All three failed gate T. `main` passes it.**
 
 The design owner's ruling, 2026-09-04: **instruments to `main`, both mechanics
 parked.**
@@ -558,15 +558,19 @@ constants' effects on gate T are separable without a further sweep.
 **Base sat exactly on the 15.0% floor for `aquila/magnus` and `sura/magnus`** —
 §2.15.
 
-### 3.4 The four builds on the full slow suite — all fail gate T
+### 3.4 The three candidate builds on the full slow suite — all fail gate T
 
 | build | slow suite |
 |---|---|
 | `main` (`aec7a0a`) | **12 passed / 0 failed** |
-| main + shove | 5 failed / 12 |
+| HEAD, rule + shove (`a6b2f69`) | 5 failed / 12 |
 | rule only, cap 40 | 5 failed / 12 |
 | rule only, cap 37 | 3 failed / 12 |
-| HEAD, rule + shove | 5 failed / 12 |
+
+(The ledger listed a fourth row, "main + shove", with the same 5/12 — it was
+this same HEAD build written down twice, a controller's bookkeeping error caught
+while sourcing this table. No shove-without-the-rule build was ever run on the
+slow suite.)
 
 The slow project has **three** files, not four — `encounterCapacity.test.ts` is
 in the fast project, and run explicitly it gives **three builds, three distinct

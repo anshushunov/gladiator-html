@@ -4,7 +4,7 @@
 day after external review — see §10. **IMPLEMENTED, MEASURED, AND PARKED.**
 
 > **Outcome, 2026-09-04.** The slice was built on `feature/shield-shove` and
-> four candidate builds were measured on the full slow suite. All four failed;
+> three candidate builds were measured on the full slow suite. All three failed;
 > `main` passes. The design owner ruled both mechanics — the murmillo shield
 > shove and the pursuit-relative forced-disengage exit — **parked on that
 > branch**, and the slice's **instruments merged to `main`** on

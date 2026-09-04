@@ -1,8 +1,8 @@
 # Shield Shove Implementation Plan
 
 > **Outcome, 2026-09-04. THIS PLAN WAS EXECUTED AND ITS MECHANICS WERE PARKED.**
-> All thirteen tasks were built on `feature/shield-shove`. Four candidate builds
-> were measured on the full slow suite and all four failed, where `main` passes.
+> All thirteen tasks were built on `feature/shield-shove`. Three candidate builds
+> were measured on the full slow suite and all three failed, where `main` passes.
 > The design owner ruled the shove and the pursuit-relative forced-disengage
 > exit parked on that branch, and the slice's instruments merged to `main` on
 > `chore/shove-instruments`.
