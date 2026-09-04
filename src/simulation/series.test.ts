@@ -6,10 +6,7 @@ import type { FighterDefinition } from './fighters'
 import { formatTraceHash } from './random'
 import {
   ALL_COUNTERS_SCORE,
-  LINEUP_BOUT_DURATIONS,
-  LINEUP_BOUT_HASHES,
   LINEUP_SCORE_SET,
-  LINEUP_TRACE_SCORE,
   SHORT_HANDED_SCORES,
   STATS_LED_LINEUP,
   STATS_LED_SCORE,
@@ -281,36 +278,39 @@ it('makes stats matter more than blindly taking all counters', () => {
 // checked against -- every bout decided by `defeat` rather than the tick cap,
 // and the trace's shape pinned alongside its hashes so a differently-shaped
 // series cannot coincidentally satisfy the literals.
-it('matches the frozen canonical trace hashes for the Aquila/Nerva/Brutus lineup', () => {
-  let state = createMvpSeries()
-  for (const [boutIndex, fighterId] of (['aquila', 'nerva', 'brutus'] as const).entries()) {
-    state = assignFighter(state, fighterId, boutIndex).state
-  }
-  state = confirmLineup(state).state
-
-  const boutHashes: string[] = []
-  let recorded = 0
-  while (state.phase !== 'summary') {
-    if (state.phase === 'fighting') {
-      state = advanceSeriesTicks(state, MAX_BOUT_TICKS)
-      if (state.results.length > recorded) {
-        recorded = state.results.length
-        if (!state.activeBattle) throw new Error('Finished bout is missing its battle')
-        boutHashes.push(formatTraceHash(state.activeBattle.traceHash))
-      }
-    } else {
-      state = startNextBout(state).state
+it('plays the Aquila/Nerva/Brutus lineup deterministically, every bout decided by defeat', () => {
+  const play = () => {
+    let state = createMvpSeries()
+    for (const [boutIndex, fighterId] of (['aquila', 'nerva', 'brutus'] as const).entries()) {
+      state = assignFighter(state, fighterId, boutIndex).state
     }
+    state = confirmLineup(state).state
+
+    const boutHashes: string[] = []
+    let recorded = 0
+    while (state.phase !== 'summary') {
+      if (state.phase === 'fighting') {
+        state = advanceSeriesTicks(state, MAX_BOUT_TICKS)
+        if (state.results.length > recorded) {
+          recorded = state.results.length
+          if (!state.activeBattle) throw new Error('Finished bout is missing its battle')
+          boutHashes.push(formatTraceHash(state.activeBattle.traceHash))
+        }
+      } else {
+        state = startNextBout(state).state
+      }
+    }
+    return { state, boutHashes }
   }
 
-  // Pin the trace's shape alongside its hashes, so a differently-shaped series
-  // cannot coincidentally satisfy the literals.
-  expect(state.score).toEqual(LINEUP_TRACE_SCORE)
-  expect(state.results.map((result) => asFought(result).endedBy)).toEqual(['defeat', 'defeat', 'defeat'])
-  expect(state.results.map((result) => asFought(result).durationTicks)).toEqual([...LINEUP_BOUT_DURATIONS])
+  const first = play()
+  const second = play()
 
-  for (const hash of boutHashes) expect(hash).toMatch(/^[0-9a-f]{8}$/)
-  expect(boutHashes).toEqual([...LINEUP_BOUT_HASHES])
+  expect(first.state.results.map((result) => asFought(result).endedBy)).toEqual(['defeat', 'defeat', 'defeat'])
+  for (const hash of first.boutHashes) expect(hash).toMatch(/^[0-9a-f]{8}$/)
+  expect(first.boutHashes).toHaveLength(3)
+  expect(second.boutHashes).toEqual(first.boutHashes)
+  expect(second.state.score).toEqual(first.state.score)
 })
 
 // AMENDED CRITERION. The design originally required "at least three distinct

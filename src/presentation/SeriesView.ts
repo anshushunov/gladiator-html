@@ -8,8 +8,7 @@ import { DISPOSITION_IDS, isDispositionId, type DispositionId } from '../simulat
 import { CONDITION_LABELS, fightTelegraph, restTelegraph } from './conditionTelegraph'
 import { ORDER_LABELS, ORDER_TELEGRAPHS, TEMPERAMENT_DESCRIPTIONS, TEMPERAMENT_LABELS } from './dispositionLabels'
 import { formatPower } from './formatPower'
-import { typeVocabularyFor, type TypeVocabulary } from './gladiatorTypes'
-import { SHIPPED_LEGIBILITY_MODE, type LegibilityMode } from './legibilityMode'
+import { SHIPPED_TYPE_VOCABULARY, type TypeVocabulary } from './gladiatorTypes'
 
 export type SeriesIntent =
   | { type: 'assign'; fighterId: string; boutIndex: BoutIndex }
@@ -63,10 +62,7 @@ function fighterName(roster: readonly FighterDefinition[], id: string): string {
 /** Same lookup shape as `fighterName`, for the gladiator type -- used
  * anywhere a fighter is named without a `FighterDefinition` already in hand
  * (the active battle card and the series summary rows), so those surfaces
- * name fighters by type the same way the planning/matchup cards already do.
- * Takes the vocabulary rather than reaching for `TYPE_NAMES`: the review
- * toggle switches the whole label set at construction (see `TypeVocabulary`),
- * and a module-level constant here would quietly survive it. */
+ * name fighters by type the same way the planning/matchup cards already do. */
 function fighterType(vocabulary: TypeVocabulary, roster: readonly FighterDefinition[], id: string): string {
   const archetype = roster.find(({ id: fighterId }) => fighterId === id)?.archetype
   return archetype ? vocabulary.names[archetype] : ''
@@ -118,24 +114,15 @@ export class SeriesView {
   private lastRoster: readonly RosterEntry[] = []
   private pendingFocus: PendingFocus | null = null
   private lastFeedEventId = -1
-  /**
-   * The label set this view names gladiators with. Resolved once, at
-   * construction, from the review-only legibility mode -- this view is one of
-   * the three owners the mode has to reach (the others are `ArenaCamera`'s
-   * mapping and `ProceduralFighter`'s prop specs). `main.ts` only *builds*
-   * these three, so a toggle implemented there alone could not change a single
-   * label on screen.
-   */
-  private readonly vocabulary: TypeVocabulary
+  /** The label set this view names gladiators with. */
+  private readonly vocabulary: TypeVocabulary = SHIPPED_TYPE_VOCABULARY
 
   constructor(
     shell: HTMLElement,
     onIntent: (intent: SeriesIntent) => void,
-    legibility: LegibilityMode = SHIPPED_LEGIBILITY_MODE,
   ) {
     this.shell = shell
     this.onIntent = onIntent
-    this.vocabulary = typeVocabularyFor(legibility)
     shell.addEventListener('click', (event) => this.handleClick(event))
     shell.addEventListener('keydown', (event) => this.handleKeyDown(event))
   }

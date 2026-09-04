@@ -11,10 +11,9 @@
 // under `src/simulation/**`.
 
 import * as THREE from 'three'
-import { ArenaCamera, arenaCameraOptionsFor, FLAT_DISTANCE, measuredExtent, type ArenaCameraState, type HorizontalFramingTarget } from './ArenaCamera'
+import { ArenaCamera, FLAT_DISTANCE, measuredExtent, type ArenaCameraState, type HorizontalFramingTarget } from './ArenaCamera'
 import { createProceduralFighter, SEMANTIC_JOINT_NAMES, type JointName, type ProceduralFighter } from './ProceduralFighter'
 import { PoseController } from './PoseController'
-import { SHIPPED_LEGIBILITY_MODE, type LegibilityMode } from './legibilityMode'
 import type { JointTransform } from './poses/combatPoses'
 import type { BattleState } from '../simulation/battle'
 import type { ContactZone } from '../simulation/combatActions'
@@ -498,16 +497,6 @@ export class ArenaView {
   private readonly renderer: THREE.WebGLRenderer | undefined
   private readonly scene = new THREE.Scene()
   private readonly perspectiveCamera = new THREE.PerspectiveCamera(CAMERA_FOV_DEGREES, 1, CAMERA_NEAR, CAMERA_FAR)
-  /**
-   * Review-only (`legibilityMode.ts`). Held as a field because this view is
-   * the construction site of TWO of the mode's three owners -- the camera
-   * below and every `createProceduralFighter` call in `syncRigs` -- and both
-   * have to be handed the same mode. `CAMERA_MIN_DISTANCE` itself moves with
-   * it (`arenaCameraOptionsFor`): the near clamp and the mapping shipped
-   * together, so a configuration that restores the old mapping restores the
-   * old `11` with it.
-   */
-  private readonly legibility: LegibilityMode
   private readonly arenaCamera: ArenaCamera
   private readonly flashes: ContactFlashEffects
   private readonly rigs = new Map<CombatantId, FighterRig>()
@@ -554,9 +543,8 @@ export class ArenaView {
   /** Dev-only test surface (brief resolution #9); see `renderActiveBattleAtAlpha`. */
   declare getDebugSnapshot?: () => ArenaDebugSnapshot
 
-  constructor(private readonly canvas: HTMLCanvasElement, legibility: LegibilityMode = SHIPPED_LEGIBILITY_MODE) {
-    this.legibility = legibility
-    this.arenaCamera = new ArenaCamera(arenaCameraOptionsFor(legibility, CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE))
+  constructor(private readonly canvas: HTMLCanvasElement) {
+    this.arenaCamera = new ArenaCamera({ minDistance: CAMERA_MIN_DISTANCE, maxDistance: CAMERA_MAX_DISTANCE })
     try {
       this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
@@ -1027,7 +1015,7 @@ export class ArenaView {
     for (const id of ids) {
       if (this.rigs.has(id)) continue
       const archetype = combatants[id].definition.archetype
-      const fighter = createProceduralFighter({ archetype, legibility: this.legibility })
+      const fighter = createProceduralFighter({ archetype })
       this.scene.add(fighter.root)
       const trail = createTrail()
       this.scene.add(trail.line)

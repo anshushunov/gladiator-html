@@ -1,4 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
+import { COMBAT_STYLES } from '../src/content/combatStyles'
+import { advanceBattleTicks, createBattle, MAX_BOUT_TICKS } from '../src/simulation/battle'
+import { formatTraceHash } from '../src/simulation/random'
 
 // ---------------------------------------------------------------------------
 // Bout orders and opponent temperaments (2026-08-22): end-to-end acceptance for
@@ -312,12 +315,18 @@ test('shows every challenge\'s opponent temperaments on the season board', async
 // to see it.
 // ---------------------------------------------------------------------------
 
-// RE-FROZEN with `battle.test.ts`'s own literal by the retiarius-reach slice.
 // What this file asserts is that an explicit `standard` disposition perturbs
-// nothing -- the VALUE is incidental, the equality is the claim.
-const CANONICAL_DUEL_HASH = '2a0f3da2'
+// nothing -- the VALUE is incidental, the equality is the claim, so the
+// reference is computed here in Node rather than pinned as a literal.
+function nodeCanonicalDuelHash(): string {
+  const brutus = { id: 'brutus', name: 'Brutus', school: 'Test', archetype: 'heavy' as const, maxHp: 100, power: 10, accuracy: 0.8, defenseChance: 0.3, criticalChance: 0.1 }
+  const drusus = { id: 'drusus', name: 'Drusus', school: 'Test', archetype: 'fast' as const, maxHp: 100, power: 10, accuracy: 0.8, defenseChance: 0.3, criticalChance: 0.1 }
+  const battle = createBattle({ home: brutus, away: drusus, seed: 123, combatStyles: COMBAT_STYLES })
+  return formatTraceHash(advanceBattleTicks(battle, MAX_BOUT_TICKS).traceHash)
+}
 
-test('leaves the frozen canonical duel hash untouched under explicit standard dispositions', async ({ page }) => {
+test('leaves the canonical duel hash untouched under explicit standard dispositions', async ({ page }) => {
+  const CANONICAL_DUEL_HASH = nodeCanonicalDuelHash()
   await page.goto('/?snapshot')
 
   const { standardHash, pressHash, omittedHash } = await page.evaluate(async () => {
