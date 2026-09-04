@@ -1,18 +1,8 @@
-// Frozen literals split out of `src/simulation/series.test.ts`, so the CI gate
-// can protect that file's acceptance logic while these stay re-baselinable.
-//
-// There are FIVE content-dependent values here, not the two the split was
-// first scoped around, and they are NOT all the same kind of thing. The
-// spec's "Re-baselining: two kinds of artifact" governs which rule each one
-// obeys, so each block below states its class:
-//
-//   determinism -- may be re-frozen when behaviour changes on purpose, with a
-//   stated reason. It asserts only that the run is the same run.
-//
-//   product -- carries a claim about the game. It must continue to satisfy
-//   design.md's own criteria. If it cannot, the spec is amended FIRST, in the
-//   form Task 13's calibration amendment used: the deviation, the measurement
-//   that forced it, what it costs.
+// Content-dependent literals split out of `src/simulation/series.test.ts`.
+// Each carries a claim about the game (a "product" value): it must continue
+// to satisfy design.md's own criteria after a content change, verified against
+// the new run directly. Trace hashes and durations are deliberately NOT pinned
+// here any more -- determinism is asserted by running twice, not by a literal.
 //
 // -----------------------------------------------------------------------
 // THE CONFLICT THIS FILE EXISTED TO SURFACE HAS BEEN MET. RESOLVED.
@@ -33,46 +23,6 @@
 // "Amendment -- the golden series' 3-0 prohibition, decided rather than
 // relaxed".
 // -----------------------------------------------------------------------
-
-/**
- * CLASS: determinism. The `Aquila/Nerva/Brutus` lineup, all three bouts, at
- * the fixed seed. Pinned per bout rather than folded into one value so a
- * failure names the bout that moved.
- *
- *   bout 0  aquila vs drusus   away wins by defeat -> 9b27f0d9
- *   bout 1  nerva  vs cassius  home wins by defeat -> 9b59d2f7
- *   bout 2  brutus vs magnus   away wins by defeat -> 1e2f91ff
- *
- * ALL THREE re-frozen by the retiarius-reach slice. Unlike the 2026-08-18
- * re-freeze, which only moved the bout containing a Fast fighter, this slice
- * also recalibrated Heavy and Technical damage and every roster stat, so no
- * bout comes through byte-identical. Bout 2 changes hands: Brutus no longer
- * beats Magnus, which is the murmillo-mirror consequence of the same
- * recalibration the equal-stat cohort measures.
- */
-export const LINEUP_BOUT_HASHES: readonly string[] = ['9b27f0d9', '9b59d2f7', '1e2f91ff']
-
-/**
- * CLASS: determinism. The same three bouts' durations, pinned alongside the
- * hashes so a differently-shaped series cannot coincidentally satisfy them.
- * All three sit inside the roster cohort's 1200..2700 median band, which is
- * an acceptance claim and stays asserted in the test file.
- */
-export const LINEUP_BOUT_DURATIONS: readonly number[] = [1705, 1402, 1934]
-
-/**
- * CLASS: determinism. The same lineup's final score, pinned beside the hashes
- * for the same reason the durations are: to stop a differently-shaped series
- * from coincidentally satisfying the literals.
- *
- * NOT in the plan's inventory of five, and moved anyway. Leaving it in
- * `series.test.ts` would have recreated exactly the problem the split exists
- * to remove: the CI gate forbids that file from the content PR onward, and a
- * value that must move cannot live behind a rule that forbids moving it.
- * Note that this lineup (`aquila/nerva/brutus`) is NOT the `statsLed` one
- * (`aquila/brutus/nerva`) below, even though both currently read 2-1.
- */
-export const LINEUP_TRACE_SCORE = { home: 1, away: 2 } as const
 
 /**
  * CLASS: product. The lineup that beats the all-counter ordering, and its

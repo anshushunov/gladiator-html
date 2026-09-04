@@ -1,4 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
+import { COMBAT_STYLES } from '../src/content/combatStyles'
+import { advanceBattleTicks, createBattle, MAX_BOUT_TICKS } from '../src/simulation/battle'
+import { formatTraceHash } from '../src/simulation/random'
 
 // ---------------------------------------------------------------------------
 // Task 19: Complete Determinism, Visual Acceptance, Human Review, and
@@ -130,12 +133,17 @@ async function arenaSnapshot(page: Page) {
 //      render-rate-sensitive property left to prove is this one.
 // ---------------------------------------------------------------------------
 
-// RE-FROZEN with `battle.test.ts`'s own literal by the retiarius-reach slice,
-// and still the same fixture and seed: what this test proves is that Node and
-// Chromium agree, not what the value is.
-const CANONICAL_CHROMIUM_DUEL_HASH = '2a0f3da2'
+// Node's own answer, computed live in the test process rather than pinned as a
+// literal: what this test proves is that Node and Chromium agree, not what the
+// value is, so a content change never has to re-freeze anything here.
+function nodeCanonicalDuelHash(): string {
+  const brutus = { id: 'brutus', name: 'Brutus', school: 'Test', archetype: 'heavy' as const, maxHp: 100, power: 10, accuracy: 0.8, defenseChance: 0.3, criticalChance: 0.1 }
+  const drusus = { id: 'drusus', name: 'Drusus', school: 'Test', archetype: 'fast' as const, maxHp: 100, power: 10, accuracy: 0.8, defenseChance: 0.3, criticalChance: 0.1 }
+  const battle = createBattle({ home: brutus, away: drusus, seed: 123, combatStyles: COMBAT_STYLES })
+  return formatTraceHash(advanceBattleTicks(battle, MAX_BOUT_TICKS).traceHash)
+}
 
-test('matches the post-tuning Node trace hash in Chromium', async ({ page }) => {
+test('matches the Node trace hash in Chromium', async ({ page }) => {
   await page.goto('/?snapshot')
 
   const hash = await page.evaluate(async () => {
@@ -166,7 +174,8 @@ test('matches the post-tuning Node trace hash in Chromium', async ({ page }) => 
     return formatTraceHash(finished.traceHash)
   })
 
-  expect(hash).toBe(CANONICAL_CHROMIUM_DUEL_HASH)
+  expect(hash).toMatch(/^[0-9a-f]{8}$/)
+  expect(hash).toBe(nodeCanonicalDuelHash())
 })
 
 test('interpolates presentation without advancing simulation', async ({ page }) => {

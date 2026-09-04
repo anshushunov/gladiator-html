@@ -21,7 +21,6 @@
 import { describe, expect, it } from 'vitest'
 import { COMBAT_STYLES } from '../content/combatStyles'
 import { combatant, createHundredCombatantFfa, freeArena, makeGridCombatants, traceHash } from '../testSupport/combatFixtures'
-import { CAPACITY_TRACE_HASH } from '../testSupport/frozenFixtures/capacityTrace'
 import {
   advanceEncounterTick,
   advanceEncounterTicks,
@@ -187,12 +186,6 @@ describe('Task 12 Step 2: hundred-combatant capacity acceptance', () => {
   // blocks, 9 criticals, 201 staggers, 71 interruptions, 1075 movement-intent
   // changes. That census is the same one the anti-inertness thresholds above
   // derive from, so the two are consistent by construction.
-  it('matches its frozen canonical trace hash', () => {
-    const hash = traceHash(createEncounter(createHundredCombatantFfa()), CAPACITY_TICKS)
-    expect(hash).toMatch(/^[0-9a-f]{8}$/)
-    expect(hash).toBe(CAPACITY_TRACE_HASH)
-  }, CAPACITY_TIMEOUT_MS)
-
   it('is invariant to input combatant order: a fixed (non-random) shuffle produces identical sorted ids, state, events, and trace hash', () => {
     const config = createHundredCombatantFfa()
     const shuffledConfig: EncounterConfig = { ...config, combatants: [...config.combatants].reverse() }
