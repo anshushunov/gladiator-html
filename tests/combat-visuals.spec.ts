@@ -274,7 +274,7 @@ test("keeps each rig's rendered root yaw locked to its simulation facing, never 
 //
 //   Bout A -- home.brutus (heavy) vs away.drusus (fast), series 0 bout 0:
 //   heavy guard/cleave, fast burst/disengage, an ordinary hit+stagger, a
-//   shield block, a defense-declined recognition window, and the bout's own
+//   shield block, a defense-declined window, and the bout's own
 //   defeat.
 //
 //   Bout B -- home.nerva (technical) vs away.cassius (technical), series 0
@@ -399,7 +399,7 @@ test('separates body height from full prop bounds in the arena debug snapshot', 
   expect(overhang, 'the hoplomachus should carry visible prop beyond his own silhouette').toBeGreaterThan(5)
 })
 
-test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger, a shield block, defense-declined recognition, and defeat', async ({ page }) => {
+test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger, a shield block, a defense-declined window, and defeat', async ({ page }) => {
   await startBoutZeroWith(page, 'brutus')
   const cursor = { current: 0 }
 

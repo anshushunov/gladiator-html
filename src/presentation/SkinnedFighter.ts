@@ -1,8 +1,11 @@
 /// <reference types="vite/client" />
 
 // Loads the three shipped models once and clones a skinned rig per fighter.
-// Replaces ProceduralFighter: same `root` (world placement only), same five
-// anchor names, same `horizontalEquipmentRadius` contract for the camera.
+// Took over from the procedural rig this slice replaced, and deliberately kept
+// its three load-bearing contracts rather than inventing new ones: `root` is a
+// wrapper the caller places and turns and nothing else ever writes, the same
+// five equipment anchor names resolve, and `horizontalEquipmentRadius` still
+// measures what the camera's group framing consumes.
 
 import * as THREE from 'three'
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
