@@ -355,6 +355,42 @@ interface MatchupResult {
    * both.
    */
   shoveContacts: number
+  /**
+   * Bouts in this matchup containing at least one shove start -- gate W.1's
+   * coverage numerator, whose denominator is `bouts`.
+   *
+   * Counted per bout rather than derived from `shoveStarts`, because the two
+   * answer different questions and W.1 asks this one: 300 shoves concentrated
+   * in five bouts clears any start floor while describing a mechanic the
+   * murmillo reaches for almost never. Zero today, with `shoveStarts`.
+   */
+  boutsWithAShove: number
+  /**
+   * Every `action-started` whose actor is a murmillo -- gate W.2's denominator.
+   *
+   * `action-started` carries an `AttackActionId` and is emitted once per
+   * committed attack, so "attack decisions" needs no separate predicate here:
+   * the event type IS the population. Counted over the whole bout, not gated on
+   * `engaged`, for the same reason the shove counters are -- see below.
+   *
+   * Filtered by the ACTOR's archetype, not by the action id. Keying off the
+   * heavy action ids would silently need editing the moment content gives the
+   * murmillo another attack, and gate W.2 asks what share of what he does is
+   * the shove; a denominator that misses his newest action inflates that share.
+   */
+  murmilloAttackDecisions: number
+  /**
+   * The subset of `murmilloAttackDecisions` that chose the shove -- gate W.2's
+   * numerator.
+   *
+   * Deliberately NOT the same field as `shoveStarts`, though on today's content
+   * the two are numerically identical and both read zero. `shoveStarts` counts
+   * the action starting whoever started it; this counts a murmillo choosing it,
+   * so it is a true subset of the denominator it is divided by. If content ever
+   * gives the shove to a second style, W.2 stays a well-formed share and
+   * `shoveStarts` stays the coverage count it has always been.
+   */
+  shoveDecisions: number
   /** `attack-missed`/`attack-evaded`/`attack-parried` for the shove id. */
   shoveMisses: number
   /**
@@ -399,7 +435,8 @@ function recoveryTicksOf(actionId: string): number | undefined {
 function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupResult {
   const result: MatchupResult = { label: matchupLabel(home, away), home, away, all: emptyAccumulator(), engaged: emptyAccumulator(), homeWins: 0, bouts: 0,
     lungeStarts: 0, fastFighters: [home, away].filter((a) => a === 'fast').length,
-    disengages: [], shoveStarts: 0, shoveContacts: 0, shoveMisses: 0, shoveRecoveryContacts: 0, jabContacts: 0, jabRecoveryContacts: 0 }
+    disengages: [], shoveStarts: 0, shoveContacts: 0, boutsWithAShove: 0, murmilloAttackDecisions: 0, shoveDecisions: 0,
+    shoveMisses: 0, shoveRecoveryContacts: 0, jabContacts: 0, jabRecoveryContacts: 0 }
 
   for (let index = 0; index < seeds; index += 1) {
     let battle = createBattle({
@@ -409,6 +446,18 @@ function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupRes
       combatStyles: catalog,
     })
     const ids = [battle.descriptor.homeId, battle.descriptor.awayId]
+    /**
+     * Who is which style, for gate W.2's actor-filtered denominator. Built from
+     * the descriptor rather than read off `combatants[id].definition` inside the
+     * event loop, because `battle` is reassigned every tick and this mapping is
+     * fixed for the bout.
+     */
+    const archetypeById: Readonly<Record<string, Archetype>> = {
+      [battle.descriptor.homeId]: home,
+      [battle.descriptor.awayId]: away,
+    }
+    /** Bout-local, so `boutsWithAShove` counts bouts and not starts. */
+    let shovedThisBout = false
     const separationOf = (state: typeof battle): number => {
       const [a, b] = ids.map((id) => state.encounter.combatants[id])
       const dx = a.position.x - b.position.x
@@ -486,6 +535,15 @@ function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupRes
         // the spec these counters exist to feed.
         if (event.type === 'action-started' && event.actionId === SHOVE_ACTION_ID) {
           result.shoveStarts += 1
+          shovedThisBout = true
+        }
+
+        // Gate W.2's two halves, counted in one place so the share cannot be
+        // assembled from a numerator and a denominator taken over different
+        // populations -- the defect gate V's own comment records.
+        if (event.type === 'action-started' && archetypeById[event.actorId] === 'heavy') {
+          result.murmilloAttackDecisions += 1
+          if (event.actionId === SHOVE_ACTION_ID) result.shoveDecisions += 1
         }
 
         if (
@@ -541,6 +599,7 @@ function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupRes
       result.engaged.unengagedBouts += 1
     }
     result.bouts += 1
+    if (shovedThisBout) result.boutsWithAShove += 1
     if (battle.winnerSide === 'home') result.homeWins += 1
   }
 
@@ -699,14 +758,22 @@ for (const away of STYLES) {
 console.log('\nSHIELD SHOVE ATTRIBUTION (ground attribution for P/Q; gate W\'s coverage and punishability inputs)')
 console.log(
   `${'matchup'.padEnd(24)} ${'volGrndShr'.padStart(10)} ${'shvStart'.padStart(8)} ${'shvHit'.padStart(6)} ${'shvMiss'.padStart(7)} ` +
-  `${'recov/shv'.padStart(9)} ${'recov/jab'.padStart(9)}`,
+  `${'recov/shv'.padStart(9)} ${'recov/jab'.padStart(9)} ${'jabHit'.padStart(7)} ${'shvBouts'.padStart(9)} ${'shvDec/atk'.padStart(11)}`,
 )
+// The last three columns are the DENOMINATORS the three columns before them
+// divide by. They are printed rather than left to `--json` because a rate of
+// 0.000 beside a blank tells the reader nothing, and every zero in this table
+// today is the shove not existing rather than the shove being free -- which is
+// exactly the distinction gate W.4 was written to force.
 for (const m of matchups) {
   const share = voluntaryGroundShare(m)
+  const decisionShare = m.murmilloAttackDecisions > 0 ? pct(m.shoveDecisions / m.murmilloAttackDecisions) : '--'
   console.log(
     `${m.label.padEnd(24)} ${(share === null ? '--' : pct(share)).padStart(10)} ${String(m.shoveStarts).padStart(8)} ` +
     `${String(m.shoveContacts).padStart(6)} ${String(m.shoveMisses).padStart(7)} ` +
-    `${fixed(recoveryWindowContactsPerShove(m)).padStart(9)} ${fixed(recoveryWindowContactsPerJab(m)).padStart(9)}`,
+    `${fixed(recoveryWindowContactsPerShove(m)).padStart(9)} ${fixed(recoveryWindowContactsPerJab(m)).padStart(9)} ` +
+    `${String(m.jabContacts).padStart(7)} ${`${m.boutsWithAShove}/${m.bouts}`.padStart(9)} ` +
+    `${`${decisionShare} (${m.shoveDecisions}/${m.murmilloAttackDecisions})`.padStart(11)}`,
   )
 }
 
@@ -811,9 +878,23 @@ if (args.json) {
       // still a valid gate-U baseline: gate U reads `pinnedShare` and
       // `insideEnvelopeShare` and nothing else, and neither comes from the
       // contact ledger.
+      //
+      // THE RAW DENOMINATORS ARE EMITTED, NOT JUST THE RATES. `shoveContacts`
+      // and `jabContacts` are what gate W.4 reads, and W.4 exists precisely to
+      // tell a rate of 0 computed over a thousand contacts from a rate of 0
+      // computed over none -- which the two `recoveryWindowContactsPer*` rates
+      // below cannot distinguish, since both report 0 at zero contacts. A
+      // consumer handed only the rates cannot run W.4 at all.
+      //
+      // With these, every one of `ShoveRunSummary`'s nine fields
+      // (`src/testSupport/shoveGates.ts`) is assemblable from this artefact.
       voluntaryGroundShare: voluntaryGroundShare(m),
       shoveStarts: m.shoveStarts,
       shoveContacts: m.shoveContacts,
+      jabContacts: m.jabContacts,
+      boutsWithAShove: m.boutsWithAShove,
+      murmilloAttackDecisions: m.murmilloAttackDecisions,
+      shoveDecisions: m.shoveDecisions,
       shoveMisses: m.shoveMisses,
       recoveryWindowContactsPerShove: recoveryWindowContactsPerShove(m),
       recoveryWindowContactsPerJab: recoveryWindowContactsPerJab(m),

@@ -56,7 +56,30 @@
 // both be positive -- so a rate resting on an empty comparison population
 // cannot pass by looking better than a baseline that was never measured.
 
-/** Every counter gate W reads, for one run. Produced by `measure-distance.ts`'s counters (spec part 1). */
+/**
+ * Every counter gate W reads, for one run.
+ *
+ * All nine fields are produced by `scripts/measure-distance.ts` and emitted
+ * per matchup in its `--json` artefact (spec part 1). That was not true when
+ * this interface was written: `boutsWithAShove`, `murmilloAttackDecisions` and
+ * `shoveDecisions` had no producer anywhere, and `jabContacts` was accumulated
+ * but never emitted -- so W.4, the check that exists to tell a zero rate from a
+ * zero-over-zero, had no data source and the gate as a whole was not
+ * assemblable from anything this repository ships. The script now counts and
+ * emits all four.
+ *
+ * A summary is assembled by summing the per-matchup rows, EXCEPT the two rates,
+ * which must be recomputed from the summed raw counts rather than averaged:
+ * averaging nine per-matchup rates weights a matchup with three contacts the
+ * same as one with three hundred, and W.3 compares two of them against each
+ * other. `recoveryWindowContactsPer*` are emitted per matchup for the eye; the
+ * numbers gate W reads are the pooled ones.
+ *
+ * Every shove-keyed field reads zero on this branch, because
+ * `heavy-shield-shove` does not exist here -- which is gate W.1 and W.4 doing
+ * their job, not a gap. `jabContacts` and `murmilloAttackDecisions` are
+ * populated today.
+ */
 export interface ShoveRunSummary {
   shoveStarts: number
   shoveContacts: number
