@@ -76,7 +76,7 @@ export interface AudioBackend {
 }
 
 /** One combatant's footstep threshold for this render batch: the moment the
- * shared gait math (`poses/gait.ts`, the same module `PoseController` poses
+ * shared gait math (`gait.ts`, the same module `PoseController` poses
  * legs from) crosses into a new single-foot plant. `id` is a small
  * presentation-only counter `main.ts` mints per bout (never a simulation
  * event id, and never simulation randomness) -- `CombatAudio` dedupes it
@@ -99,7 +99,7 @@ export interface CombatAudioFrame {
 // ---------------------------------------------------------------------------
 // Pure helper: footstep threshold classification
 //
-// The gait math itself lives in `poses/gait.ts`, shared with
+// The gait math itself lives in `gait.ts`, shared with
 // `PoseController`: the two used to carry independent copies of it, agreeing
 // on *when* a foot plants only because both read the same authored
 // `STYLE_GAIT_CYCLE_DISTANCE` table. Re-exported here because
@@ -107,7 +107,7 @@ export interface CombatAudioFrame {
 // know it under this name, and because a footstep cue is what it means here.
 // ---------------------------------------------------------------------------
 
-export { classifyPlantedFoot } from './poses/gait'
+export { classifyPlantedFoot } from './gait'
 
 function footstepCueForArchetype(archetype: Archetype): CombatCue {
   return archetype === 'heavy' ? 'footstep-heavy' : 'footstep-light'

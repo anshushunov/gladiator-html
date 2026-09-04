@@ -8,7 +8,7 @@ import {
   type CombatCue,
 } from './CombatAudio'
 import { COMBAT_STYLES } from '../content/combatStyles'
-import { STYLE_GAIT_CYCLE_DISTANCE } from './poses/combatPoses'
+import { STYLE_GAIT_CYCLE_DISTANCE } from './gait'
 import type {
   ActionStartedEvent,
   AttackBlockedEvent,

@@ -11,8 +11,14 @@
 // wall-clock time, so equal travelled distance always yields an equal gait
 // regardless of frame rate or how many ticks elapsed to get there.
 
-import type { Archetype } from '../../simulation/fighters'
-import { STYLE_GAIT_CYCLE_DISTANCE } from './combatPoses'
+import type { Archetype } from '../simulation/fighters'
+
+/** Travelled distance per full gait cycle (both feet), per archetype. Authored content, shared by the clip mapping's walk time and the footstep audio thresholds. */
+export const STYLE_GAIT_CYCLE_DISTANCE: Readonly<Record<Archetype, number>> = {
+  heavy: 1.4,
+  fast: 0.95,
+  technical: 1.15,
+}
 
 /** Fraction of each gait half-cycle, on either side of its boundary, treated as a "both feet planted" double-support window. */
 export const DOUBLE_SUPPORT_FRACTION = 0.12

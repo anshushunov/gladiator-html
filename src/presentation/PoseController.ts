@@ -53,7 +53,7 @@ import {
   type StyleCorePoses,
 } from './poses/combatPoses'
 import { SEMANTIC_JOINT_NAMES, type JointName, type ProceduralFighter } from './ProceduralFighter'
-import { classifyGaitPhase, computeGaitPhase } from './poses/gait'
+import { classifyGaitPhase, computeGaitPhase } from './gait'
 import { computeIdlePhase, idleAmplitude, sampleIdleLayer } from './poses/idle'
 import { TICKS_PER_SECOND } from '../simulation/movement'
 

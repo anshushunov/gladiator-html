@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { COMBAT_STYLES } from '../../content/combatStyles'
 import type { Archetype } from '../../simulation/fighters'
 import { SEMANTIC_JOINT_NAMES, type JointName } from '../ProceduralFighter'
-import { ATTACK_POSE_PHASES, COMBAT_POSES, STYLE_CORE_POSE_KEYS, STYLE_GAIT_CYCLE_DISTANCE, type HumanoidPoseData } from './combatPoses'
+import { ATTACK_POSE_PHASES, COMBAT_POSES, STYLE_CORE_POSE_KEYS, type HumanoidPoseData } from './combatPoses'
+import { STYLE_GAIT_CYCLE_DISTANCE } from '../gait'
 
 const EASINGS = new Set(['linear', 'ease-in', 'ease-out', 'overshoot'])
 const JOINT_NAME_SET = new Set<JointName>(SEMANTIC_JOINT_NAMES)
