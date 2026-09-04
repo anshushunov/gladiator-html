@@ -1,20 +1,21 @@
 // The renderer: owns the Three.js scene, floor, lighting, resize handling,
 // and disposal (carried over from the previous side-keyed renderer), plus
 // everything Tasks 15-17 add on top of it -- a `Map<CombatantId,
-// ProceduralFighter>` keyed rig lifecycle, render-frame interpolation, a
-// `PoseController` per fighter, `ArenaCamera` delegation, and event-batch
+// SkinnedFighter>` keyed rig lifecycle, render-frame interpolation, a
+// `FighterAnimator` per fighter, `ArenaCamera` delegation, and event-batch
 // driven contact flashes/weapon trails.
 //
 // This module is rule-free: it only ever reads `BattleState`/`EncounterEvent`
-// data, interpolates it, and feeds it to `PoseController`/`ArenaCamera` --
-// it never decides a hit/phase/event outcome and never mutates anything
-// under `src/simulation/**`.
+// data, interpolates it, and feeds it to `clipMapping`/`FighterAnimator`/
+// `ArenaCamera` -- it never decides a hit/phase/event outcome and never
+// mutates anything under `src/simulation/**`.
 
 import * as THREE from 'three'
 import { ArenaCamera, FLAT_DISTANCE, measuredExtent, type ArenaCameraState, type HorizontalFramingTarget } from './ArenaCamera'
-import { createProceduralFighter, SEMANTIC_JOINT_NAMES, type JointName, type ProceduralFighter } from './ProceduralFighter'
-import { PoseController } from './PoseController'
-import type { JointTransform } from './poses/combatPoses'
+import { createSkinnedFighter, type FighterModelSet, type SkinnedFighter } from './SkinnedFighter'
+import { FighterAnimator } from './FighterAnimator'
+import { selectClip } from './clipMapping'
+import { FIGHTER_BONE_NAMES, type FighterBoneName } from './fighterModelContract'
 import type { BattleState } from '../simulation/battle'
 import type { ContactZone } from '../simulation/combatActions'
 import type { CombatantId, EncounterEvent, FighterCombatState } from '../simulation/encounter'
@@ -54,23 +55,23 @@ export interface BattleRenderFrame {
 export interface ArenaDebugSnapshot {
   rootPositions: Readonly<Record<CombatantId, Vec2>>
   /**
-   * Each rig's actual rendered world-facing yaw, read off the root
+   * Each rig's actual rendered world-facing yaw, read off the wrapper
    * `Group`'s quaternion (applied to the canonical forward vector, then
-   * `atan2`'d) rather than through `jointRotations` below -- `'root'` is
-   * deliberately absent from `fighter.joints` (see
-   * `ProceduralFighter.SEMANTIC_JOINT_NAMES`'s comment), so
-   * `jointRotations[id].root` always reads the harmless `[0, 0, 0]` fallback
-   * and cannot answer "did the pose layer clobber facing this frame?". This
-   * field is what a fixture compares against `atan2(facing.x, facing.z)`
-   * from the interpolated simulation state to prove it did not. Deliberately
-   * NOT `fighter.root.rotation.y` -- see `buildArenaDebugSnapshot`'s own
-   * comment for why that Euler read is unstable across the weapon-arm IK
-   * step's quaternion round-trip, even though the rendered rotation itself
-   * is unaffected.
+   * `atan2`'d) rather than through `jointRotations` below. The two are
+   * different objects on purpose: `fighter.root` is the wrapper this module
+   * places and turns from interpolated simulation state, while
+   * `jointRotations[id].root` is the model's *own* `root` bone nested
+   * underneath it, which the clip owns and which therefore cannot answer
+   * "did the animation layer clobber facing this frame?". This field is what
+   * a fixture compares against `atan2(facing.x, facing.z)` from the
+   * interpolated simulation state to prove it did not. Deliberately NOT
+   * `fighter.root.rotation.y` -- see `buildArenaDebugSnapshot`'s own comment
+   * for why that Euler read is unstable across a quaternion round-trip, even
+   * though the rendered rotation itself is unaffected.
    */
   rootYaw: Readonly<Record<CombatantId, number>>
   jointTransformsFinite: boolean
-  jointRotations: Readonly<Record<CombatantId, Readonly<Record<JointName, readonly [number, number, number]>>>>
+  jointRotations: Readonly<Record<CombatantId, Readonly<Record<FighterBoneName, readonly [number, number, number]>>>>
   activeEffectIds: readonly string[]
   trailPointCounts: Readonly<Record<CombatantId, number>>
   camera: ArenaCameraState
@@ -156,43 +157,25 @@ export interface ScreenPointPx {
 }
 
 /**
- * Which `ProceduralFighter` mesh slots (`userData.slot`) count toward
- * `ArenaDebugSnapshot.bodyHeightPx`: the man and what he wears. `'rim'` is
- * included because every rim outline in the rig belongs to a body mesh
- * (`addRimOutline` is only ever reached from `addBoxSegment`/`addSphere`,
- * which no equipment builder uses) and it is drawn 5% larger than the mesh it
- * outlines, so excluding it would under-report the silhouette that is
- * actually on screen.
+ * Which mesh slots (`userData.slot`, written into each `.glb` by the build
+ * script as `extras.slot` -- see `fighterModelContract.MESH_SLOTS`) count
+ * toward `ArenaDebugSnapshot.bodyHeightPx`: the man and what he wears.
  *
  * The three *held* slots (`HELD_EQUIPMENT_SLOTS` below) are absent on
  * purpose, and so is anything a later kit adds: an unrecognised slot counts
  * toward `fullBoundsPx` only. The safe direction for an unknown prop is that
  * it cannot inflate a body-size floor -- but silently *under*-reporting a
  * newly worn slot would understate the very number the scale floor is
- * asserted on, so `ProceduralFighter.test.ts` asserts that these two sets
- * together cover every slot all three real rigs actually emit, and that
- * neither set carries an entry the rigs no longer build.
+ * asserted on, so `fighterModelContract.test.ts` asserts that this set and
+ * `HELD_EQUIPMENT_SLOTS` together partition `MESH_SLOTS` exactly.
  *
  * Exported for that test only; nothing else outside this module reads it.
  */
-export const BODY_SILHOUETTE_SLOTS: ReadonlySet<string> = new Set([
-  'cloth',
-  'skin',
-  'limb',
-  'rim',
-  'visor',
-  'breastplate',
-  'backplate',
-  'armor',
-  'helmet',
-  'crest',
-  'greave',
-  'shoulderGuard',
-])
+export const BODY_SILHOUETTE_SLOTS: ReadonlySet<string> = new Set(['body', 'helmet'])
 
 /**
- * The complement of `BODY_SILHOUETTE_SLOTS` over the slots the rig really
- * emits: what a fighter *holds* rather than wears. These are what
+ * The complement of `BODY_SILHOUETTE_SLOTS` over the slots the models really
+ * emit: what a fighter *holds* rather than wears. These are what
  * `fullBoundsPx` adds on top of the body silhouette, and the reason
  * `bodyHeightPx` exists as a separate number at all.
  */
@@ -233,8 +216,9 @@ const CAMERA_MAX_DISTANCE = 18
  * side of a fighter therefore gains screen height on the facing where that
  * side is the far one -- which is how the retiarius' shoulder guard came to
  * silhouette above his bare head twice over (Task 4 review rounds 1 and 2).
- * `ProceduralFighter.test.ts` derives the angle from this constant rather than
- * keeping a second copy of it, so moving the camera's pitch re-checks the rig.
+ * Anything checking rig geometry against the camera's pitch derives the angle
+ * from this constant rather than keeping a second copy of it, so moving the
+ * camera's pitch re-checks the rig.
  */
 export const CAMERA_ELEVATION_RATIO = 8.8 / 13
 /**
@@ -327,24 +311,6 @@ function deepFreeze<T>(value: T): T {
     deepFreeze((target as Record<string, unknown>)[key])
   }
   return value
-}
-
-/** Applies a fully-built `HumanoidPose` (every semantic joint present, per `PoseController.apply`'s contract) onto a rig's live `Object3D` graph. `PoseController` itself never mutates the persistent rig -- it only borrows `fighter.root` as a scratch FK buffer for the IK sub-step and restores it -- so the caller (this module) owns actually applying the sampled pose every frame. */
-function applyPoseToJoints(fighter: ProceduralFighter, pose: Readonly<Record<JointName, JointTransform>>): void {
-  for (const name of SEMANTIC_JOINT_NAMES) {
-    // `fighter.joints` deliberately excludes `'root'` (see
-    // `SEMANTIC_JOINT_NAMES`'s comment in `ProceduralFighter.ts`), so this
-    // lookup returning `undefined` for it is what keeps `sample.pose.root`
-    // (always the identity transform -- no authored pose ever sets it) from
-    // ever overwriting the world facing `applyFrame` set on `fighter.root`
-    // moments earlier from interpolated simulation state. Previously `root`
-    // *was* a joint here, and this loop zeroed that facing every frame.
-    const joint = fighter.joints.get(name)
-    if (!joint) continue
-    const transform = pose[name]
-    joint.rotation.set(transform.rotation[0], transform.rotation[1], transform.rotation[2])
-    if (transform.position) joint.position.set(transform.position[0], transform.position[1], transform.position[2])
-  }
 }
 
 function buildContactFlashGeometry(zone: ContactZone): THREE.BufferGeometry {
@@ -459,10 +425,12 @@ class ContactFlashEffects {
 // ---------------------------------------------------------------------------
 
 interface FighterRig {
-  fighter: ProceduralFighter
-  poseController: PoseController
-  /** Set once by `processNewEvents` on a `defense-declined` event, consumed (and cleared) by the very next pose sample -- `PoseController` only needs the triggering tick handed across once (its own doc comment). */
-  pendingDefenseDeclinedTick?: number
+  fighter: SkinnedFighter
+  animator: FighterAnimator
+  /** Tick of the `fighter-staggered` event that opened the current stagger; cleared with the rig on every new bout. */
+  staggerStartTick?: number
+  /** Tick of the `fighter-defeated` event. */
+  defeatedAtTick?: number
   trailGeometry: THREE.BufferGeometry
   trailMaterial: THREE.LineBasicMaterial
   trailLine: THREE.Line
@@ -486,15 +454,18 @@ function createTrail(): { geometry: THREE.BufferGeometry; material: THREE.LineBa
 
 export class ArenaView {
   /**
-   * `undefined` only when construction itself failed (final-review fix #2:
-   * no WebGL context could be created at all) -- every other field below is
-   * still built normally in that case (they need no live GL context to
-   * construct), so `contextLost` is the single source of truth for whether
-   * rendering is possible; `this.renderer` and `this.contextLost` are always
-   * set together, so every read site below that is already guarded by
-   * `!this.contextLost` (or returns early on it) can safely non-null-assert.
+   * `undefined` only when construction itself failed -- either no WebGL
+   * context could be created at all (final-review fix #2) or the fighter
+   * models did not load (this slice). Every other field below is still built
+   * normally in that case (they need no live GL context to construct), so
+   * `contextLost` is the single source of truth for whether rendering is
+   * possible; `this.renderer` and `this.contextLost` are always set together,
+   * so every read site below that is already guarded by `!this.contextLost`
+   * (or returns early on it) can safely non-null-assert. Not `readonly`: the
+   * models-failed branch in the constructor clears it after the renderer was
+   * already built.
    */
-  private readonly renderer: THREE.WebGLRenderer | undefined
+  private renderer: THREE.WebGLRenderer | undefined
   private readonly scene = new THREE.Scene()
   private readonly perspectiveCamera = new THREE.PerspectiveCamera(CAMERA_FOV_DEGREES, 1, CAMERA_NEAR, CAMERA_FAR)
   private readonly arenaCamera: ArenaCamera
@@ -543,7 +514,7 @@ export class ArenaView {
   /** Dev-only test surface (brief resolution #9); see `renderActiveBattleAtAlpha`. */
   declare getDebugSnapshot?: () => ArenaDebugSnapshot
 
-  constructor(private readonly canvas: HTMLCanvasElement) {
+  constructor(private readonly canvas: HTMLCanvasElement, private readonly models: FighterModelSet | null) {
     this.arenaCamera = new ArenaCamera({ minDistance: CAMERA_MIN_DISTANCE, maxDistance: CAMERA_MAX_DISTANCE })
     try {
       this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
@@ -560,6 +531,12 @@ export class ArenaView {
       // context lost *after* construction -- `contextLost = true`, canvas
       // hidden, fallback text shown -- rather than adding a second failure
       // mode every other method would need to learn about.
+      this.renderer = undefined
+      this.contextLost = true
+    }
+    if (!this.models && !this.contextLost) {
+      // Models failed to load: same readable fallback as "no WebGL", the season keeps running.
+      this.renderer?.dispose()
       this.renderer = undefined
       this.contextLost = true
     }
@@ -788,26 +765,19 @@ export class ArenaView {
       rig.fighter.root.position.set(position.x, 0, position.z)
       rig.fighter.root.rotation.set(0, Math.atan2(facing.x, facing.z), 0)
 
-      const contactTarget = this.computeContactTarget(currState, previous, current, alpha)
-
-      const sample = rig.poseController.apply(
-        {
-          previous: prevState,
-          current: currState,
-          previousTick: previous.encounter.tick,
-          currentTick: current.encounter.tick,
-          alpha,
-          reducedMotion,
-          reaction: { defenseDeclinedTick: rig.pendingDefenseDeclinedTick, contactTarget },
-        },
-        rig.fighter,
-      )
-      rig.pendingDefenseDeclinedTick = undefined
-
-      applyPoseToJoints(rig.fighter, sample.pose)
+      const selection = selectClip({
+        archetype: currState.definition.archetype,
+        state: currState,
+        tick: current.encounter.tick,
+        alpha,
+        staggerStartTick: rig.staggerStartTick,
+        defeatedAtTick: rig.defeatedAtTick,
+        durations: rig.animator.durations,
+      })
+      rig.animator.apply(selection)
       rig.fighter.root.updateMatrixWorld(true)
 
-      this.updateWeaponTrail(rig, sample.weaponTrailActive && !reducedMotion)
+      this.updateWeaponTrail(rig, selection.weaponTrailActive && !reducedMotion)
 
       framingTargets.push({ id, centerX: position.x, centerZ: position.z, radius: rig.fighter.horizontalEquipmentRadius })
     }
@@ -866,53 +836,20 @@ export class ArenaView {
             this.flashes.spawn(event.contactZone, event.contactPoint, presentationMs)
           }
           break
-        case 'defense-declined': {
-          const rig = this.rigs.get(event.defenderId)
-          if (rig) rig.pendingDefenseDeclinedTick = event.tick
+        case 'fighter-staggered': {
+          const rig = this.rigs.get(event.combatantId)
+          if (rig) rig.staggerStartTick = event.tick
+          break
+        }
+        case 'fighter-defeated': {
+          const rig = this.rigs.get(event.defeatedId)
+          if (rig) rig.defeatedAtTick = event.tick
           break
         }
         default:
           break
       }
     }
-  }
-
-  /**
-   * Weapon-arm IK target for one fighter, gated to exactly the contact/
-   * impact window and cleared otherwise (Task 16 review, carried forward as
-   * a hard requirement): outside `contact`/`impact` this returns
-   * `undefined`, so `PoseController` never engages IK off a stale point
-   * through windup/recovery.
-   *
-   * Derived solely from this fighter's own single `action.targetId` --
-   * every `FighterCombatState` carries exactly one `action`, so a fighter
-   * can never have more than one candidate contact target at once, by
-   * construction. This is deliberate: it is what a defender's `action`
-   * (block/evade/parry) also has -- `targetId` there names the attacker it
-   * is reacting to -- so the same rule uniformly aims *either* an attacker's
-   * weapon at their target *or* a defender's weapon arm back at the
-   * attacker they are parrying/blocking, with no branching on attack vs.
-   * defense. The "multiple simultaneous contact events" ambiguity the
-   * brief's carried-forward note describes would only arise if this instead
-   * scanned the tick's *event batch* for every attacker currently
-   * contacting one defender (only possible outside a two-fighter duel,
-   * where several attackers can target the same defender in one tick) --
-   * that path is not used here, so it is never reachable. If a future mass
-   * caller ever needs it, the documented tie-break would be: take the
-   * contact-producing event (`attack-blocked`/`attack-parried`/
-   * `damage-dealt`) with the lowest `id` in the current batch (the first
-   * one phase 9's contact resolution actually resolved) and derive the
-   * target from its actor.
-   */
-  private computeContactTarget(currState: Readonly<FighterCombatState>, previous: BattleState, current: BattleState, alpha: number): Vec2 | undefined {
-    const action = currState.action
-    if (action.type !== 'active') return undefined
-    if (action.phase !== 'contact' && action.phase !== 'impact') return undefined
-    const targetId = action.targetId
-    const prevTarget = previous.encounter.combatants[targetId]
-    const currTarget = current.encounter.combatants[targetId]
-    if (!prevTarget || !currTarget) return undefined
-    return lerpVec2(prevTarget.position, currTarget.position, alpha)
   }
 
   private updateWeaponTrail(rig: FighterRig, active: boolean): void {
@@ -1012,16 +949,22 @@ export class ArenaView {
       this.rigs.delete(id)
     }
 
+    // Both callers (`startBout`, `applyFrame`) already return early on
+    // `contextLost`, and a null `models` set forces `contextLost` in the
+    // constructor -- so this can only be reached with models present. Kept as
+    // an explicit guard rather than a non-null assertion because
+    // `createSkinnedFighter` is the one call here that would fail loudly.
+    if (!this.models) return
     for (const id of ids) {
       if (this.rigs.has(id)) continue
       const archetype = combatants[id].definition.archetype
-      const fighter = createProceduralFighter({ archetype })
+      const fighter = createSkinnedFighter(this.models, archetype)
       this.scene.add(fighter.root)
       const trail = createTrail()
       this.scene.add(trail.line)
       this.rigs.set(id, {
         fighter,
-        poseController: new PoseController(),
+        animator: new FighterAnimator(fighter.root, fighter.clips),
         trailGeometry: trail.geometry,
         trailMaterial: trail.material,
         trailLine: trail.line,
@@ -1032,6 +975,7 @@ export class ArenaView {
 
   private disposeRig(rig: FighterRig): void {
     this.scene.remove(rig.fighter.root)
+    rig.animator.dispose()
     rig.fighter.dispose()
     this.scene.remove(rig.trailLine)
     rig.trailGeometry.dispose()
@@ -1220,7 +1164,7 @@ function buildArenaDebugSnapshot(
 ): ArenaDebugSnapshot {
   const rootPositions: Record<CombatantId, Vec2> = {}
   const rootYaw: Record<CombatantId, number> = {}
-  const jointRotations: Record<CombatantId, Record<JointName, readonly [number, number, number]>> = {}
+  const jointRotations: Record<CombatantId, Record<FighterBoneName, readonly [number, number, number]>> = {}
   const trailPointCounts: Record<CombatantId, number> = {}
   const bodyHeightPx: Record<CombatantId, number> = {}
   const fullBoundsPx: Record<CombatantId, ScreenBoundsPx> = {}
@@ -1242,30 +1186,26 @@ function buildArenaDebugSnapshot(
     // one of two equally valid decompositions of the same rotation for a
     // pure-yaw quaternion (`(0, yaw, 0)` or the "flipped" `(pi, pi-yaw,
     // pi)`), and which one `.rotation` reads back as is not stable across a
-    // quaternion round-trip. `PoseController`'s weapon-arm IK step
-    // (`solveWeaponArmIk`) does exactly such a round-trip every tick this
-    // fighter has a live `contactTarget` (`root.quaternion.identity()` for
-    // its own FK scratch pass, then `root.quaternion.copy(savedQuaternion)`
-    // to restore) -- `Quaternion.copy` restores the quaternion's *value*
-    // exactly (confirmed: the restored quaternion is bit-identical to the
-    // saved one, and the rendered mesh orientation is therefore correct),
-    // but three.js does not guarantee `.rotation` re-derives the same Euler
-    // triple it started from, only an equivalent one. Reading `.rotation.y`
-    // straight after that round-trip can read the other, "flipped"
-    // decomposition, whose `y` differs from the original yaw by up to pi --
-    // this was caught by this file's own regression test failing at tick
-    // 329 of the frozen seed-20260815 duel with rendered/expected yaw
-    // summing to ~-pi, the textbook signature of exactly this ambiguity.
-    // Deriving yaw from the quaternion applied to the canonical forward
-    // vector instead is decomposition-independent -- both Euler solutions
-    // yield the identical quaternion (that is what makes them equivalent),
-    // so this reads the same yaw regardless of which one `.rotation`
-    // happens to cache.
+    // quaternion round-trip. Any code path that writes the wrapper's
+    // quaternion and restores it (the procedural rig's weapon-arm IK step
+    // used to do exactly that every tick a fighter had a live contact
+    // target) restores the quaternion's *value* exactly, but three.js does
+    // not guarantee `.rotation` re-derives the same Euler triple it started
+    // from, only an equivalent one -- so `.rotation.y` can read the other,
+    // "flipped" decomposition, whose `y` differs from the original yaw by up
+    // to pi. This was caught by `tests/combat-visuals.spec.ts`'s root-yaw
+    // regression failing at tick 329 of the frozen seed-20260815 duel with
+    // rendered/expected yaw summing to ~-pi, the textbook signature of
+    // exactly this ambiguity. Deriving yaw from the quaternion applied to
+    // the canonical forward vector instead is decomposition-independent --
+    // both Euler solutions yield the identical quaternion (that is what
+    // makes them equivalent), so this reads the same yaw regardless of
+    // which one `.rotation` happens to cache.
     const worldForward = new THREE.Vector3(0, 0, 1).applyQuaternion(rig.fighter.root.quaternion)
     rootYaw[id] = Math.atan2(worldForward.x, worldForward.z)
-    const rotationsForRig = {} as Record<JointName, readonly [number, number, number]>
-    for (const name of SEMANTIC_JOINT_NAMES) {
-      const joint = rig.fighter.joints.get(name)
+    const rotationsForRig = {} as Record<FighterBoneName, readonly [number, number, number]>
+    for (const name of FIGHTER_BONE_NAMES) {
+      const joint = rig.fighter.bones.get(name)
       if (!joint) {
         rotationsForRig[name] = [0, 0, 0]
         continue

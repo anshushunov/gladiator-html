@@ -1,5 +1,6 @@
 import './style.css'
 import { ArenaView, type ArenaDebugSnapshot, type BattleRenderFrame } from './presentation/ArenaView'
+import { loadFighterModels } from './presentation/SkinnedFighter'
 import { SeriesView, type RuntimeViewState, type SeriesIntent } from './presentation/SeriesView'
 import { SeasonView } from './presentation/SeasonView'
 import {
@@ -146,7 +147,15 @@ const seasonView = new SeasonView(required<HTMLElement>('#season-ui'))
 // `handleClick` simply has no `case` for these two action names, the same
 // way this one ignores every action it does not recognize.
 shell.addEventListener('click', handleSeasonClick)
-const arenaView = new ArenaView(canvas)
+// Top-level await: the arena cannot build a rig before its models are parsed,
+// and every e2e test waits for `window.__GLADIATOR_TEST__`, which is published
+// below this line -- so nothing in the suite observes a half-loaded arena.
+// A failed load takes the same readable-fallback path as missing WebGL.
+const fighterModels = await loadFighterModels().catch((error: unknown) => {
+  console.error('Fighter models failed to load; arena display disabled.', error)
+  return null
+})
+const arenaView = new ArenaView(canvas, fighterModels)
 const combatAudio = new CombatAudio(createBrowserAudioBackend())
 
 /**
@@ -227,24 +236,21 @@ let pendingEvents: EncounterEvent[] = []
  * `CombatAudio`'s own per-render batch, accumulated and reset in lockstep
  * with `pendingEvents` (same reasoning, same lifecycle) but kept as a
  * separate array/type: footstep thresholds are presentation-only pseudo-
- * events `PoseController.ts`/`ArenaView.ts` never see and `EncounterEvent`'s
+ * events `clipMapping.ts`/`ArenaView.ts` never see and `EncounterEvent`'s
  * union does not include, minted per tick by `collectFootstepThresholds`
  * (`presentation/footstepThresholds.ts`) from each combatant's own
  * `travelledDistance` via `classifyPlantedFoot` -- the same gait math
- * `PoseController` samples for cosmetic leg poses, mirrored rather than
- * imported since neither `PoseController.ts` nor `ArenaView.ts` is one of
- * this task's owned files (see `CombatAudio.ts`'s own header comment).
+ * (`presentation/gait.ts`) `clipMapping` uses to phase the walk clip.
  * Gated to `status === 'active' && tick >= staggerUntilTick` (final-review
  * fix #5) so a staggered/defeated fighter's phase-10 pushback travel never
- * mints a footstep for feet `PoseController.applyGroundingLayer` isn't even
- * grounding that tick.
+ * mints a footstep for a tick the rig is playing a hit or death clip on.
  */
 let pendingFootsteps: FootstepThreshold[] = []
 
 /** One entry per combatant, the last `classifyPlantedFoot` result computed
  * for them this bout -- lets `collectFootstepThresholds` detect a *change*
  * (design.md: "fire when the planted foot changes") without re-deriving
- * `PoseController`'s own per-frame state. Reset (cleared) at every bout
+ * the renderer's own per-frame state. Reset (cleared) at every bout
  * boundary alongside `pendingFootsteps`; an absent entry is treated as
  * `'both'`, matching every fresh combatant's own `travelledDistance: 0`
  * baseline (`buildFighterCombatState`), so the very first tick of a bout

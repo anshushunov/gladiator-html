@@ -21,10 +21,11 @@ async function startBoutZeroWith(page: Page, homeFighterId: 'brutus' | 'aquila' 
   // `page.goto` resolves on `load`, which does not guarantee the app has
   // installed `window.__GLADIATOR_TEST__`: `main.ts` assigns it inside an
   // `import.meta.env.DEV` block at the end of its own module evaluation, and
-  // under a loaded machine the next line has been observed running first and
-  // failing with `TypeError: Cannot read properties of undefined (reading
-  // 'startNextSeries')`. A timeout cannot fix a `TypeError`; waiting for the
-  // surface can.
+  // that evaluation now suspends on a top-level `await loadFighterModels()`
+  // -- so the surface reliably appears one network round-trip AFTER `load`,
+  // where it used to appear before it only by luck. A timeout cannot fix the
+  // resulting `TypeError`; waiting for the surface can. Every `goto` in the
+  // suite is followed by this same wait, for the same reason.
   await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   // `main.ts` now boots straight onto the season board (Task 8) -- there is
   // no bridge past it -- so `startNextSeries()` is what actually opens
@@ -145,6 +146,7 @@ function nodeCanonicalDuelHash(): string {
 
 test('matches the Node trace hash in Chromium', async ({ page }) => {
   await page.goto('/?snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
 
   const hash = await page.evaluate(async () => {
     // Root-relative specifiers (resolved by Vite's dev server against the
@@ -212,21 +214,8 @@ test('interpolates presentation without advancing simulation', async ({ page }) 
 // ---------------------------------------------------------------------------
 // Root-yaw regression (2026-08-19 combat-legibility follow-up).
 //
-// `ProceduralFighter.ts` used to register the rig's world-placement root
-// `Group` as an ordinary semantic joint (`joints.set('root', root)`, with
-// `'root'` first in `SEMANTIC_JOINT_NAMES`). `ArenaView.applyFrame` sets the
-// correct facing on `rig.fighter.root.rotation` from interpolated simulation
-// state, then immediately calls `applyPoseToJoints`, which walks
-// `SEMANTIC_JOINT_NAMES` and does `joint.rotation.set(...)` for every entry
-// it finds a joint for -- including, back then, `'root'`. No authored pose
-// in `poses/combatPoses.ts` defines a `root` entry, so that pose sample's
-// `root` transform was always the identity, and every fighter's yaw was
-// silently zeroed back to world `+Z` on every rendered frame regardless of
-// which way the simulation actually had it facing. This is the actual root
-// cause behind the "fighters always face the camera" playtest report. The
-// fix stops registering `root` as a joint at all (see that file's own
-// comment), so `applyPoseToJoints`'s existing `if (!joint) continue` guard
-// now permanently -- not just for this pose set -- excludes it.
+// Root-yaw regression: pose application must never touch the root's world
+// facing. Kept as the guard for the clip-driven rig too.
 //
 // `renderActiveBattleAtAlpha(1)` (the same dev-only hook the key-pose
 // captures below use) forces a full-alpha render, so the rendered facing is
@@ -304,9 +293,9 @@ test("keeps each rig's rendered root yaw locked to its simulation facing, never 
 // owned files can read without modifying `ArenaView.ts`/`main.ts`: it proves
 // every rendered joint transform is finite (never NaN/Infinity) and reports
 // which contact-flash effect IDs are live, at each frozen tick -- the
-// "blocking pose checks" the brief asks for. `PoseController`'s own pose
-// math (which semantic pose a given phase/tag maps to) is already unit
-// tested elsewhere (Tasks 15-16); this task's job is proving these specific
+// "blocking pose checks" the brief asks for. `clipMapping`'s own selection
+// math (which clip and clip time a given phase/state maps to) is already unit
+// tested elsewhere; this task's job is proving these specific
 // semantic states are actually reachable, at these specific frozen ticks, in
 // a real deterministic run.
 // ---------------------------------------------------------------------------
@@ -320,8 +309,8 @@ test("keeps each rig's rendered root yaw locked to its simulation facing, never 
 // pre-committed scale floor is a floor on how big the *man* reads, and a
 // hoplomachus holding a 1.30-unit spear or a murmillo behind a 1.10-unit
 // scutum would satisfy a floor measured over everything on screen without
-// being any easier to see. `ProceduralFighter.test.ts` pins the slot
-// partition those two numbers are built from; this pins that the partition
+// being any easier to see. `fighterModelContract.test.ts` pins the slot tags
+// the shipped models carry; this pins that the partition
 // actually reaches the rendered pixels, against a real bout, through the real
 // projection, at the viewport the floor is stated at.
 //
@@ -388,12 +377,25 @@ test('separates body height from full prop bounds in the arena debug snapshot', 
     expect(withoutWeapon.maxY - withoutWeapon.minY).toBeGreaterThanOrEqual(body - 1e-6)
   }
 
-  // The spear carrier specifically: his props must add real, measurable height
-  // beyond his own body, or the two numbers would be measuring the same thing
-  // and the floor could be satisfied by the polearm.
+  // The spear carrier specifically: his polearm must add real, measurable
+  // extent beyond everything he wears, or the two numbers would be measuring
+  // the same thing and the scale floor could be satisfied by the polearm.
+  //
+  // Measured across both axes, and against `boundsPxWithoutWeapon` (body +
+  // helmet + shield) rather than against `bodyHeightPx` alone. The procedural
+  // hoplomachus held his spear upright, so the prop's whole contribution was
+  // vertical and a height difference was a sufficient proxy; the shipped model
+  // levels the spear at his opponent, which puts the same reach into
+  // `minX`/`maxX` instead -- 36 px of width here against 1.6 px of extra
+  // height. Asserting height alone would now be asserting the authored pose
+  // rather than the slot partition this test exists for. Same 5 px magnitude.
   const spearCarrier = 'home.nerva'
   const spearFull = snapshot.fullBoundsPx[spearCarrier]
-  const overhang = spearFull.maxY - spearFull.minY - snapshot.bodyHeightPx[spearCarrier]
+  const spearWorn = snapshot.boundsPxWithoutWeapon[spearCarrier]
+  const overhang = Math.max(
+    spearFull.maxX - spearFull.minX - (spearWorn.maxX - spearWorn.minX),
+    spearFull.maxY - spearFull.minY - (spearWorn.maxY - spearWorn.minY),
+  )
   expect(overhang, 'the hoplomachus should carry visible prop beyond his own silhouette').toBeGreaterThan(5)
 })
 
@@ -469,50 +471,28 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   expect(disengaging.locomotionIntent).toBe('disengage')
   expect(disengaging.forcedDisengageStartTick).toBe(926)
 
-  // tick 1200: a quiet baseline read, before the decline below -- away.drusus
-  // is neutral (its stagger cleared at tick 1168 and it has no action of its
-  // own running), so no reaction-overlay layer (recognition-flinch,
-  // block/evade/parry, stagger, or defeat) touches its `head` joint here.
-  // `PoseController`'s own layering leaves an untouched joint at the identity
-  // transform, so this is `[0, 0, 0]` -- captured only to give the tick-1123
-  // assertion below a same-run, same-rig comparison point, not asserted as a
-  // standalone fact about the renderer.
-  await advanceToTick(page, 1200, cursor)
-  const drususBaselineHead = (await arenaSnapshot(page))!.jointRotations['away.drusus'].head
-
   // tick 1242: a `defense-declined` window -- away.drusus declined to defend
   // against home.brutus (instance `home.brutus:11`, the SAME instance the old
   // freeze named, at event tick 1239), and the eventual damage has not landed
   // yet.
   //
-  // This is the recognition-flinch trigger window `PoseController`/
-  // `ArenaView` consume (see `ArenaView.ts`'s `pendingDefenseDeclinedTick`).
-  // Asserting only `jointTransformsFinite` here would pass identically even
-  // if the flinch had never been wired into `PoseController`/`ArenaView` at
-  // all -- an unrendered flinch is still a finite, non-crashing frame. The
-  // renderer-specific guarantee is the `head` joint itself: `PoseController`
-  // only ever writes `head` from `recognitionFlinch`/`stagger`/`defeat`
-  // overlays (`buildRecognitionFlinch` in `combatPoses.ts` sets it to
-  // `[0.14, 0.08, 0]`, distinct from every other overlay's own value), and
-  // away.drusus is in neither a stagger nor defeated state at this tick, so
-  // observing that exact value -- differing from the tick-400 baseline
-  // above, taken from the same rig in the same run -- is only possible if
-  // the flinch overlay actually fired. Removing the `defenseDeclinedTick`
-  // wiring in `ArenaView.ts`, or the `recognitionFlinchActive` branch in
-  // `PoseController.ts`, would leave this `head` reading at the tick-400
-  // baseline and fail this assertion, unlike the old finite-only check.
+  // The skinned rig plays authored clips, and the clip table has no entry for
+  // "declined a defense" -- a decline is a decision, not an action with its
+  // own phase timeline, so nothing in `clipMapping` branches on it. (The
+  // procedural rig used to overlay a recognition flinch here, keyed off a
+  // `pendingDefenseDeclinedTick` `ArenaView` no longer carries.) What is
+  // still worth pinning is that this window is reachable at this frozen tick
+  // and renders without a NaN: the surrounding state assertions isolate it
+  // from a stagger or a defeat, so the frame really is the decline's own.
   await advanceToTick(page, 1242, cursor)
   const declineEvents = await eventsAtTick(page, 1239)
   expect(declineEvents).toContainEqual(expect.objectContaining({ type: 'defense-declined', defenderId: 'away.drusus', incomingActionId: 'home.brutus:11' }))
   const drususBeforeDamage = await combatantState(page, 'away.drusus')
   expect(drususBeforeDamage.hp).toBe(287) // unchanged -- the decline's own damage has not landed yet
-  expect(drususBeforeDamage.staggerUntilTick).toBeLessThanOrEqual(1242) // not staggered -- isolates the flinch overlay from the stagger overlay
-  expect(drususBeforeDamage.status).toBe('active') // not defeated -- isolates the flinch overlay from the defeat overlay
+  expect(drususBeforeDamage.staggerUntilTick).toBeLessThanOrEqual(1242) // not staggered
+  expect(drususBeforeDamage.status).toBe('active') // not defeated
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
-  const drususFlinchHead = snapshot!.jointRotations['away.drusus'].head
-  expect(drususFlinchHead).not.toEqual(drususBaselineHead)
-  expect(drususFlinchHead).toEqual([0.14, 0.08, 0])
 
   // tick 1658: both fighters mid-windup on their signature committed attacks
   // -- home.brutus's `heavy-cleave` (started 1654) and away.drusus's

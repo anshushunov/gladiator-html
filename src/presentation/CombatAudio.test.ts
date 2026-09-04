@@ -527,7 +527,7 @@ describe('classifyPlantedFoot', () => {
     expect(classifyPlantedFoot(0, 'technical')).toBe('both')
   })
 
-  it('alternates left/right/both across a full gait cycle, matching PoseController.classifyGaitPhase\'s envelope', () => {
+  it('alternates left/right/both across a full gait cycle, matching gait.ts\'s own envelope', () => {
     const cycle = STYLE_GAIT_CYCLE_DISTANCE.heavy
     const sequence = [0, 0.05, 0.3, 0.5, 0.55, 0.8, 0.999].map((fraction) => classifyPlantedFoot(fraction * cycle, 'heavy'))
     // Near each boundary (0, 0.5, 1.0) both feet are planted; the midpoints

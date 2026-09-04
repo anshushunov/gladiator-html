@@ -7,7 +7,7 @@ import { DecisionPanel } from './DecisionPanel'
  * this repo has neither a `jsdom`/`happy-dom` dependency nor a `vitest`
  * `environment` configured for one (`vite.config.ts`'s `test` block has no
  * `environment` key, so it runs Vitest's default plain-Node target). No
- * other presentation test touches `document` either -- `ProceduralFighter`
+ * other presentation test touches `document` either -- `SkinnedFighter`
  * builds `THREE.Object3D` graphs, not DOM. There is no established pattern
  * to follow, and adding a DOM package plus a per-file environment override
  * for this one panel would be disproportionate to what it needs: `dataset`,

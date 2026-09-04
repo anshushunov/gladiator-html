@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Archetype } from '../simulation/fighters'
+import { BODY_SILHOUETTE_SLOTS, HELD_EQUIPMENT_SLOTS } from './ArenaView'
 import {
   ANCHOR_NODE_NAMES,
   FIGHTER_ANCHOR_NAMES,
@@ -60,5 +61,22 @@ describe.each(ARCHETYPES)('shipped model for %s', (archetype) => {
 
   it('stays under the size budget', () => {
     expect(readGlbJson(path).byteLength).toBeLessThan(MAX_BYTES)
+  })
+})
+
+/**
+ * `ArenaView` splits every slot into "worn" (counts toward the scale floor's
+ * `bodyHeightPx`) and "held" (counts toward `fullBoundsPx` only). The safe
+ * direction for an *unknown* slot is that it cannot inflate a body-size floor,
+ * so `accumulateProjectedBounds` silently drops it from the body set -- which
+ * means a newly worn slot added to a rebuilt pack would silently *under*-report
+ * the very number the floor is asserted on. Pinning the partition here (rather
+ * than only the membership `MESH_SLOTS` already checks against the files) is
+ * what turns that silence into a failing test.
+ */
+describe('silhouette slot partition', () => {
+  it('covers every slot the shipped models may carry, exactly once', () => {
+    expect([...BODY_SILHOUETTE_SLOTS].filter((slot) => HELD_EQUIPMENT_SLOTS.has(slot))).toEqual([])
+    expect(new Set([...BODY_SILHOUETTE_SLOTS, ...HELD_EQUIPMENT_SLOTS])).toEqual(new Set(MESH_SLOTS))
   })
 })

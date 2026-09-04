@@ -45,7 +45,7 @@ const IMPACT_HOLD_FRACTION = 0.15
  */
 const DEFENSE_WINDUP_FRACTION = 0.4
 const DEFENSE_IMPACT_FRACTION = 0.6
-/** Windup progress from which the weapon trail shows (same rule `PoseController` used). */
+/** Windup progress from which the weapon trail shows (same rule the procedural rig used). */
 const WEAPON_TRAIL_WINDUP_THRESHOLD = 0.6
 const MOVING_SPEED_EPSILON = 0.01
 

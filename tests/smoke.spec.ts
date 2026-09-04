@@ -13,6 +13,7 @@ import { preview, type PreviewServer } from 'vite'
 
 test('plans and locks three matchups', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   // The season board is the real front door -- click its own "Start series
   // 1" control (not the dev test API) so this test also proves the board
   // itself is live, not just the planning screen it leads to.
@@ -44,10 +45,11 @@ async function startSeededFirstBout(page: import('@playwright/test').Page) {
   // `page.goto` resolves on `load`, which does not guarantee the app has
   // installed `window.__GLADIATOR_TEST__`: `main.ts` assigns it inside an
   // `import.meta.env.DEV` block at the end of its own module evaluation, and
-  // under a loaded machine the next line has been observed running first and
-  // failing with `TypeError: Cannot read properties of undefined (reading
-  // 'startNextSeries')`. A timeout cannot fix a `TypeError`; waiting for the
-  // surface can.
+  // that evaluation now suspends on a top-level `await loadFighterModels()`
+  // -- so the surface reliably appears one network round-trip AFTER `load`,
+  // where it used to appear before it only by luck. A timeout cannot fix the
+  // resulting `TypeError`; waiting for the surface can. Every `goto` in the
+  // suite is followed by this same wait, for the same reason.
   await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
@@ -106,6 +108,7 @@ test('clears render snapshots and combatant data on rematch, with no leak from t
 
 test('resets arena presentation for the second bout', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
@@ -128,6 +131,7 @@ test('resets arena presentation for the second bout', async ({ page }) => {
 
 test('resets rig identity, pose, trails, flashes, camera framing, the audio cursor, and event cursor for every new bout', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
@@ -189,6 +193,7 @@ test('resets rig identity, pose, trails, flashes, camera framing, the audio curs
 
 test('resets rig identity, pose, trails, flashes, the audio cursor, and event cursor on rematch, and again for the bout that follows it', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
@@ -292,6 +297,7 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
   // Baseline: the same seeded matchup, ordinary motion.
   const normalPage = page
   await normalPage.goto('/?seed=20260815&snapshot')
+  await normalPage.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await normalPage.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('brutus', 0)
@@ -311,6 +317,7 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
   // browser reports the OS preference at page load).
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('brutus', 0)
@@ -504,6 +511,7 @@ test('falls back gracefully instead of crashing when WebGL is unavailable at sta
   })
 
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
 
   // The app boots normally -- the season board and its controls -- despite
   // zero WebGL from the very first frame. `#battle-ui` (the fallback text's
@@ -544,6 +552,7 @@ test('a throwing presentation frame latches a disabled-presentation flag but nev
   // presentation throw, not about the `advanceTicks` code path (which never
   // goes through `frame()` at all).
   await page.goto('/?seed=20260815')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
@@ -583,6 +592,7 @@ test('plays three bouts, reports a 3–0 win, then the summary "Continue" button
   // loses, and mirrors technical against technical. See series.test.ts's
   // golden-scenario block for the full six-lineup table.
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('brutus', 0)
@@ -655,6 +665,7 @@ test('plays three bouts, reports a 3–0 win, then the summary "Continue" button
 
 test('flushes the series-ending bout\'s final event batch to audio instead of dropping it', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
@@ -695,6 +706,7 @@ test('reports school defeat in the summary heading for a losing lineup', async (
   // all-counter lineup it was originally swapped off now WINS 2-1. See
   // series.test.ts's golden-scenario block for the full six-lineup table.
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('nerva', 0)
@@ -712,6 +724,7 @@ test('reports school defeat in the summary heading for a losing lineup', async (
 
 test('supports keyboard planning and deterministic focus', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   const aquila = page.getByTestId('fighter-aquila')
   await aquila.focus()
@@ -728,6 +741,7 @@ test('supports keyboard planning and deterministic focus', async ({ page }) => {
 
 test('normalizes an invalid URL seed', async ({ page }) => {
   await page.goto('/?seed=invalid&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   const seed = new URL(page.url()).searchParams.get('seed')
   expect(seed).toMatch(/^\d+$/)
   expect(Number(seed)).toBeGreaterThanOrEqual(0)
@@ -740,6 +754,7 @@ test('normalizes an invalid URL seed', async ({ page }) => {
 
 test('changes speed without advancing while paused', async ({ page }) => {
   await page.goto('/?seed=20260815')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
@@ -760,6 +775,7 @@ test('changes speed without advancing while paused', async ({ page }) => {
 
 test('shows both interstitials with result and next matchup context', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
     window.__GLADIATOR_TEST__.assign('aquila', 0)
@@ -784,6 +800,7 @@ test('shows both interstitials with result and next matchup context', async ({ p
 test('matches the stable planning snapshot', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 820 })
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
   await expect(page.locator('canvas')).toBeHidden()
@@ -818,6 +835,7 @@ test('matches the stable planning snapshot', async ({ page }) => {
 
 test('turns sound on by default after a real lineup-confirm click, and Sound off mutes without affecting the series', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   for (const [fighterId, boutIndex] of [['aquila', 0], ['nerva', 1], ['brutus', 2]] as const) {
     await page.getByTestId(`fighter-${fighterId}`).click()
@@ -862,6 +880,7 @@ test('keeps the sound control (and its audio voice/cursor reset) working across 
 
 test('audio debug: triggers all nine cues via the dev-only ?audioDebug=1 panel without starting a bout', async ({ page }) => {
   await page.goto('/?audioDebug=1&seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
   await expect(page.locator('[data-testid="audio-debug"]')).toBeVisible()

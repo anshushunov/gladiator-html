@@ -33,8 +33,8 @@ export interface CollectFootstepThresholdsResult {
  * Gated to `status === 'active' && tick >= staggerUntilTick` (final-review
  * fix #5's minimum variant): a staggered or defeated fighter's
  * `travelledDistance` still advances from phase-10 pushback even though
- * `PoseController.applyGroundingLayer` (`PoseController.ts`) explicitly
- * excludes exactly these two states from foot grounding -- without this
+ * the rig is playing a hit or death clip in exactly these two states, and
+ * plants no foot at all -- without this
  * gate, a knockback could flip the classified planted foot and fire an
  * audible footstep for a fighter who is visibly not planting a foot at all
  * (a single `heavy-cleave` pushback is exactly half of Heavy's own gait

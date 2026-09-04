@@ -413,12 +413,13 @@ async function readRigConstants(page: Page): Promise<RigConstants> {
   // untransformed. (`scripts/measure-framing.ts` reads these the same way, and
   // for the same reason.)
   const measured = await page.evaluate(`(async () => {
-    const rig = await import('/src/presentation/ProceduralFighter.ts')
+    const rig = await import('/src/presentation/SkinnedFighter.ts')
     const view = await import('/src/presentation/ArenaView.ts')
     const cameraModule = await import('/src/presentation/ArenaCamera.ts')
+    const models = await rig.loadFighterModels()
     const radii = {}
     for (const archetype of ['heavy', 'fast', 'technical']) {
-      const fighter = rig.createProceduralFighter({ archetype })
+      const fighter = rig.createSkinnedFighter(models, archetype)
       radii[archetype] = fighter.horizontalEquipmentRadius
       fighter.dispose()
     }
@@ -475,8 +476,8 @@ function median(values: readonly number[]): number {
  *
  * This is the weapon-excluded snapshot variant the amendment calls for, applied
  * only where the amendment allows it. `boundsPxWithoutWeapon` alone would be
- * too permissive -- `buildWeapon` tags the murmillo's gladius with the same
- * `'weapon'` slot, and the ruling exempts the spear shaft and the trident, not
+ * too permissive -- the murmillo's gladius carries the same `'weapon'` slot
+ * tag as the polearms, and the ruling exempts the spear shaft and the trident, not
  * every blade. Task 5 measured that the two variants happen to bind at the same
  * distance today (the binding frame is retiarius vs hoplomachus, which carries
  * no gladius at all); asserting the narrower one means that stays a measured
