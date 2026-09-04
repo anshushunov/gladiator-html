@@ -1525,3 +1525,17 @@ Wait for the workflow (`gh run list --workflow=update-baselines.yml --limit 1`),
 - [ ] **Step 5: Open the PR**
 
 PR body: what changed, the three archetype screenshots, a sentence per attack on whether the strike frame reads as landing on the contact tick (from watching a bout at ×1 in `npm run dev`), and the `legibility.spec.ts` result from `node node_modules/@playwright/test/cli.js test --project slow tests/legibility.spec.ts` (about 12 minutes). If legibility fails the 130 px bar, report the measured number and adjust `TARGET_HEIGHT` in the build script or `FLAT_DISTANCE` in `ArenaCamera.ts` — never the bar.
+
+---
+
+### Task 7b (added 2026-09-05): scale the models to clear the legibility bar
+
+Added after the slow legibility harness ran against the Task 7 build: body
+height at p92 measured 117–124 px against the 130 px bar in 8 of 9 pairings,
+and the retiarius' net crossed the 5 % safe inset at 1024x768 on one tick.
+Per spec §7 the fix is the armature scale, not the bar: `TARGET_HEIGHT`
+1.8 → 2.0 and a smaller net in `tools/blender/build_gladiators.py`, then the
+Task 7 procedure again (radii → `WIDEST_EQUIPMENT_RADIUS` → mirrored test
+literals → traces), then the slow harness must pass. Full brief in the SDD
+workspace (`task-7b-brief.md`); it is not reproduced here because the
+numbers it carries were measured, not designed.
