@@ -38,16 +38,27 @@ import type { AttackActionId } from './combatActions'
  * `attack-blocked` *and* `damage-dealt`, and reporting it as a plain hit would
  * lose the distinction that the defence worked.
  *
- * `hit` means "the contact landed unblocked", NOT "damage was dealt". The two
- * came apart when the murmillo's `no-damage` shield shove arrived: it resolves
- * fully -- staggering and pushing -- while emitting no `damage-dealt` at all,
- * so a damage-shaped reading of this member files every unblocked shove under
- * `target-unavailable`, the unclassifiable bucket. `hit` and `blocked`
- * together are the resolved-contact predicate; every other member is a
- * non-contact. `classifyContactOutcome` (`encounter.ts`) reads the
- * `fighter-staggered` an instance applied, not its damage, for exactly this
- * reason, and `scripts/measure-distance.ts`'s `RESOLVED_OUTCOMES` is the
- * consumer-side statement of the same rule.
+ * `hit` MEANS "the contact landed unblocked", not "damage was dealt", and
+ * `hit` and `blocked` together are the resolved-contact predicate; every other
+ * member is a non-contact. `scripts/measure-distance.ts`'s `RESOLVED_OUTCOMES`
+ * is the consumer-side statement of the same rule.
+ *
+ * THE TWO READINGS AGREE TODAY AND WOULD NOT UNDER A NO-DAMAGE ACTION, which is
+ * worth writing down here because it is a latent trap and not a live defect.
+ * `classifyContactOutcome` (`encounter.ts`) currently falls back to `hit` only
+ * when it saw a `damage-dealt`. Every action in the shipped catalogue that
+ * lands unblocked deals damage, so that reading is exactly equivalent to the
+ * one above. It stops being equivalent the moment a `no-damage` action exists:
+ * such a contact resolves fully -- staggering and pushing -- while emitting no
+ * `damage-dealt` at all, and a damage-shaped classifier files every unblocked
+ * one under `target-unavailable`, the unclassifiable bucket. Measured on
+ * `feature/shield-shove`, where a shield shove was the first such action.
+ *
+ * So: whoever adds the first `no-damage` action must change
+ * `classifyContactOutcome` to read the `fighter-staggered` an instance applied
+ * rather than its damage. That change is NOT made here. It is behaviour-visible
+ * in principle -- it reclassifies a resolved no-damage contact -- and this
+ * branch ships no behaviour change, not even one that cannot fire today.
  */
 export type ContactOutcome =
   | 'hit'
