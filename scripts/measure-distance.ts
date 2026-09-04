@@ -137,6 +137,45 @@
 // this slice reads against the attributed baseline committed alongside this
 // file.
 //
+// WHAT THE SHOVE SLICE TAUGHT THIS FILE, kept after the shove itself was
+// parked (2026-09-04). The two paragraphs above are kept as written because
+// they describe the run recorded in `2026-08-29-shove-before.json`, and that
+// record's claims must stay falsifiable against the text that made them.
+//
+// `heavy-shield-shove` DOES NOT EXIST on this branch. `SHOVE_ACTION_ID`'s
+// string comparison therefore resolves against nothing and every shove counter
+// reads exactly zero -- which is the designed behaviour of a string-keyed probe
+// and is what makes this instrument shippable ahead of the mechanic it was
+// built to measure. The voluntary-ground attribution beside it reads real
+// numbers today.
+//
+// One correction from that slice is kept because it is a DEFECT FIX, not a
+// shove feature:
+//
+//   * `shoveContacts`, `jabContacts` and the recovery-window ledger no longer
+//     read events at all. They read `ContactRecord`s from a `ContactCollector`,
+//     because the event-shaped predicate `damage-dealt || attack-blocked`
+//     cannot see an unblocked `no-damage` contact -- measured on the parked
+//     branch at 46 counted against 1177 real shove contacts, all of them
+//     blocked, which would have passed gate W.1's coverage floor on that 4%
+//     sample. See `MatchupResult.shoveContacts`.
+//
+//     THE SWITCH IS VISIBLE TODAY, on a catalogue with no no-damage action in
+//     it, and this is worth reading rather than skipping. Measured at 5 seeds
+//     over the nine matchups, `jabContacts` is byte-identical either way but
+//     `recoveryWindowContactsPerJab` moves 0.0357 -> 0.0222. The old ledger was
+//     over-counting: a BLOCKED contact emits `attack-blocked` AND
+//     `damage-dealt` (see `classifyContactOutcome` in `encounter.ts`, whose
+//     header says so), so the disjunction pushed the same tick onto
+//     `contactsAgainst` twice. `ContactRecord` is emitted exactly once per
+//     contact intent and cannot. So this correction is not a shove feature and
+//     never was -- it is a double count that has been in the punishment ledger
+//     since the ledger existed, which the shove merely made loud enough to
+//     find. Nothing but this script reads the number.
+//   * `shoveStarts` and `shoveMisses` still read events; both are correct as
+//     written, since `action-started` and the three miss events fire for a
+//     no-damage action exactly as they do for any other.
+//
 // Usage:
 //   node node_modules/vite-node/vite-node.mjs scripts/measure-distance.ts -- --seeds 200
 //   node node_modules/vite-node/vite-node.mjs scripts/measure-distance.ts -- --seeds 200 --gate
@@ -148,6 +187,7 @@ import { COMBAT_STYLES } from '../src/content/combatStyles'
 import { BASELINE_TEST_SEED } from '../src/content/mvpSeries'
 import { advanceBattleTick, createBattle, MAX_BOUT_TICKS } from '../src/simulation/battle'
 import { assembleDisengageEpisodes } from '../src/simulation/disengageDiagnostics'
+import type { ContactCollector, ContactOutcome, ContactRecord } from '../src/simulation/contactDiagnostics'
 import type { DisengageCollector, DisengageEpisode, DisengageSample } from '../src/simulation/disengageDiagnostics'
 import { groundOpened, voluntaryGroundOpened } from '../src/testSupport/disengageGates'
 import { percentile } from '../src/testSupport/balanceCohorts'
@@ -173,6 +213,22 @@ const STYLES: readonly Archetype[] = ['heavy', 'fast', 'technical']
  * TypeScript's no-overlap check on a literal comparison. See the header.
  */
 const SHOVE_ACTION_ID: string = 'heavy-shield-shove'
+
+/**
+ * The `ContactOutcome`s that mean "the weapon (or the shield) reached the
+ * target and the contact resolved against it": a landed hit and a guarded one.
+ * Everything else in the union is a non-contact -- `parried`, `evaded`,
+ * `missed-geometry`, `missed-accuracy`, `target-unavailable`, `actor-defeated`.
+ *
+ * This is the ONE definition every resolved-contact count in this file reads,
+ * and it is deliberately expressed over outcomes rather than over event types.
+ * The event-shaped version (`damage-dealt || attack-blocked`) was a correct
+ * paraphrase only while every action dealt damage; it silently stopped being
+ * one the moment a `no-damage` action existed, and nothing failed to say so.
+ * An outcome cannot go stale that way -- a new outcome kind would not compile
+ * into this set without being looked at.
+ */
+const RESOLVED_OUTCOMES: ReadonlySet<ContactOutcome> = new Set<ContactOutcome>(['hit', 'blocked'])
 
 interface Args { seeds: number; overlay?: string; json?: string; gate: boolean; baseline?: string }
 
@@ -260,15 +316,44 @@ interface MatchupResult {
    * fields read exactly zero until it lands -- see `SHOVE_ACTION_ID`.
    */
   shoveStarts: number
-  /** Resolved shove contacts: `damage-dealt`/`attack-blocked` for the shove id. */
+  /**
+   * Resolved shove contacts: `ContactRecord`s for the shove id whose `outcome`
+   * is `'hit'` or `'blocked'`.
+   *
+   * DEFECT AND FIX, 2026-08-29. This used to count `damage-dealt`/
+   * `attack-blocked` events, which was correct for every action that existed
+   * when it was written and silently wrong the moment the shove landed: a
+   * `no-damage` action emits NEITHER of those unless the target guards, so an
+   * UNBLOCKED shove -- the overwhelming majority, and the only kind that
+   * delivers the full 0.90 push and 16-tick stagger -- was invisible. Measured
+   * at 46 counted against 1177 real, a 4% sample.
+   *
+   * The failure mode is the one gate W.1 exists to catch, wearing a disguise:
+   * roughly 230 blocked shoves at 200 seeds clears W.1's >=80 floor, so the
+   * coverage gate would have gone GREEN on a population consisting entirely of
+   * guard-attenuated shoves (push x0.30, stagger 6 instead of 16) -- a gate
+   * passing on evidence about a different event than the one it names.
+   *
+   * `ContactCollector` is the fix rather than a patched event disjunction:
+   * `ContactRecord` is emitted exactly once per contact intent, carries
+   * `actionId`/`actorId`/`targetId`/`tick` directly, and its `outcome` IS the
+   * resolved-contact predicate. Adding `fighter-staggered` to the old
+   * disjunction would have double-counted every blocked shove, which emits
+   * both.
+   */
   shoveContacts: number
   /** `attack-missed`/`attack-evaded`/`attack-parried` for the shove id. */
   shoveMisses: number
   /**
-   * Sum, over every resolved shove in this matchup, of contacts taken by the
-   * shover -- any `damage-dealt`/`attack-blocked` against him, any action id --
-   * with a tick inside `[contactTick, contactTick + recoveryTicks]`. Divided by
-   * `shoveContacts` at report time; gate W.3's punishability numerator.
+   * Sum, over every resolved shove in this matchup, of resolved contacts taken
+   * by the shover -- any action id -- with a tick inside
+   * `[contactTick, contactTick + recoveryTicks]`. Divided by `shoveContacts` at
+   * report time; gate W.3's punishability numerator.
+   *
+   * Read from the same `ContactRecord` stream as `shoveContacts`, and for the
+   * same reason: the old event-derived ledger had the identical blind spot, so
+   * a murmillo punished by a counter-shove inside his own recovery window was
+   * not counted -- understating exactly the cost W.3 exists to prove is real.
    */
   shoveRecoveryContacts: number
   /**
@@ -328,12 +413,18 @@ function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupRes
     // could perturb the tick it is observing.
     const disengageSamples: DisengageSample[] = []
     const disengageCollector: DisengageCollector = { record: (sample) => disengageSamples.push(sample) }
-    /** One entry per resolved shove contact this bout: who threw it, and the tick it landed. */
-    const resolvedShoves: { actorId: string; tick: number }[] = []
-    /** Same, for `heavy-shield-jab` -- gate W.3's comparator population. */
-    const resolvedJabs: { actorId: string; tick: number }[] = []
-    /** Every tick a fighter took a resolved contact (any action id), keyed by who took it. */
-    const contactsAgainst = new Map<string, number[]>()
+    /**
+     * Every contact intent this bout resolved, straight from the kernel's own
+     * phase-9 diagnostics. Same closes-over-nothing-else discipline as
+     * `disengageCollector` above: `record` runs synchronously inside the tick.
+     *
+     * This is the single source for all three resolved-contact populations
+     * below -- shoves, jabs, and the punishment ledger -- so they cannot
+     * disagree about what "a contact landed" means, which is exactly how the
+     * event-derived version came apart when a no-damage action arrived.
+     */
+    const contactRecords: ContactRecord[] = []
+    const contactCollector: ContactCollector = { record: (entry) => contactRecords.push(entry) }
 
     while (battle.phase === 'running' && battle.encounter.tick < MAX_BOUT_TICKS) {
       // The opening of this tick, before phase 7-8 movement -- the same instant
@@ -349,7 +440,7 @@ function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupRes
       }
 
       const previousTick = battle.encounter.tick
-      battle = advanceBattleTick(battle, undefined, undefined, disengageCollector)
+      battle = advanceBattleTick(battle, undefined, contactCollector, disengageCollector)
 
       for (const event of battle.events) {
         if (event.tick !== previousTick + 1) continue
@@ -384,21 +475,6 @@ function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupRes
           result.shoveStarts += 1
         }
 
-        if (event.type === 'damage-dealt' || event.type === 'attack-blocked') {
-          const hits = contactsAgainst.get(event.targetId)
-          if (hits) hits.push(event.tick)
-          else contactsAgainst.set(event.targetId, [event.tick])
-
-          if (event.actionId === SHOVE_ACTION_ID) {
-            result.shoveContacts += 1
-            resolvedShoves.push({ actorId: event.actorId, tick: event.tick })
-          }
-          if (event.actionId === 'heavy-shield-jab') {
-            result.jabContacts += 1
-            resolvedJabs.push({ actorId: event.actorId, tick: event.tick })
-          }
-        }
-
         if (
           (event.type === 'attack-missed' || event.type === 'attack-evaded' || event.type === 'attack-parried') &&
           event.actionId === SHOVE_ACTION_ID
@@ -413,6 +489,23 @@ function runMatchup(home: Archetype, away: Archetype, seeds: number): MatchupRes
     // incrementally inside the tick loop above.
     const assembly = assembleDisengageEpisodes(disengageSamples)
     result.disengages.push(...assembly.episodes)
+
+    // One pass over this bout's contact records builds all three populations.
+    // `RESOLVED_OUTCOMES` is the whole definition of "the contact landed", in
+    // one place, so the shove population and the punishment ledger cannot drift
+    // apart from each other the way the event-derived versions did.
+    const resolved = contactRecords.filter((record) => RESOLVED_OUTCOMES.has(record.outcome))
+    /** Every tick a fighter took a resolved contact (any action id), keyed by who took it. */
+    const contactsAgainst = new Map<string, number[]>()
+    for (const record of resolved) {
+      const hits = contactsAgainst.get(record.targetId)
+      if (hits) hits.push(record.tick)
+      else contactsAgainst.set(record.targetId, [record.tick])
+    }
+    const resolvedShoves = resolved.filter((record) => record.actionId === SHOVE_ACTION_ID)
+    const resolvedJabs = resolved.filter((record) => record.actionId === 'heavy-shield-jab')
+    result.shoveContacts += resolvedShoves.length
+    result.jabContacts += resolvedJabs.length
 
     const shoveRecoveryTicks = recoveryTicksOf(SHOVE_ACTION_ID)
     if (shoveRecoveryTicks !== undefined) {
@@ -698,6 +791,13 @@ if (args.json) {
       // and punishability counters. See the header for why every shove counter
       // below reads zero at this point in the codebase's history, and why
       // `recoveryWindowContactsPerJab` does not.
+      //
+      // `2026-08-29-shove-before.json` was recorded by the EVENT-derived
+      // ledger, so its `recoveryWindowContactsPerJab` carries the double count
+      // the header describes and is NOT comparable to a run of this file. It is
+      // still a valid gate-U baseline: gate U reads `pinnedShare` and
+      // `insideEnvelopeShare` and nothing else, and neither comes from the
+      // contact ledger.
       voluntaryGroundShare: voluntaryGroundShare(m),
       shoveStarts: m.shoveStarts,
       shoveContacts: m.shoveContacts,
