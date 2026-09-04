@@ -371,6 +371,71 @@ describe('the disengage seam against a real bout', () => {
     }
   }, 30_000)
 
+  // THE KERNEL HALF OF THE ATTRIBUTION WINDOW, which nothing above covers.
+  //
+  // The window fix has two halves and only one of them was tested. The
+  // ASSEMBLER half -- `assembleDisengageEpisodes` opening `externalGround` from
+  // the stamp sample's own delta instead of from `0`, and excluding the
+  // `cleared` tick's -- is pinned by the unit tests at the top of this file.
+  // The KERNEL half is the reason there is a delta on a `stamped` sample at
+  // all: `encounter.ts` defers the stamp observation onto `pendingDisengage`
+  // and finishes it AFTER phase 9, so it carries its own tick's `pushByTarget`
+  // rather than the literal `0` an in-phase-2 emission would have to write.
+  //
+  // That half had no covering test. Reverting the stamp's delta to `0` in
+  // `encounter.ts` -- emitting `externalSeparationDelta: 0` for `kind ===
+  // 'stamped'` -- left the whole suite green, including the test directly
+  // above, because that one only asks that episodes with SOME external ground
+  // have it positive, and held-tick pushes supply that on their own.
+  //
+  // What makes this test bite is the fixture, not the assertion. At
+  // `BASELINE_TEST_SEED + 2` the mirror produces exactly one episode whose
+  // external ground comes ENTIRELY from its stamp tick: one `fast-slash` lands
+  // on the tick the field is stamped (`pushDistance` 0.18) and not one lands on
+  // any of the 37 held ticks that follow. So the held-only sum is 0, the
+  // episode's `externalGround` is 0.18, and the two numbers disagree by exactly
+  // the quantity the kernel half contributes. Under the reversion the stamped
+  // sample's delta is `0`, the filter below finds nothing, and this fails on
+  // its first assertion.
+  //
+  // The seed is pinned and was found by sweeping the shipped pairings; a
+  // content change may well move it, in which case re-pin it against a fresh
+  // sweep rather than deleting the test -- the property is not seed-specific,
+  // only this clean single-source-of-ground instance of it is.
+  it('counts the stamp tick’s own push, which no held sample could supply', () => {
+    const samples: DisengageSample[] = []
+    runBout({ record: (sample) => samples.push(sample) }, BASELINE_TEST_SEED + 2)
+
+    const pushedStamps = samples.filter(
+      (sample): sample is Extract<DisengageSample, { kind: 'stamped' }> =>
+        sample.kind === 'stamped' && sample.externalSeparationDelta !== 0,
+    )
+    // The kernel half, directly: a `stamped` sample carrying a push at all is
+    // only possible because the observation is finished after phase 9.
+    expect(pushedStamps).toHaveLength(1)
+    const [stamp] = pushedStamps
+    expect(stamp.externalSeparationDelta).toBeGreaterThan(0)
+
+    const { episodes } = assembleDisengageEpisodes(samples)
+    const episode = episodes.find((candidate) => candidate.actorId === stamp.actorId && candidate.startTick === stamp.tick)
+    expect(episode).toBeDefined()
+
+    // Everything the episode would have been able to see WITHOUT the stamp
+    // tick: the `held` ticks strictly inside `(startTick, endTick)`. The
+    // `cleared` tick is outside the window by construction and excluded here
+    // for the same reason the assembler excludes it.
+    const heldOnlyGround = samples
+      .filter((sample) => sample.kind === 'held' && sample.actorId === stamp.actorId && sample.tick > episode!.startTick && sample.tick < episode!.endTick)
+      .reduce((total, sample) => total + sample.externalSeparationDelta, 0)
+
+    // The difference IS the kernel half. Asserted as a disagreement between two
+    // computed numbers rather than against a literal, so the test states the
+    // property instead of memorising this seed's arithmetic.
+    expect(heldOnlyGround).toBe(0)
+    expect(episode!.externalGround).toBeCloseTo(stamp.externalSeparationDelta, 12)
+    expect(episode!.externalGround).toBeGreaterThan(heldOnlyGround)
+  }, 30_000)
+
   it('keeps a real bout’s still-open episode instead of dropping it', () => {
     const { episodes } = collectEpisodes(20260836)
     const censored = episodes.filter((episode) => episode.reason === 'censored')
