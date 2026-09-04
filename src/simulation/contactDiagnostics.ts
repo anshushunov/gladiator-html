@@ -37,6 +37,17 @@ import type { AttackActionId } from './combatActions'
  * `blocked` and `parried` take precedence over `hit`: a blocked attack emits
  * `attack-blocked` *and* `damage-dealt`, and reporting it as a plain hit would
  * lose the distinction that the defence worked.
+ *
+ * `hit` means "the contact landed unblocked", NOT "damage was dealt". The two
+ * came apart when the murmillo's `no-damage` shield shove arrived: it resolves
+ * fully -- staggering and pushing -- while emitting no `damage-dealt` at all,
+ * so a damage-shaped reading of this member files every unblocked shove under
+ * `target-unavailable`, the unclassifiable bucket. `hit` and `blocked`
+ * together are the resolved-contact predicate; every other member is a
+ * non-contact. `classifyContactOutcome` (`encounter.ts`) reads the
+ * `fighter-staggered` an instance applied, not its damage, for exactly this
+ * reason, and `scripts/measure-distance.ts`'s `RESOLVED_OUTCOMES` is the
+ * consumer-side statement of the same rule.
  */
 export type ContactOutcome =
   | 'hit'

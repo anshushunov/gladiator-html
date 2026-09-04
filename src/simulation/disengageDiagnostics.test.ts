@@ -446,16 +446,28 @@ describe('the disengage seam against a real bout', () => {
 // `advanceEncounterTick` is the GENERIC kernel, not the duel adapter, and the
 // first version of this seam was reviewed against the duel and justified with
 // a fact about the duel's arena. Both of the states below were argued to be
-// unreachable; both turn out to be ordinary in a three-fighter free-for-all,
-// measured across 40 seeds:
+// unreachable; both turn out to be ordinary in a three-fighter free-for-all.
 //
-//   - a fighter with NO target during an open episode: 12 of 40 seeds;
-//   - a fighter RETARGETED during an open episode: 3 of 40 seeds
-//     (20260829, 20260835, 20260837), 8 to 21 samples each.
+// RE-MEASURED 2026-09-04, on THIS build -- the shipped catalogue, with no
+// shield shove in it -- across 300 consecutive seeds from `BASELINE_TEST_SEED`:
 //
-// The baseline seed is one of the twelve. So the old kernel, which raised on a
+//   - a fighter with NO target during an open episode: 109 of 300 seeds (36%);
+//   - a fighter RETARGETED during an open episode: 16 of 300 seeds (5.3%),
+//     one episode each.
+//
+// The baseline seed is one of the 109. So the old kernel, which raised on a
 // non-finite separation, would have thrown on the very first FFA anyone
 // attached a collector to.
+//
+// The retarget seed LIST is deliberately not written down here, and the reason
+// is the measurement's own history. An earlier revision of this comment named
+// three seeds (20260829, 20260835, 20260837) from a 40-seed sample of this same
+// content. On the shield-shove build only one of the three still retargeted and
+// two that had not then did; on this build all three retarget again. Which
+// seeds carry a 5%-incidence phenomenon is a property of the content, not of
+// the seam, and recording it invites the next reader to treat a re-roll as a
+// regression -- which is exactly what happened to the test below before it was
+// rewritten.
 describe('the disengage seam outside the duel', () => {
   const threeWayFfa = (seed: number) => ({
     seed,
@@ -503,18 +515,125 @@ describe('the disengage seam outside the duel', () => {
     expect(episodes.length + unmeasurable.length).toBe(samples.filter((sample) => sample.kind === 'stamped').length)
   }, 30_000)
 
-  it('sets aside a real episode whose target changed while it was open', () => {
+  /**
+   * `runFfa`'s samples without its rolling canonical hash. That hash exists for
+   * the determinism test above, which needs two runs to agree bit for bit; the
+   * batch below only needs the samples, and at 200 seeds the per-tick hash is
+   * essentially the entire cost.
+   */
+  function ffaSamples(seed: number): DisengageSample[] {
     const samples: DisengageSample[] = []
-    runFfa(20260837, { record: (sample) => samples.push(sample) })
-    const { episodes, unmeasurable } = assembleDisengageEpisodes(samples)
-
-    expect(unmeasurable.some((episode) => episode.cause === 'target-changed')).toBe(true)
-    expect(episodes.length + unmeasurable.length).toBe(samples.filter((sample) => sample.kind === 'stamped').length)
-    // Not a synthetic stream: this seed retargets the Fast fighter 21 times
-    // inside open episodes. Assembling it before the fix produced episodes
-    // whose two endpoints were measured against two different opponents.
-    for (const episode of episodes) {
-      expect(episode.targetId).toBeDefined()
+    const collector: DisengageCollector = { record: (sample) => samples.push(sample) }
+    const created = createEncounter(threeWayFfa(seed))
+    let state = created.state
+    for (let i = 0; i < MAX_BOUT_TICKS && state.phase === 'running'; i += 1) {
+      state = advanceEncounterTick(state, undefined, undefined, collector).state
     }
-  }, 30_000)
+    return samples
+  }
+
+  /**
+   * Chosen from the measurement, not from what passes.
+   *
+   * A retarget inside an open episode occurs on **5.3% of seeds** (16 of 300,
+   * re-measured 2026-09-04 on this build -- see this describe block's header).
+   * Two numbers set the batch size, and the second is the one that matters:
+   *
+   *   - as a probability, `0.947^N` is the chance a re-rolled build sees none:
+   *     33% at N=20, 6.5% at N=50, 0.4% at N=100, **0.002% at N=200**;
+   *   - as a fact about THIS content, the longest observed run of consecutive
+   *     seeds containing no retarget at all is **49**. A batch has to clear
+   *     that stretch, not merely beat the average, so anything at or below
+   *     ~50 is one unlucky alignment away from red.
+   *
+   * 200 is ~4x the worst observed dry stretch and currently contains **13**
+   * retargeting seeds, so the assertion below passes with thirteen-fold margin
+   * rather than by one seed's grace. It costs ~7s.
+   *
+   * The batch size is kept at the value the shield-shove slice chose even
+   * though this build's incidence is HIGHER (5.3% against 4.0%) and its worst
+   * dry stretch SHORTER (49 against 82), both of which would justify a smaller
+   * batch. Shrinking it would tune the sample to one build's luck, which is the
+   * defect this test was rewritten to escape.
+   */
+  const RETARGET_BATCH_SEEDS = 200
+
+  /**
+   * WHY THIS NO LONGER NAMES A SEED. It used to assert against `20260837`
+   * alone, and across the four builds of the shield-shove slice that assertion
+   * went green, red, green, red -- not because the assembler changed (it did
+   * not) but because content changes re-roll which seeds happen to retarget. A
+   * hand-picked seed that has flapped four times will flap a fifth, and the
+   * next person to see it red cannot tell "I broke the instrument" from "I lost
+   * a coin toss". That ambiguity is the defect; the seed was only its carrier.
+   *
+   * On THIS build 20260837 retargets, so the single-seed version would be green
+   * here and the rewrite looks unnecessary. It is not: the seed was green on
+   * this content before the slice too, and went red twice in between. What is
+   * being removed is a test whose colour tracks the catalogue, and it is being
+   * removed on the build where it happens to be green precisely so that the
+   * change cannot be mistaken for a failing assertion being widened.
+   *
+   * The `target-changed` BRANCH is not what this test covers -- that is pinned
+   * synthetically, on a crafted sample stream, in this file's first describe
+   * block, and a synthetic stream needs no luck at all. What this test adds is
+   * corroboration that the branch is reachable from a real kernel run, and
+   * corroboration does not need one blessed seed: it needs enough seeds that
+   * observing none of the phenomenon is real evidence about the seam rather
+   * than about the draw.
+   */
+  it('sets aside real episodes whose target changed while they were open, over a batch of seeds rather than one blessed seed', () => {
+    let seedsWithRetarget = 0
+    let retargetEpisodes = 0
+
+    for (let index = 0; index < RETARGET_BATCH_SEEDS; index += 1) {
+      const samples = ffaSamples(BASELINE_TEST_SEED + index)
+      const { episodes, unmeasurable } = assembleDisengageEpisodes(samples)
+
+      // The totals identity, kept -- and now checked on all 200 runs instead of
+      // one, so "nothing is dropped and nothing double-counted" is asserted
+      // against every shape of run the batch happens to contain.
+      expect(episodes.length + unmeasurable.length).toBe(samples.filter((sample) => sample.kind === 'stamped').length)
+      // Every episode that survived assembly is measurable: a retarget must
+      // have been set aside, never folded into an episode whose two endpoints
+      // were measured against two different opponents.
+      for (const episode of episodes) {
+        expect(episode.targetId).toBeDefined()
+      }
+
+      const retargets = unmeasurable.filter((episode) => episode.cause === 'target-changed').length
+      if (retargets > 0) {
+        seedsWithRetarget += 1
+        retargetEpisodes += retargets
+      }
+    }
+
+    // The corroboration itself. The message carries the measured incidence so a
+    // future failure can be read without re-deriving it: at 5.3% of seeds,
+    // finding none in 200 is a ~0.002% draw, so it is evidence that the seam
+    // stopped setting retargets aside -- not that the batch got unlucky.
+    expect(
+      seedsWithRetarget,
+      `no retarget was set aside in ${RETARGET_BATCH_SEEDS} FFA seeds; measured incidence is 5.3% of seeds, so this is not a draw`,
+    ).toBeGreaterThan(0)
+
+    // ...and it stays the exception. The assertion above only proves the
+    // spoiling path is REACHABLE; this one proves it is still rare, which is
+    // the opposite failure and the one that would follow from an assembler
+    // that spoiled episodes it should have kept. Measured at 13 of 200 seeds
+    // (6.5%), so half the batch is ~8x the observed rate -- a bound on the
+    // wrong behaviour, not a pin on the right one.
+    expect(
+      seedsWithRetarget,
+      `${seedsWithRetarget} of ${RETARGET_BATCH_SEEDS} seeds spoiled an episode by retarget; measured incidence is 5.3%, so a majority means episodes are being set aside that should have been measured`,
+    ).toBeLessThan(RETARGET_BATCH_SEEDS / 2)
+
+    // NOT asserted, deliberately: across 300 seeds on this build every retargeting seed
+    // produced exactly ONE such episode, so `retargetEpisodes === seedsWithRetarget`
+    // held throughout. It is a measured regularity, not a law -- nothing stops
+    // a run from opening a second episode and having that retargeted too, and
+    // pinning a 5%-incidence coincidence is how the single-seed version of this
+    // test became a flapper in the first place. Recorded here instead.
+    expect(retargetEpisodes).toBeGreaterThan(0)
+  }, 60_000)
 })
