@@ -26,7 +26,6 @@
 // mapping) is an undocumented implementation choice, called out below where
 // it is made.
 
-import { effectiveLegibilityMode, type LegibilityMode } from './legibilityMode'
 
 export interface HorizontalFramingTarget {
   id: string
@@ -46,18 +45,6 @@ export interface ArenaCameraState {
 export interface ArenaCameraOptions {
   minDistance: number
   maxDistance: number
-  /**
-   * Review-only (see `legibilityMode.ts`). `camera: false` runs
-   * `supersededExtentToDistance` below instead of `extentToDistance`, so a
-   * reviewer can watch the identical trace under the mapping this slice
-   * replaced. Defaults to the shipped mode, so nothing but the review recorder
-   * ever passes it. The mapping is the ONLY thing this flag changes: the
-   * framing radii the camera consumes come from `ProceduralFighter`, and those
-   * always describe the final props whatever the legibility mode says (see
-   * that module's `createProceduralFighter`) -- otherwise "camera only" would
-   * be comparing two different cameras rather than two mappings.
-   */
-  legibility?: LegibilityMode
 }
 
 // ---------------------------------------------------------------------------
@@ -292,65 +279,6 @@ export function extentToDistance(extent: number, minDistance: number, maxDistanc
   const t = Math.min(1, (extent - BAND_HIGH_EXTENT) / EASE_WIDTH_EXTENT)
   const eased = t * t * (3 - 2 * t)
   return clamp(FLAT_DISTANCE + eased * (maxDistance - FLAT_DISTANCE), minDistance, maxDistance)
-}
-
-// ---------------------------------------------------------------------------
-// Review-only: the mapping this slice replaced
-// ---------------------------------------------------------------------------
-
-/**
- * **Review-only. Not reachable in a production build.**
- *
- * The extent->distance mapping and lower clamp that shipped before the
- * 2026-08-24 readable-gladiator-types slice: `clamp(8.5 + 0.8 * extent, 11,
- * 18)`, restored verbatim from `a073f20` so that the `baseline` and
- * `labels-only` review configurations show a reviewer the framing the failed
- * 2026-08-23 gate actually saw. `SUPERSEDED_MIN_DISTANCE` is the `11` from the
- * same commit, and it is the reason the old mapping is flat below extent
- * 3.125 -- the defect the slice fixed was not the flatness, it was that `11`
- * is too far out (93-111 px of body height in a typical in-band exchange on a
- * 518 px canvas, worst case 68).
- *
- * Reached only via `ArenaCameraOptions.legibility` with `camera: false`, which
- * only `?legibility=` under `import.meta.env.DEV` ever asks for. Nothing in
- * the shipped path calls it, and none of the constants above is touched by it.
- */
-export const SUPERSEDED_MIN_DISTANCE = 11
-const SUPERSEDED_DISTANCE_INTERCEPT = 8.5
-const SUPERSEDED_DISTANCE_SLOPE = 0.8
-
-export function supersededExtentToDistance(extent: number, minDistance: number, maxDistance: number): number {
-  return clamp(SUPERSEDED_DISTANCE_INTERCEPT + SUPERSEDED_DISTANCE_SLOPE * extent, minDistance, maxDistance)
-}
-
-/** Which extent->distance mapping a given legibility mode runs. */
-export type ArenaCameraMappingName = 'shipped' | 'superseded'
-
-/**
- * The `minDistance`/`maxDistance` a review configuration's camera is built
- * with. `maxDistance` is `18` in both -- the slice never moved the far clamp
- * -- and the near clamp follows the mapping, because the two shipped together:
- * `FLAT_DISTANCE` IS `ArenaView`'s `CAMERA_MIN_DISTANCE` precisely so the
- * clamp cannot override the flat region, and `11` was the old one. Exported so
- * `ArenaView` picks them from one place and `legibilityMode.test.ts` can
- * assert what each configuration actually runs.
- */
-export function arenaCameraOptionsFor(
-  legibility: LegibilityMode,
-  shippedMinDistance: number,
-  maxDistance: number,
-): ArenaCameraOptions {
-  const effective = effectiveLegibilityMode(legibility)
-  // Same `import.meta.env.DEV &&` shape as the constructor's mapping choice,
-  // and for the same reason -- the near clamp and the mapping ship together, so
-  // if one folds away in production the other must fold with it or the two
-  // could in principle disagree.
-  const supersededCamera = import.meta.env.DEV && !effective.camera
-  return {
-    minDistance: supersededCamera ? SUPERSEDED_MIN_DISTANCE : shippedMinDistance,
-    maxDistance,
-    legibility: effective,
-  }
 }
 
 /**
@@ -601,24 +529,6 @@ export class ArenaCamera {
   private distanceReference: number
   private yawReference: number
   private unclampedYawReference: number
-  /**
-   * The extent->distance mapping this instance runs. Bound once, at
-   * construction, from `ArenaCameraOptions.legibility` -- `reset()` and
-   * `update()` below call it through this field rather than naming
-   * `extentToDistance` directly, which is the whole of the camera half of the
-   * review toggle. A field rather than a branch at each call site so the two
-   * of them cannot end up disagreeing about which mapping is live.
-   */
-  private readonly mapExtentToDistance: (extent: number, minDistance: number, maxDistance: number) => number
-
-  /**
-   * Which mapping `mapExtentToDistance` is bound to. Exposed for
-   * `legibilityMode.test.ts`, which asserts the active mapping per review
-   * configuration -- a name is checkable without re-deriving the numbers, and
-   * the numbers are checked beside it.
-   */
-  readonly activeMapping: ArenaCameraMappingName
-
   /** Read-only by convention: only `reset()`/`update()` (below) ever assign it. */
   state: ArenaCameraState
 
@@ -639,17 +549,6 @@ export class ArenaCamera {
   constructor(options: ArenaCameraOptions) {
     this.minDistance = options.minDistance
     this.maxDistance = options.maxDistance
-    const legibility = effectiveLegibilityMode(options.legibility)
-    // `import.meta.env.DEV &&` in front of the runtime flag, not the flag
-    // alone: `effectiveLegibilityMode` already forces the shipped mode in
-    // production, but it does so by RETURNING a value, which the bundler
-    // cannot fold -- so the superseded mapping stayed in the emitted bundle as
-    // unreachable code. Naming `import.meta.env.DEV` here lets `vite build`
-    // replace it with `false`, collapse both expressions, and tree-shake
-    // `supersededExtentToDistance` and its three constants away entirely.
-    const supersededCamera = import.meta.env.DEV && !legibility.camera
-    this.activeMapping = supersededCamera ? 'superseded' : 'shipped'
-    this.mapExtentToDistance = supersededCamera ? supersededExtentToDistance : extentToDistance
     const initialDistance = clamp((options.minDistance + options.maxDistance) / 2, options.minDistance, options.maxDistance)
     this.lookTargetReferenceX = 0
     this.lookTargetReferenceZ = 0
@@ -675,7 +574,7 @@ export class ArenaCamera {
     this.lookTargetReferenceX = midpointX
     this.lookTargetReferenceZ = midpointZ
     this.framedExtentReference = extent
-    this.distanceReference = this.mapExtentToDistance(extent, this.minDistance, this.maxDistance)
+    this.distanceReference = extentToDistance(extent, this.minDistance, this.maxDistance)
     this.state = { lookTargetX: midpointX, lookTargetZ: midpointZ, distance: this.distanceReference, yaw }
     return this.state
   }
@@ -714,7 +613,7 @@ export class ArenaCamera {
     const extentDeadZone = DISTANCE_DEAD_ZONE_FRACTION * Math.max(this.framedExtentReference, MIN_DEAD_ZONE_REFERENCE)
     if (Math.abs(extent - this.framedExtentReference) > extentDeadZone) {
       this.framedExtentReference = extent
-      this.distanceReference = this.mapExtentToDistance(extent, this.minDistance, this.maxDistance)
+      this.distanceReference = extentToDistance(extent, this.minDistance, this.maxDistance)
     }
 
     const lookTargetX = approach(this.state.lookTargetX, this.lookTargetReferenceX, LOOK_DAMPING_TIME_CONSTANT_SECONDS, elapsedSeconds)

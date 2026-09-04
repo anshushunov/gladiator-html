@@ -13,8 +13,7 @@ import type { Archetype } from '../simulation/fighters'
 import { CONDITION_LABELS, fightTelegraph, restTelegraph } from './conditionTelegraph'
 import { ORDER_LABELS, TEMPERAMENT_LABELS } from './dispositionLabels'
 import { formatPower } from './formatPower'
-import { typeVocabularyFor, type TypeVocabulary } from './gladiatorTypes'
-import { SHIPPED_LEGIBILITY_MODE, type LegibilityMode } from './legibilityMode'
+import { SHIPPED_TYPE_VOCABULARY, type TypeVocabulary } from './gladiatorTypes'
 
 const RC = { arrow: '→', middleDot: '·', enDash: '–', emDash: '—' }
 
@@ -42,10 +41,7 @@ function fighterNameFor(roster: readonly RosterEntry[], id: string): string {
 
 /** Same lookup shape as `fighterNameFor`, for the gladiator type -- the
  * season-summary bout rows only ever have a roster + a fighter id in hand,
- * same as `SeriesView`'s own `fighterType` for its series-summary rows.
- * Takes the active vocabulary rather than reaching for `TYPE_NAMES`, for the
- * same reason `SeriesView.fighterType` does: the review-only legibility mode
- * switches the whole label set at construction. */
+ * same as `SeriesView`'s own `fighterType` for its series-summary rows. */
 function fighterTypeFor(vocabulary: TypeVocabulary, roster: readonly RosterEntry[], id: string): string {
   const archetype = roster.find((entry) => entry.fighter.id === id)?.fighter.archetype
   return archetype ? vocabulary.names[archetype] : ''
@@ -85,14 +81,11 @@ export class SeasonView {
    *   ended without ever reaching the summary -- still count as "just
    *   arrived". */
   private lastFocusedPhase: SeasonState['phase'] | null = null
-  /** The label set this screen names gladiators with -- see
-   * `SeriesView.vocabulary`. Resolved once, at construction, from the
-   * review-only legibility mode. */
-  private readonly vocabulary: TypeVocabulary
+  /** The label set this screen names gladiators with -- see `SeriesView.vocabulary`. */
+  private readonly vocabulary: TypeVocabulary = SHIPPED_TYPE_VOCABULARY
 
-  constructor(host: HTMLElement, legibility: LegibilityMode = SHIPPED_LEGIBILITY_MODE) {
+  constructor(host: HTMLElement) {
     this.host = host
-    this.vocabulary = typeVocabularyFor(legibility)
   }
 
   render(state: SeasonState): void {
