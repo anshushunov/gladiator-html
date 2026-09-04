@@ -169,9 +169,22 @@
 //     header says so), so the disjunction pushed the same tick onto
 //     `contactsAgainst` twice. `ContactRecord` is emitted exactly once per
 //     contact intent and cannot. So this correction is not a shove feature and
-//     never was -- it is a double count that has been in the punishment ledger
-//     since the ledger existed, which the shove merely made loud enough to
-//     find. Nothing but this script reads the number.
+//     never was -- it is a double count that was present in the punishment
+//     ledger for as long as the ledger read events, which the shove merely made
+//     loud enough to find. Nothing but this script reads the number.
+//
+//     WHOSE DEFECT IT WAS, said precisely, because the paragraph above reads on
+//     `main` as if `main` had it. **It did not.** There is no event-derived
+//     punishment ledger on `main` (`aec7a0a`) at all -- no `ContactCollector`,
+//     no `jabContacts`, no `contactsAgainst`, no recovery window. The whole
+//     ledger is new work introduced by THIS branch at `44f20ff`, and the double
+//     count above lived in the parked shield-shove branch's lineage, between
+//     that commit and its fix at `36d8781`. It never reached `main` and never
+//     will: what this branch lands is the ledger already corrected. The defect
+//     is documented rather than quietly dropped because the 0.0357 -> 0.0222
+//     figure below is the evidence that `ContactRecord` and the event
+//     disjunction are not interchangeable, and that evidence is worth keeping
+//     whichever branch paid for it.
 //   * `shoveStarts` and `shoveMisses` still read events; both are correct as
 //     written, since `action-started` and the three miss events fire for a
 //     no-damage action exactly as they do for any other.
