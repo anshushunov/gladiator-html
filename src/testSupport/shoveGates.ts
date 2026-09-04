@@ -7,6 +7,15 @@
 // The four checks below and their thresholds are frozen against the spec
 // text, not against any run.
 //
+// THE SHOVE WAS PARKED (2026-09-04) after four builds failed the slow suite,
+// so there is currently no subject for this gate to judge and nothing in the
+// tree calls `checkShoveGateW`. It merges anyway, for the reason above: a gate
+// written before its subject is the only kind worth having, and one written
+// after the mechanic returns would be a description of whatever that build
+// produced. `ShoveRunSummary` is a plain record of counts, so nothing here
+// imports the simulation or depends on the mechanic existing -- these are pure
+// functions over numbers, and the tests beside them are the only caller.
+//
 // ---------------------------------------------------------------------------
 // WHY A CEILING ALONE IS NOT A GATE
 // ---------------------------------------------------------------------------

@@ -111,12 +111,15 @@ export function isSuccess(episode: Readonly<DisengageEpisode>): boolean {
 
 /**
  * The three thresholds a reason is corroborated against. A PARAMETER since
- * 2026-08-30, because `scripts/sweep-shove.ts` runs cells whose exit rule is
- * not the shipped one, and corroborating a swept run against the shipped
- * constants is the same class of error this whole file exists to prevent: at a
- * cap of 40 a legitimate `cap` record reads as consistent for the wrong reason,
- * and at a gain of 0.55 every legitimate `progress` record reads as a
- * contradiction because 0.55 < 0.75.
+ * 2026-08-30, because a sweep runs cells whose exit rule is not the shipped
+ * one, and corroborating a swept run against the shipped constants is the same
+ * class of error this whole file exists to prevent: at a cap of 40 a legitimate
+ * `cap` record reads as consistent for the wrong reason, and at a gain of 0.55
+ * every legitimate `progress` record reads as a contradiction because
+ * 0.55 < 0.75. (The sweep that established this, `scripts/sweep-shove.ts`, is
+ * parked on `feature/shield-shove`; the parameter is kept because the next
+ * candidate exit rule will need it and because every caller on this branch
+ * takes the default, which is byte-identical to the two-constant version.)
  *
  * The corroboration rule is NOT the exit rule, and the difference is
  * deliberate. `minGain` here defaults to `DISENGAGE_SUCCESS_GROUND`, the

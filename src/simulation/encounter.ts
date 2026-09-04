@@ -297,12 +297,20 @@ export interface EncounterState {
    * `SHIPPED_FAST_FORCED_DISENGAGE_RULE` is read at the one call site and the
    * state carries nothing.
    *
-   * Set only by `withForcedDisengageRule` below, which
-   * `scripts/sweep-shove.ts` applies to a freshly created state. It sits beside
-   * `combatStyles` for the same reason `combatStyles` is here: it is a run
-   * parameter the tick loop needs and cannot rediscover, and the alternative --
-   * a module-level mutable override in `combatDecision.ts` -- would make two
-   * concurrent encounters share one rule.
+   * Set only by `withForcedDisengageRule` below, which a sweep applies to a
+   * freshly created state. It sits beside `combatStyles` for the same reason
+   * `combatStyles` is here: it is a run parameter the tick loop needs and
+   * cannot rediscover, and the alternative -- a module-level mutable override
+   * in `combatDecision.ts` -- would make two concurrent encounters share one
+   * rule.
+   *
+   * NO PRODUCTION OR SCRIPT CALLER SETS IT ON THIS BRANCH. The sweep that did
+   * (`scripts/sweep-shove.ts`) is parked on `feature/shield-shove` along with
+   * the mechanic it was fitting; only `encounter.test.ts` exercises the
+   * non-shipped path. That is the intended state, not an oversight: the
+   * apparatus for measuring a candidate exit rule is worth keeping on `main`,
+   * and it is only worth keeping if the shipped path through it is provably
+   * the one that always ran -- which is what every unmoved frozen digest says.
    *
    * `?` and never written as `undefined`: see
    * `FighterCombatState.forcedDisengageStartSeparation` for why an
@@ -709,12 +717,16 @@ export function createEncounter(config: EncounterConfig): EncounterTransition {
  * `forcedDisengageRule` key into a state a determinism baseline hashes.
  *
  * WHY THIS EXISTS AT ALL, rather than a field on `EncounterConfig`. The
- * measurement that needs it (`scripts/sweep-shove.ts`) goes through
- * `createBattle`, and `src/simulation/battle.ts` is closed to this slice by
+ * measurement that needed it (`scripts/sweep-shove.ts`, parked on
+ * `feature/shield-shove` with the mechanic it was fitting) goes through
+ * `createBattle`, and `src/simulation/battle.ts` was closed to that slice by
  * `scripts/check-allowlist.sh`, so there is no config path from the duel
  * adapter down to `createEncounter`. Doing the substitution here, in the module
  * that owns the state's shape and its invariants, is honest about that; leaving
  * the script to spread a raw literal into a kernel state would not be.
+ *
+ * It therefore has NO caller on this branch outside `encounter.test.ts`. See
+ * `EncounterState.forcedDisengageRule` for why that is the intended state.
  *
  * The rule is validated rather than trusted: a sweep cell that fails to parse
  * its own grid must stop the run, not quietly measure a rule nobody chose.

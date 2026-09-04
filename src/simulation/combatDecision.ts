@@ -1054,6 +1054,14 @@ export function hasFastForcedDisengageEnded(distanceToTarget: number, ticksSince
  * one. Above the gain threshold the episode terminates at `start + push`;
  * below it the push is a cheap way to satisfy the exit. Measuring either alone
  * measures a fight that will not exist. Thirty cells cannot each be a rebuild.
+ *
+ * THE SWEEP RAN AND ITS MECHANICS WERE PARKED (2026-09-04): no build passed the
+ * slow suite, so neither the shove nor a gain clause ships, and `minGain` is
+ * `Infinity` on every path a bout takes. The parameter is kept anyway. It costs
+ * one field and one branch that provably never fires -- every frozen
+ * determinism digest is byte-identical to the pre-parameter tree, which is the
+ * evidence -- and it is the difference between the next candidate exit rule
+ * being a measurement and being a rebuild.
  */
 export interface FastForcedDisengageRule {
   /** The absolute separation the fighter may open up to, ending the episode. */

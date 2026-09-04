@@ -1218,10 +1218,14 @@ describe("advanceEncounterTick: Fast's forced disengage (design.md; Task 7's has
 // ---------------------------------------------------------------------------
 // The swept exit rule (shield-shove slice, spec §5)
 //
-// `scripts/sweep-shove.ts` runs thirty cells whose forced-disengage exit rule
-// is not the shipped one. The claim that carries the whole sweep is that
-// nothing outside it moved -- so the two properties that claim rests on are
-// pinned here rather than left to a run someone did once:
+// `scripts/sweep-shove.ts` ran thirty cells whose forced-disengage exit rule
+// is not the shipped one. That script is parked on `feature/shield-shove` with
+// the mechanic it was fitting, so these two tests are now the ONLY exercise of
+// the non-shipped path anywhere in the tree -- which makes them more load-
+// bearing than when they were written, not less. The claim that carried the
+// sweep is the claim this branch makes about itself: that nothing outside it
+// moved. The two properties it rests on are pinned here rather than left to a
+// run someone did once:
 //
 //   1. the shipped rule writes NO new state, not even an undefined key
 //      (`stateHash.ts`'s `canonicalJson` walks `Object.entries`, so an
