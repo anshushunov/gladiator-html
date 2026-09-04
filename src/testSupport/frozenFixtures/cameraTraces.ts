@@ -1,32 +1,47 @@
 // The recorded browser traces the camera suite replays, split out of
 // `src/presentation/ArenaCamera.test.ts`.
 //
-// This split is what makes the CI gate obeyable. The gate forbids
-// `src/presentation/**` wholesale, because this slice's premise is that
+// HISTORICAL (retiarius-reach slice, superseded by Task 7 below): this split
+// is what made that slice's CI gate obeyable. The gate forbade
+// `src/presentation/**` wholesale, because that slice's premise was that
 // BEHAVIOUR separates the trident from the spear while the silhouette does
 // not -- and a camera retune would answer the same question a second way.
 // But `ArenaCamera.test.ts` held these numbers, which a behaviour change MUST
 // move. Forbidding a file whose contents must move is a rule that cannot be
 // obeyed; the numbers move here instead, and the file goes behind the gate.
+// Task 7 is not that slice and was not bound by its gate, but changed the
+// same numbers for an unrelated reason (see below) and this split still
+// documents the CLASS distinction that matters either way:
 //
 // CLASS: determinism, with a behavioural edge. `ticks` and `openingDistance`
 // are not free: they say this replay is THE recorded bout and not merely a
 // bout of the same shape. If `ticks` moves, the bout restructured, and that
 // wants a sentence in the commit rather than a silent re-freeze. `crossings`
 // is how many times the framing crossed a band edge -- it moves with the
-// spacing the fighters actually keep, which this slice changes on purpose.
+// spacing the fighters actually keep, which a behaviour change moves on
+// purpose.
 //
 // What is NOT here, deliberately: everything `expectSmoothFraming` asserts --
 // the reversal ceiling, the zoom-rate limit, the clamp being inert, the
 // distance bounds. Those are the camera's acceptance criteria, they stay in
-// the test file behind the gate, and they are not re-baselinable. `ArenaCamera.ts`
-// itself is forbidden to this slice: if a CONSTANT has to move for these to
-// pass, that is a finding to report and a slice to schedule, not a number to
-// nudge.
+// the test file, and they are not re-baselinable regardless of which slice is
+// touching this file. `ArenaCamera.ts` constants split into two kinds: a
+// MEASURED one (`WIDEST_EQUIPMENT_RADIUS`) is refreshed whenever the rig it
+// quotes changes -- that is a data fix, not a re-baseline, and Task 7 did
+// exactly that. The SWEPT pair (`FLAT_DISTANCE`, `EASE_WIDTH_EXTENT`) is
+// chosen by sweeping candidates against recorded ticks and is never refreshed
+// just because a rig changed; moving either is a finding to report and a
+// slice to schedule, not a number to nudge.
 //
-// `label`, `ticks` and `openingDistance` were read out of
-// `.superpowers/framing/rec-8.81-full-ease7.00.json`; `lineup` is the one
-// `scripts/measure-framing.ts` opened the series with.
+// `label` and `ticks` were read out of the original browser recording,
+// `.superpowers/framing/rec-8.81-full-ease7.00.json` (captured against the
+// old procedural rig, before Task 6's skinned models). `openingDistance` and
+// `crossings` below are NOT from that recording -- Task 6 changed the rig's
+// equipment radii, which the recording can't reflect, so these two are read
+// from the vitest replay in `ArenaCamera.test.ts` itself, run under the
+// measured radii current at commit time (see that file's
+// `RIG_EQUIPMENT_RADIUS`). `lineup` is the one `scripts/measure-framing.ts`
+// opened the series with, same as always.
 
 export interface RecordedCameraTrace {
   label: string

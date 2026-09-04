@@ -321,16 +321,24 @@ describe('ArenaCamera', () => {
     /**
      * How far the pair swings either side of the band edge in the oscillation
      * test. It has to clear the framing dead zone, which is 12% of the sticky
-     * extent reference -- `0.12 x 6.07242 = 0.7287` world units of extent at
-     * the edge. Measured: at amplitude `0.5`, and at `0.72` (just inside the
-     * dead zone), the distance is bit-for-bit constant across all 600 ticks --
-     * see the sibling test below, which pins exactly that. A test driven that
-     * gently would prove only that the dead zone swallowed the wobble, never
-     * that the mapping behaves once it does not.
+     * extent reference -- `0.12 x 7.088106201771723 = 0.850573` world units of
+     * extent at the edge (re-measured for Task 7's skinned-model radii; was
+     * `0.12 x 6.07242 = 0.7287`). Measured: at amplitude `0.5`, and at `0.84`
+     * (just inside the dead zone, re-measured; was `0.72`), the distance is
+     * bit-for-bit constant across all 600 ticks -- see the sibling test below,
+     * which now pins exactly that at `0.84`. A test driven that gently would
+     * prove only that the dead zone swallowed the wobble, never that the
+     * mapping behaves once it does not.
      *
-     * `1.0` clears the dead zone by 37% and swings the extent from 5.07 to
-     * 7.07, i.e. right across the junction between the flat region and the
-     * eased one.
+     * `1.0` was not rescaled with the dead zone: it clears it by 17.6% now
+     * (was 37% at the old, narrower dead zone -- `1.0` was chosen as a round
+     * number that puts the swing across the flat/eased junction, not to hit a
+     * specific clearance percentage), and swings the extent from 6.088 to
+     * 8.088 (re-measured; was 5.07 to 7.07), i.e. still right across the
+     * junction between the flat region and the eased one. 17.6% remains
+     * comfortably above the sibling test's ~1% margins (`0.84`/`0.86` against
+     * the same `0.850573` boundary), so the test still measures tracking
+     * rather than dead-zone-boundary noise.
      */
     const OSCILLATION_AMPLITUDE = 1.0
 
@@ -349,7 +357,19 @@ describe('ArenaCamera', () => {
       }
 
       // The drive has to reach the camera at all, or every bound below is
-      // vacuous. Measured span: 0.1768 world units (8.810 to 8.987).
+      // vacuous. Measured span: 0.2252 world units (8.810 to 9.035),
+      // re-measured for Task 7's skinned-model radii (was 0.1768, 8.810 to
+      // 8.987) -- the wider `BAND_HIGH` moved the *undamped* target signal's
+      // own span (the sticky extent reference's `distanceReference`, before
+      // the 1.25 s `approach()` damping ever sees it -- what a chattering,
+      // undamped camera would show) from about 0 (a same-amplitude swing sat
+      // almost entirely inside the old, narrower dead zone) to about 0.381 at
+      // the new, wider one, and the damped signal measured below moved with
+      // it. Headroom against the unchanged `expect(span).toBeLessThan(0.35)`
+      // two lines down shrank from 0.1732 (the old span was 51% of that
+      // ceiling) to 0.1248 (the new span is 64% of it) -- comfortable still,
+      // but real, and it is the dead zone widening with `BAND_HIGH`, not this
+      // test's own inputs, that ate the margin. `0.35` is NOT loosened.
       const span = Math.max(...distances) - Math.min(...distances)
       expect(span).toBeGreaterThan(0.1)
       expect(span).toBeLessThan(0.35)
