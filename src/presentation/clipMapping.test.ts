@@ -66,11 +66,17 @@ describe('selectClip', () => {
     expect(selectClip(input({ state: attacking('recovery', 31, 51), tick: 41 })).weaponTrailActive).toBe(false)
   })
 
-  it('plays the defense clip over impact then recovery', () => {
-    const blocking = (phase: 'impact' | 'recovery') =>
-      state({ action: { type: 'active', instanceId: 'd1', definitionId: 'heavy-guard', phase, phaseStartedTick: 0, phaseEndsAtTick: 10, targetId: 'away.drusus' } })
-    expect(selectClip(input({ state: blocking('impact'), tick: 5 }))).toEqual({ clip: 'Block', time: 0.3, weaponTrailActive: false })
-    expect(selectClip(input({ state: blocking('recovery'), tick: 5 })).time).toBeCloseTo(0.8)
+  it('sweeps the defense clip monotonically across windup, contact, impact, then recovery', () => {
+    const blocking = (phase: 'windup' | 'contact' | 'impact' | 'recovery', started: number, ends: number) =>
+      state({ action: { type: 'active', instanceId: 'd1', definitionId: 'heavy-guard', phase, phaseStartedTick: started, phaseEndsAtTick: ends, targetId: 'away.drusus' } })
+    // windup 0..10, halfway (p = 0.5) -> 0.5 * 0.4 * 1.0
+    expect(selectClip(input({ state: blocking('windup', 0, 10), tick: 5 }))).toEqual({ clip: 'Block', time: 0.2, weaponTrailActive: false })
+    // contact just starting (p = 0) -> exactly the windup fraction, the guard is fully raised
+    expect(selectClip(input({ state: blocking('contact', 20, 21), tick: 20 })).time).toBeCloseTo(0.4)
+    // impact just ending (p = 1) -> exactly the impact fraction, about to lower the guard
+    expect(selectClip(input({ state: blocking('impact', 21, 25), tick: 25 })).time).toBeCloseTo(0.6)
+    // recovery halfway -> between the impact fraction and the clip's end
+    expect(selectClip(input({ state: blocking('recovery', 0, 10), tick: 5 })).time).toBeCloseTo(0.8)
   })
 
   it('prefers the hit clip while staggered, timed from the stagger start', () => {

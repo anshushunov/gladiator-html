@@ -34,7 +34,16 @@ export interface ClipMappingInput {
 
 /** Held portion of an attack clip after the strike frame, as a fraction of the clip. */
 const IMPACT_HOLD_FRACTION = 0.15
-/** Fraction of a defense clip spent raising the guard; the rest lowers it. */
+/**
+ * A defense clip's timeline is one monotone sweep across all four phases:
+ * `0 -> DEFENSE_WINDUP_FRACTION` over windup (raising the guard),
+ * `DEFENSE_WINDUP_FRACTION -> DEFENSE_IMPACT_FRACTION` over contact+impact
+ * (held at the guard), then `DEFENSE_IMPACT_FRACTION -> 1` over recovery
+ * (lowering it). Two fractions, not one, because otherwise `p` restarting at
+ * 0 on every phase boundary would replay the guard-raise three times before
+ * recovery ever runs.
+ */
+const DEFENSE_WINDUP_FRACTION = 0.4
 const DEFENSE_IMPACT_FRACTION = 0.6
 /** Windup progress from which the weapon trail shows (same rule `PoseController` used). */
 const WEAPON_TRAIL_WINDUP_THRESHOLD = 0.6
@@ -67,6 +76,18 @@ function attackTime(phase: CombatActionPhase, p: number, contactAt: number, dura
   }
 }
 
+function defenseTime(phase: CombatActionPhase, p: number, duration: number): number {
+  switch (phase) {
+    case 'windup':
+      return p * DEFENSE_WINDUP_FRACTION * duration
+    case 'contact':
+    case 'impact':
+      return (DEFENSE_WINDUP_FRACTION + p * (DEFENSE_IMPACT_FRACTION - DEFENSE_WINDUP_FRACTION)) * duration
+    case 'recovery':
+      return (DEFENSE_IMPACT_FRACTION + p * (1 - DEFENSE_IMPACT_FRACTION)) * duration
+  }
+}
+
 export function selectClip(input: ClipMappingInput): ClipSelection {
   const { state, tick, alpha, durations } = input
   const t = tick + alpha
@@ -95,11 +116,7 @@ export function selectClip(input: ClipMappingInput): ClipSelection {
     }
     if (isDefenseActionId(action.definitionId)) {
       const clip = DEFENSE_CLIPS[action.definitionId]
-      const duration = durationOf(clip)
-      const time = action.phase === 'recovery'
-        ? (DEFENSE_IMPACT_FRACTION + p * (1 - DEFENSE_IMPACT_FRACTION)) * duration
-        : p * DEFENSE_IMPACT_FRACTION * duration
-      return still(clip, time)
+      return still(clip, defenseTime(action.phase, p, durationOf(clip)))
     }
   }
 
