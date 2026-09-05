@@ -543,6 +543,56 @@ test('falls back gracefully instead of crashing when WebGL is unavailable at sta
 })
 
 // ---------------------------------------------------------------------------
+// Final-review fix I6 (skinned-gladiators slice). The slice added exactly one
+// new production failure path -- `main.ts`'s `await loadFighterModels()` can
+// reject (an offline user, a bad deploy, a `.glb` served as HTML), and its
+// `.catch` hands `null` to `ArenaView`, whose constructor then disposes the
+// renderer it had already built and enters the same readable fallback as "no
+// WebGL". Nothing exercised that branch: every other test in the suite loads
+// the models successfully.
+//
+// Aborting the requests is the honest simulation of it. `main.ts`'s top-level
+// await is what publishes `window.__GLADIATOR_TEST__`, so a load that hung or
+// threw the wrong way would show up here as a `waitForFunction` timeout rather
+// than as a green test -- which is the second thing this pins.
+// ---------------------------------------------------------------------------
+
+test('falls back gracefully and keeps the season running when the fighter models fail to load', async ({ page }) => {
+  await page.route('**/models/*.glb', (route) => route.abort())
+
+  await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
+
+  // The season still boots, and the planning screen behind the season board
+  // still opens -- the arena is one cell of the page, not the page.
+  await expect(page.getByTestId('season-board')).toBeVisible()
+  await page.getByTestId('start-series').click()
+  await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
+
+  await page.evaluate(() => {
+    window.__GLADIATOR_TEST__.assign('aquila', 0)
+    window.__GLADIATOR_TEST__.assign('nerva', 1)
+    window.__GLADIATOR_TEST__.assign('brutus', 2)
+    window.__GLADIATOR_TEST__.confirm()
+  })
+  await expect(page.getByTestId('series-phase')).toHaveAttribute('data-phase', 'fighting')
+
+  // Exactly the fallback the WebGL-unavailable test asserts, down to the
+  // `role="status"` announcement -- one failure mode, one readable message.
+  const fallback = page.locator('.arena__webgl-fallback')
+  await expect(fallback).toBeVisible()
+  await expect(fallback).toHaveAttribute('role', 'status')
+  await expect(fallback).toHaveText('The arena display is unavailable in this browser session. The match continues below.')
+  await expect(page.locator('canvas')).toBeHidden()
+
+  // ...and the bout underneath it really runs.
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))
+  const tick = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()?.activeBattle?.encounter.tick)
+  expect(tick).toBeGreaterThan(0)
+  await expect(fallback).toBeVisible()
+})
+
+// ---------------------------------------------------------------------------
 // Final-review fix #1: `requestAnimationFrame(frame)` used to be `frame()`'s
 // last statement, with the whole `syncArena()` -> `ArenaView.sync()` ->
 // pose sampling/IK/`renderer.render`/`combatAudio.consume` path unguarded --
