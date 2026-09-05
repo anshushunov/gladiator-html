@@ -14,7 +14,7 @@ import * as THREE from 'three'
 import { ArenaCamera, FLAT_DISTANCE, measuredExtent, type ArenaCameraState, type HorizontalFramingTarget } from './ArenaCamera'
 import { createSkinnedFighter, type FighterModelSet, type SkinnedFighter } from './SkinnedFighter'
 import { FighterAnimator } from './FighterAnimator'
-import { selectClip } from './clipMapping'
+import { selectClip, type ClipSelection } from './clipMapping'
 import { FIGHTER_BONE_NAMES, type FighterBoneName } from './fighterModelContract'
 import type { BattleState } from '../simulation/battle'
 import type { ContactZone } from '../simulation/combatActions'
@@ -72,6 +72,28 @@ export interface ArenaDebugSnapshot {
   rootYaw: Readonly<Record<CombatantId, number>>
   jointTransformsFinite: boolean
   jointRotations: Readonly<Record<CombatantId, Readonly<Record<FighterBoneName, readonly [number, number, number]>>>>
+  /**
+   * Which clip each rig is actually playing, and how far into it in seconds:
+   * verbatim the `ClipSelection` `applyFrame` handed that rig's
+   * `FighterAnimator`, recorded on the rig by the same statement that applies
+   * it (final-review fix I1).
+   *
+   * The point is that nothing else in the suite could see the animation layer
+   * at all. `jointRotations` above has no consumer outside this file, and
+   * `jointTransformsFinite` is satisfied by a rig that never moves -- so a
+   * `FighterAnimator.apply` that returned early, or a `selectClip` hard-wired
+   * to `Idle`, would have kept every fast test green while the bout played as
+   * a row of statues. `tests/combat-visuals.spec.ts` asserts this field at the
+   * frozen key-pose ticks: the clip name `ATTACK_CLIPS`/`DEFENSE_CLIPS`/
+   * `BASE_CLIPS` maps that tick's action to, and the clip time against the
+   * shipped `.glb`'s own duration.
+   *
+   * A rig that has not been rendered yet (constructed by `reconcileRigs`, no
+   * `applyFrame` since) is absent from this record rather than present with a
+   * placeholder clip: "no frame has been drawn" and "the rig is idling" are
+   * different states and a fixture must be able to tell them apart.
+   */
+  activeClip: Readonly<Record<CombatantId, { clip: string; time: number }>>
   activeEffectIds: readonly string[]
   trailPointCounts: Readonly<Record<CombatantId, number>>
   camera: ArenaCameraState
@@ -97,6 +119,42 @@ export interface ArenaDebugSnapshot {
    * holding a 1.30-unit spear upright, or a murmillo behind a 1.10-unit
    * scutum, would satisfy a floor measured over everything on screen without
    * the man himself being any easier to see.
+   *
+   * **BIND POSE, not the drawn pose** (final-review fix I4). Every `*Px` field
+   * here is measured by `accumulateProjectedBounds`, which projects each
+   * mesh's own `geometry.boundingBox` through its `matrixWorld`. For a
+   * `SkinnedMesh` those two do not compose into the drawn silhouette:
+   *
+   * - `geometry.boundingBox` is the BIND-POSE box. Skinning happens in the
+   *   vertex shader from the skeleton's bone matrices, and no `Object3D`
+   *   transform above the mesh reflects it, so a crouch, a lunge or a
+   *   knocked-down death pose moves nothing here.
+   * - `matrixWorld` is NOT the transform the drawn mesh is under either. The
+   *   shipped `.glb`s put the six body meshes under a `Rig` node carrying the
+   *   armature scale the build script applied (0.8641 heavy, 0.9148 fast,
+   *   0.9145 technical), and the bind-pose vertex data is already in final
+   *   world units (spanning exactly 2.0 in y, feet at y=0 -- asserted by
+   *   `fighterModelContract.test.ts`). At draw time that double count cancels:
+   *   `SkinnedMesh` defaults to `AttachedBindMode`, which re-derives
+   *   `bindMatrixInverse` from `matrixWorld` every `updateMatrixWorld`, so the
+   *   shader's `matrixWorld * bindMatrixInverse` is the identity and the man
+   *   is drawn 2.0 units tall. A measurement that multiplies the box by
+   *   `matrixWorld` and stops there does NOT cancel it, so the box this field
+   *   projects is the standing body scaled by that `Rig` factor -- about 1.73
+   *   world units for the murmillo and 1.83 for the other two.
+   *
+   * Rigidly bone-parented props -- the spear, trident, net, both shields, the
+   * helmet -- are ordinary `Mesh`es under a `Bone`, so those do track the
+   * drawn pose exactly.
+   *
+   * Left as is deliberately (see spec §7), because for the 130 px floor this
+   * is conservative twice over: a pose-independent height cannot be inflated
+   * by a frame that happens to stretch the silhouette, and the `Rig` factor
+   * makes the measured body shorter than the drawn one, so clearing the bar
+   * here means clearing it on screen with room to spare. What it is not is
+   * the procedural rig's guarantee, whose limbs were separate `Mesh`es and
+   * whose boxes were therefore posed every frame: "the drawn body never
+   * leaves the inset" is no longer what the safe-area rule asserts.
    */
   bodyHeightPx: Readonly<Record<CombatantId, number>>
   /**
@@ -108,6 +166,12 @@ export interface ArenaDebugSnapshot {
    *
    * Origin is the canvas's top-left corner, `y` growing downward, matching
    * DOM/screenshot pixel conventions rather than NDC.
+   *
+   * Mixed pose semantics, by construction (see `bodyHeightPx` above): the
+   * skinned body parts contribute their BIND-POSE box carried by the rig
+   * root, while every bone-parented prop contributes its actually-drawn
+   * position. The safe-area rule is therefore stated over "the standing body
+   * plus the live props", not over the drawn silhouette.
    */
   fullBoundsPx: Readonly<Record<CombatantId, ScreenBoundsPx>>
   /**
@@ -122,6 +186,9 @@ export interface ArenaDebugSnapshot {
    * tip rather than a fighter, and the human deciding how to answer that needs
    * the priced alternative rather than a description of it (Task 5 review,
    * fix round 1, analysis 1).
+   *
+   * Same mixed pose semantics as `fullBoundsPx` above -- bind-pose body,
+   * live props.
    */
   boundsPxWithoutWeapon: Readonly<Record<CombatantId, ScreenBoundsPx>>
   /**
@@ -142,6 +209,11 @@ export interface ArenaDebugSnapshot {
    *
    * `tests/legibility.spec.ts` is the only consumer; nothing under `src/`
    * reads it, and adding it changed no behaviour.
+   *
+   * With the exempt props dropped this is almost entirely the bind-pose body
+   * box (plus helmet and shield), so the 5 % safe-area inset the harness
+   * asserts on it is a rule about the *standing* fighter -- see
+   * `bodyHeightPx` above and spec §7.
    */
   boundsPxWithoutExemptProps: Readonly<Record<CombatantId, ScreenBoundsPx>>
   /**
@@ -462,6 +534,12 @@ interface FighterRig {
   staggerStartTick?: number
   /** Tick of the `fighter-defeated` event. */
   defeatedAtTick?: number
+  /**
+   * The last `ClipSelection` actually handed to `animator.apply` for this rig
+   * (final-review fix I1) -- the debug snapshot's `activeClip` is read from
+   * here. `undefined` until the rig's first rendered frame.
+   */
+  lastSelection?: ClipSelection
   trailGeometry: THREE.BufferGeometry
   trailMaterial: THREE.LineBasicMaterial
   trailLine: THREE.Line
@@ -806,6 +884,9 @@ export class ArenaView {
         durations: rig.animator.durations,
       })
       rig.animator.apply(selection)
+      // Recorded only once `apply` has returned, so the snapshot can never
+      // report a clip the animator rejected (it throws on an unknown name).
+      rig.lastSelection = selection
       rig.fighter.root.updateMatrixWorld(true)
 
       this.updateWeaponTrail(rig, selection.weaponTrailActive && !reducedMotion)
@@ -1155,6 +1236,12 @@ function emptyBounds(): MutableBoundsPx {
  * projected corners still bound the drawn mesh, because a perspective
  * projection maps the convex hull of the box into the convex hull of the
  * projected corners for any box entirely in front of the camera.
+ *
+ * For a `SkinnedMesh` this measures the BIND POSE, scaled by the `Rig` node
+ * the loaded scene puts the body meshes under, rather than the drawn pose --
+ * see `ArenaDebugSnapshot.bodyHeightPx` for the full account and for why it
+ * is left that way. Rigid bone-parented props (weapons, shields, net, helmet)
+ * are plain `Mesh`es under a `Bone` and do track the drawn pose exactly.
  */
 function accumulateProjectedBounds(
   root: THREE.Object3D,
@@ -1196,6 +1283,7 @@ function buildArenaDebugSnapshot(
   const rootPositions: Record<CombatantId, Vec2> = {}
   const rootYaw: Record<CombatantId, number> = {}
   const jointRotations: Record<CombatantId, Record<FighterBoneName, readonly [number, number, number]>> = {}
+  const activeClip: Record<CombatantId, { clip: string; time: number }> = {}
   const trailPointCounts: Record<CombatantId, number> = {}
   const bodyHeightPx: Record<CombatantId, number> = {}
   const fullBoundsPx: Record<CombatantId, ScreenBoundsPx> = {}
@@ -1247,6 +1335,7 @@ function buildArenaDebugSnapshot(
       rotationsForRig[name] = [joint.rotation.x, joint.rotation.y, joint.rotation.z]
     }
     jointRotations[id] = rotationsForRig
+    if (rig.lastSelection) activeClip[id] = { clip: rig.lastSelection.clip, time: rig.lastSelection.time }
     trailPointCounts[id] = rig.trailLine.visible ? rig.trailPoints.length : 0
 
     // `applyFrame` already does this every rendered frame; repeated for the
@@ -1287,6 +1376,7 @@ function buildArenaDebugSnapshot(
     rootYaw,
     jointTransformsFinite,
     jointRotations,
+    activeClip,
     activeEffectIds: flashes.activeEffectIds(),
     trailPointCounts,
     camera: cameraState,

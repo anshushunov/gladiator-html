@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 import { COMBAT_STYLES } from '../src/content/combatStyles'
+import { ATTACK_CLIPS, BASE_CLIPS, DEFENSE_CLIPS, MODEL_FILES } from '../src/presentation/fighterModelContract'
 import { advanceBattleTicks, createBattle, MAX_BOUT_TICKS } from '../src/simulation/battle'
+import type { Archetype } from '../src/simulation/fighters'
 import { formatTraceHash } from '../src/simulation/random'
 
 // ---------------------------------------------------------------------------
@@ -100,6 +104,92 @@ async function eventsAtTick(page: Page, tick: number) {
 
 async function arenaSnapshot(page: Page) {
   return page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
+}
+
+/**
+ * Renders the frame the runtime is currently holding at an explicit alpha and
+ * reads the debug snapshot back in the SAME synchronous callback -- the race
+ * every other reader in this file documents (`main.ts`'s background
+ * `requestAnimationFrame` keeps re-syncing at its own paused-pegged alpha, so
+ * two round-trips can observe two different renders).
+ *
+ * `alpha` matters for the clip assertions below and is therefore explicit
+ * rather than defaulted: `clipMapping` derives clip TIME from `tick + alpha`,
+ * so a checkpoint that wants a phase's exact opening frame has to ask for
+ * alpha 0, and one that only cares which clip is playing can use either.
+ */
+async function renderedSnapshotAt(page: Page, alpha: number) {
+  return page.evaluate((a) => {
+    window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha!(a)
+    return window.__GLADIATOR_TEST__.getArenaDebugSnapshot!()!
+  }, alpha)
+}
+
+// ---------------------------------------------------------------------------
+// Clip durations, read from the shipped `.glb`'s own JSON chunk.
+//
+// The animation layer's assertions (final-review fix I1) are stated against
+// the real clip lengths rather than against the durations §2.1 of the design
+// records: those were measured on the SOURCE pack, and the Blender round-trip
+// re-times every clip slightly (`Idle` ships at 1.042 s, not the pack's
+// 1.067 s). A glTF animation's duration is the largest keyframe time over its
+// samplers' input accessors, which is exactly how three.js derives
+// `AnimationClip.duration` when `GLTFLoader` parses the same file -- so this
+// reads the same number the runtime is using, from the same bytes, without a
+// browser.
+// ---------------------------------------------------------------------------
+
+interface GlbAnimationJson {
+  animations?: { name?: string; samplers: { input: number }[] }[]
+  accessors?: { max?: number[] }[]
+}
+
+function clipDurations(archetype: Archetype): ReadonlyMap<string, number> {
+  const buffer = readFileSync(resolve(process.cwd(), 'public', MODEL_FILES[archetype]))
+  const jsonLength = buffer.readUInt32LE(12)
+  const json = JSON.parse(buffer.subarray(20, 20 + jsonLength).toString('utf8')) as GlbAnimationJson
+  const durations = new Map<string, number>()
+  for (const animation of json.animations ?? []) {
+    const ends = animation.samplers.map((sampler) => json.accessors?.[sampler.input]?.max?.[0] ?? 0)
+    durations.set(String(animation.name), Math.max(0, ...ends))
+  }
+  return durations
+}
+
+const CLIP_DURATIONS: Readonly<Record<Archetype, ReadonlyMap<string, number>>> = {
+  heavy: clipDurations('heavy'),
+  fast: clipDurations('fast'),
+  technical: clipDurations('technical'),
+}
+
+/**
+ * Asserts that `id` is playing `clip`, at a time inside the clip.
+ *
+ * This is the assertion the suite did not have before the final review, and
+ * its absence was structural rather than an oversight: `jointRotations` has no
+ * consumer outside `ArenaView.ts`, and `jointTransformsFinite` is satisfied by
+ * a rig that never moves -- so a `FighterAnimator.apply` that returned early,
+ * or a `selectClip` hard-wired to `Idle`, would have kept every fast test
+ * green with the bout playing as a row of statues. The clip NAME is what ties
+ * a frozen simulation state to `ATTACK_CLIPS`/`DEFENSE_CLIPS`/`BASE_CLIPS`;
+ * the TIME bound is what proves it is being played rather than merely
+ * selected.
+ */
+function expectClip(
+  snapshot: { activeClip: Record<string, { clip: string; time: number }> },
+  id: string,
+  archetype: Archetype,
+  clip: string,
+  label: string,
+): number {
+  const active = snapshot.activeClip[id]
+  expect(active, `${label}: ${id} should have an active clip`).toBeDefined()
+  expect(active.clip, `${label}: ${id} clip`).toBe(clip)
+  const duration = CLIP_DURATIONS[archetype].get(clip)
+  expect(duration, `${label}: ${clip} should exist in the ${archetype} model`).toBeGreaterThan(0)
+  expect(active.time, `${label}: ${id} clip time`).toBeGreaterThanOrEqual(0)
+  expect(active.time, `${label}: ${id} clip time should stay inside ${clip} (${duration!} s)`).toBeLessThanOrEqual(duration!)
+  return duration!
 }
 
 // ---------------------------------------------------------------------------
@@ -458,12 +548,16 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
   expect(snapshot!.activeEffectIds.some((id) => id.startsWith('body-'))).toBe(true)
+  // ...and the animation layer, not merely the transform layer: a staggered
+  // fighter must actually be playing the pack's hit reaction.
+  expectClip(await renderedSnapshotAt(page, 1), 'home.brutus', 'heavy', BASE_CLIPS.hit, 't232 stagger')
 
   // tick 250: home.brutus mid `heavy-guard` windup, reacting to away.drusus's
   // `fast-slash` (the guard's windup runs 246..253).
   await advanceToTick(page, 250, cursor)
   const guardWindup = await combatantState(page, 'home.brutus')
   expect(guardWindup.action).toMatchObject({ type: 'active', definitionId: 'heavy-guard', phase: 'windup' })
+  expectClip(await renderedSnapshotAt(page, 1), 'home.brutus', 'heavy', DEFENSE_CLIPS['heavy-guard'], 't250 guard windup')
 
   // tick 254: the guard actually blocks -- `attack-blocked` + a shield-zone
   // `damage-dealt` (reduced chip damage, not the full hit), and the shield
@@ -537,6 +631,28 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   expect(Number.isFinite(snapshot!.rootPositions['home.brutus'].x)).toBe(true)
   expect(Number.isFinite(snapshot!.rootPositions['away.drusus'].x)).toBe(true)
 
+  // Both signature attacks reach the rig as their own authored clip, one per
+  // archetype, at the same frozen tick.
+  const atCleaveWindup = await renderedSnapshotAt(page, 1)
+  expectClip(atCleaveWindup, 'home.brutus', 'heavy', ATTACK_CLIPS['heavy-cleave'].clip, 't1658 cleave windup')
+  expectClip(atCleaveWindup, 'away.drusus', 'fast', ATTACK_CLIPS['fast-burst-lunge'].clip, 't1658 burst windup')
+
+  // tick 1659: still the same windup, one tick later -- so the same clip, at a
+  // later clip time, and therefore a DIFFERENT skeleton. This is the assertion
+  // that the mixer is actually sampling: `activeClip` proves the right clip
+  // was selected and handed over, but an animator that never advanced the
+  // pose would satisfy that and every finiteness check in this file while the
+  // bout played as a row of statues.
+  await advanceToTick(page, 1659, cursor)
+  const oneTickLater = await renderedSnapshotAt(page, 1)
+  expect(oneTickLater.activeClip['home.brutus'].clip).toBe(atCleaveWindup.activeClip['home.brutus'].clip)
+  expect(oneTickLater.activeClip['home.brutus'].time).toBeGreaterThan(atCleaveWindup.activeClip['home.brutus'].time)
+  const movedBones = Object.entries(oneTickLater.jointRotations['home.brutus']).filter(([bone, rotation]) => {
+    const before = atCleaveWindup.jointRotations['home.brutus'][bone as keyof typeof atCleaveWindup.jointRotations['home.brutus']]
+    return rotation.some((value, axis) => value !== before[axis])
+  })
+  expect(movedBones.length, 'at least one bone must move between two ticks of the same cleave windup').toBeGreaterThan(0)
+
   // tick 1827: away.drusus's defeat -- the bout's decisive `fighter-defeated`.
   // The bout CHANGES HANDS with this slice: the murmillo used to be the one
   // who fell here, at tick 2106. Same checkpoint, same condition, opposite
@@ -549,6 +665,7 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   expect(drususDefeated.hp).toBe(0)
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
+  expectClip(await renderedSnapshotAt(page, 1), 'away.drusus', 'fast', BASE_CLIPS.death, 't1827 defeat')
 })
 
 test('freezes technical measure/parry/counter', async ({ page }) => {
@@ -582,6 +699,7 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
   await advanceToTick(page, 908, cursor)
   const parryWindup = await combatantState(page, 'home.nerva')
   expect(parryWindup.action).toMatchObject({ type: 'active', definitionId: 'technical-parry', phase: 'windup' })
+  expectClip(await renderedSnapshotAt(page, 1), 'home.nerva', 'technical', DEFENSE_CLIPS['technical-parry'], 't908 parry windup')
 
   // tick 913: the parry connects -- `attack-parried` on the frozen trace,
   // weapon-zone contact flash live.
@@ -591,11 +709,27 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.activeEffectIds.some((id) => id.startsWith('weapon-'))).toBe(true)
 
+  // The clip layer at the same instant, on both fighters, because the two
+  // sides of this exchange exercise two different rules of `clipMapping`'s
+  // first-match-wins order. The parrier is still on his defence clip; the
+  // thrower is NOT on his attack clip, even though his `technical-thrust` is
+  // in its contact phase this very tick -- the parry staggered him, and the
+  // stagger rule outranks the attack rule. Pinned rather than worked around:
+  // an attack whose own strike frame is pre-empted by the hit reaction it just
+  // earned is the correct thing to draw.
+  const atParryContact = await renderedSnapshotAt(page, 0)
+  expectClip(atParryContact, 'home.nerva', 'technical', DEFENSE_CLIPS['technical-parry'], 't913 parry contact')
+  const cassiusAtParry = await combatantState(page, 'away.cassius')
+  expect(cassiusAtParry.action).toMatchObject({ type: 'active', definitionId: 'technical-thrust', phase: 'contact' })
+  expect(cassiusAtParry.staggerUntilTick).toBeGreaterThan(913)
+  expectClip(atParryContact, 'away.cassius', 'technical', BASE_CLIPS.hit, 't913 staggered thrower')
+
   // tick 916: the forced `technical-parry-counter` windup immediately follows
   // the parry (started tick 914, the very next tick).
   await advanceToTick(page, 916, cursor)
   const counterWindup = await combatantState(page, 'home.nerva')
   expect(counterWindup.action).toMatchObject({ type: 'active', definitionId: 'technical-parry-counter', phase: 'windup' })
+  expectClip(await renderedSnapshotAt(page, 1), 'home.nerva', 'technical', ATTACK_CLIPS['technical-parry-counter'].clip, 't916 counter windup')
 
   // tick 922: the counter connects -- `damage-dealt` against away.cassius.
   await advanceToTick(page, 922, cursor)
@@ -603,6 +737,34 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
   expect(counterEvents).toContainEqual(expect.objectContaining({ type: 'damage-dealt', actorId: 'home.nerva', actionId: 'technical-parry-counter' }))
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
+
+  // STRIKE-FRAME ALIGNMENT, against a real trace rather than hand-built state.
+  // `clipMapping`'s contract is that the clip's strike frame lands on the
+  // simulation's contact tick whatever the action's tick counts are; this is
+  // that tick -- the counter's CONTACT phase opens here (`phaseStartedTick`
+  // 922) and lands its damage here -- so at alpha 0 phase progress is exactly
+  // 0 and the contract reduces to `time === contactAt x duration`, with both
+  // factors read from the table and from the shipped `.glb` rather than
+  // restated. Alpha 0 deliberately: any later alpha is a point part-way into
+  // the post-strike hold, which is a strictly weaker claim.
+  //
+  // `clipMapping.test.ts` proves the same property over hand-built states for
+  // every attack; what this adds is that the frozen tick a human reviewer
+  // looks at is really the one the clip's strike frame is on.
+  const atCounterContact = await renderedSnapshotAt(page, 0)
+  const counterAction = await combatantState(page, 'home.nerva')
+  expect(counterAction.action).toMatchObject({
+    type: 'active',
+    definitionId: 'technical-parry-counter',
+    phase: 'contact',
+    phaseStartedTick: 922,
+  })
+  const counter = ATTACK_CLIPS['technical-parry-counter']
+  const counterDuration = expectClip(atCounterContact, 'home.nerva', 'technical', counter.clip, 't922 counter contact')
+  expect(
+    atCounterContact.activeClip['home.nerva'].time,
+    `t922: ${counter.clip} should sit on its strike frame (${counter.contactAt} x ${counterDuration} s)`,
+  ).toBeCloseTo(counter.contactAt * counterDuration, 3)
 })
 
 // ---------------------------------------------------------------------------
@@ -618,11 +780,30 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
 // ---------------------------------------------------------------------------
 
 // Every capture in this file inherits `playwright.config.ts`'s
-// `maxDiffPixelRatio`. That used to be a per-test override here, tighter than
-// a loose 0.05 global; the global is now the single measured value for the
-// whole suite (0.04, set between a 9.0% frame swap and 2.5% of cross-machine
-// WebGL shading -- see the config's own comment), so pose captures and the
-// safe-frame capture are held to the same bar and neither can silently drift.
+// `maxDiffPixelRatio` (0.04). That used to be a per-test override here,
+// tighter than a loose 0.05 global; one number for the whole suite is still
+// the right shape, but it is NOT a drift guard for these arena captures, and
+// this slice measured exactly how far short it falls.
+//
+// The measurement: replacing the entire procedural rig with skinned KayKit
+// models -- new silhouettes, new proportions, new equipment, a re-scaled
+// camera -- moved three of the five arena captures by LESS than 4%, so they
+// passed against the old procedural baselines untouched (Task 6 and Task 8;
+// the Linux run of 2026-09-05 did it again on the runner image, which is why
+// `heavy-cleave`, `fast-burst` and `technical-parry` had to be deleted by hand
+// and regenerated). The config's own comment records the same conclusion from
+// the other direction, with the per-pair figures.
+//
+// The ratio is NOT lowered here: the README records why 4% cannot come down
+// for a WebGL capture (up to 2.5% of a frame differs between two machines
+// running the same OS and the same Chromium, because the software rasterizer
+// picks SIMD paths from the host CPU). What actually guards an intentional rig
+// change is the README's baseline procedure -- DELETE the PNG so the run fails
+// with "snapshot missing" (`updateSnapshots: 'none'` in the config never
+// writes one), regenerate it deliberately, and look at every regenerated
+// frame before committing it. The structural guards live elsewhere in this
+// file and in `legibility.spec.ts`: projected per-fighter bounds, and (since
+// the final review) `activeClip`.
 /**
  * Seconds of simulated camera time every capture settles before shooting.
  * `?snapshot` holds the runtime paused and a paused frame advances no camera
