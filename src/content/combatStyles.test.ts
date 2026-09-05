@@ -15,7 +15,7 @@ import { COMBAT_STYLES } from './combatStyles'
 const DUEL_ARENA: CombatArenaDefinition = {
   radius: 6.5,
   lateralLimit: 2.5,
-  minimumSeparation: 0.9,
+  minimumSeparation: 1.2,
   movementPolicy: 'ordered-pair',
 }
 
@@ -45,8 +45,8 @@ describe('COMBAT_STYLES brief fixture', () => {
     expect(COMBAT_STYLES.styles.fast.locomotion.burstUnitsPerSecond).toBe(4)
   })
 
-  it('gives technical a 2.1..2.8 preferred range', () => {
-    expect(COMBAT_STYLES.styles.technical.preferredRange).toEqual({ min: 2.1, max: 2.8 })
+  it('gives technical a 2.4..3.1 preferred range', () => {
+    expect(COMBAT_STYLES.styles.technical.preferredRange).toEqual({ min: 2.4, max: 3.1 })
   })
 
   it('rejects an out-of-range minimumFacingDot naming the offending field', () => {
@@ -64,7 +64,7 @@ describe('authored attack rows', () => {
       'heavy-shield-jab',
       {
         tags: ['attack', 'probe', 'shield', 'unparryable'],
-        contactRange: { min: 0.9, max: 1.4 },
+        contactRange: { min: 1.2, max: 1.7 },
         startMaxRange: undefined,
         minimumFacingDot: 0.5736,
         windupTicks: 14,
@@ -82,7 +82,7 @@ describe('authored attack rows', () => {
       'heavy-cleave',
       {
         tags: ['attack', 'committed', 'weapon', 'parryable'],
-        contactRange: { min: 0.9, max: 1.8 },
+        contactRange: { min: 1.2, max: 2.1 },
         startMaxRange: undefined,
         minimumFacingDot: 0.6428,
         windupTicks: 34,
@@ -100,7 +100,7 @@ describe('authored attack rows', () => {
       'fast-slash',
       {
         tags: ['attack', 'probe', 'weapon', 'parryable'],
-        contactRange: { min: 0.9, max: 2.05 },
+        contactRange: { min: 1.2, max: 2.35 },
         startMaxRange: undefined,
         minimumFacingDot: 0.4226,
         windupTicks: 10,
@@ -118,8 +118,8 @@ describe('authored attack rows', () => {
       'fast-burst-lunge',
       {
         tags: ['attack', 'committed', 'burst', 'weapon', 'parryable'],
-        contactRange: { min: 1.6, max: 2.4 },
-        startMaxRange: 4.0,
+        contactRange: { min: 1.9, max: 2.7 },
+        startMaxRange: 4.3,
         minimumFacingDot: 0.8192,
         windupTicks: 18,
         impactTicks: 3,
@@ -136,7 +136,7 @@ describe('authored attack rows', () => {
       'technical-thrust',
       {
         tags: ['attack', 'probe', 'weapon', 'parryable'],
-        contactRange: { min: 1.2, max: 2.8 },
+        contactRange: { min: 1.5, max: 3.1 },
         startMaxRange: undefined,
         minimumFacingDot: 0.9397,
         windupTicks: 20,
@@ -145,7 +145,7 @@ describe('authored attack rows', () => {
         damageMultiplier: 1.38,
         accuracyModifier: 0.04,
         rootTravel: 0.20,
-        pushDistance: 0.30,
+        pushDistance: 0.70,
         staggerTicks: 12,
         contactPriority: 25,
       },
@@ -154,7 +154,7 @@ describe('authored attack rows', () => {
       'technical-driving-thrust',
       {
         tags: ['attack', 'committed', 'weapon', 'parryable'],
-        contactRange: { min: 1.6, max: 3.1 },
+        contactRange: { min: 1.9, max: 3.4 },
         startMaxRange: undefined,
         minimumFacingDot: 0.9511,
         windupTicks: 30,
@@ -163,7 +163,7 @@ describe('authored attack rows', () => {
         damageMultiplier: 1.90,
         accuracyModifier: -0.03,
         rootTravel: 0.50,
-        pushDistance: 0.50,
+        pushDistance: 1.10,
         staggerTicks: 20,
         contactPriority: 15,
       },
@@ -172,7 +172,7 @@ describe('authored attack rows', () => {
       'technical-parry-counter',
       {
         tags: ['attack', 'forced', 'counter', 'weapon'],
-        contactRange: { min: 0.9, max: 2.3 },
+        contactRange: { min: 1.2, max: 2.6 },
         startMaxRange: undefined,
         minimumFacingDot: 0.8660,
         windupTicks: 8,
@@ -289,9 +289,9 @@ describe('authored style movement and turn pairs', () => {
   })
 
   it.each([
-    ['heavy', { min: 1.2, max: 1.7 }],
-    ['fast', { min: 2.4, max: 3.0 }],
-    ['technical', { min: 2.1, max: 2.8 }],
+    ['heavy', { min: 1.5, max: 2.0 }],
+    ['fast', { min: 2.7, max: 3.3 }],
+    ['technical', { min: 2.4, max: 3.1 }],
   ] as const)('%s preferred range matches its authored row', (archetype, expected) => {
     expect(COMBAT_STYLES.styles[archetype].preferredRange).toEqual(expected)
   })
@@ -422,7 +422,7 @@ describe('validateCombatStyleCatalog: range and reach rules', () => {
   })
 
   it('rejects an arena whose minimumSeparation exceeds an attack contactRange.min', () => {
-    const strictArena: CombatArenaDefinition = { ...DUEL_ARENA, minimumSeparation: 1.0 }
+    const strictArena: CombatArenaDefinition = { ...DUEL_ARENA, minimumSeparation: 1.3 }
     expect(() => validateCombatStyleCatalog(COMBAT_STYLES, strictArena)).toThrow('contactRange.min')
   })
 })
@@ -631,6 +631,38 @@ describe('authored qualitative orderings survive tuning', () => {
     for (const id of ['heavy-shield-jab', 'heavy-cleave', 'fast-slash', 'fast-burst-lunge'] as const) {
       expect(reach(id)).toBeLessThan(technicalReach)
     }
+  })
+
+  // -------------------------------------------------------------------------
+  // The two invariants the 2026-09-05 body-width translation has to preserve.
+  //
+  // That change moved every separation in this catalogue outward by 0.30 in one
+  // edit (see the file header). A translation is only safe because it preserves
+  // relationships, so the relationships it was claimed to preserve are asserted
+  // here rather than described in a comment. Both used to be stated only in
+  // prose, and one of them pointed at `measure-reach.ts`, a sweep script that no
+  // longer exists.
+  // -------------------------------------------------------------------------
+
+  it('keeps every floor-hugging attack legal at exactly the arena separation floor', () => {
+    // These four are the attacks a style must retain when it is closed all the
+    // way down: `fast-slash`'s comment states the rule for the retiarius, and
+    // `technical-parry-counter` is the parry reward, which must not evaporate
+    // precisely when the murmillo succeeds. `validateCombatStyleCatalog` only
+    // requires `>=`; this requires equality, so a future floor raise cannot
+    // silently leave one of them stranded above the floor.
+    for (const id of ['heavy-shield-jab', 'heavy-cleave', 'fast-slash', 'technical-parry-counter'] as const) {
+      expect(attacks[id].contactRange.min).toBe(DUEL_ARENA.minimumSeparation)
+    }
+  })
+
+  it('keeps the two committed floors aligned, which is what makes the in-envelope shares comparable', () => {
+    // `fast-burst-lunge`'s comment: the reach gate compares the retiarius' and
+    // the hoplomachus' shares of contacts inside the murmillo's envelope, and
+    // that share counts an interval whose WIDTH these two floors set. Measured
+    // at 1.4 against 1.6 the retiarius showed 35.4% against 11.3% purely
+    // because it had three times the room.
+    expect(attacks['fast-burst-lunge'].contactRange.min).toBe(attacks['technical-driving-thrust'].contactRange.min)
   })
 
   it('keeps the Heavy < Technical < Fast turn ordering', () => {
