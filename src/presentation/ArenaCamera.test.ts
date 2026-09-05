@@ -30,16 +30,16 @@ const MAX_DISTANCE = 18
 
 /**
  * The tactical band in group-extent terms, re-measured off the skinned models
- * (Task 7; see `RIG_EQUIPMENT_RADIUS` below). `BAND_LOW` is the narrowest
- * pairing (murmillo vs murmillo): `0.9 + 2 x 1.4275666701603713 x 1.1`.
- * `BAND_HIGH` is the widest (hoplomachus vs hoplomachus):
- * `3.1 + 2 x 1.8127755462598738 x 1.1`, which is where the flat region has to
- * end for the band to be flat for every pairing -- it mirrors
- * `ArenaCamera.ts`'s own `BAND_HIGH_EXTENT`, whose `WIDEST_EQUIPMENT_RADIUS`
- * moved with the same skinned-model measurement.
+ * (Task 7, then Task 7b's 2.0-unit standing height; see `RIG_EQUIPMENT_RADIUS`
+ * below). `BAND_LOW` is the narrowest pairing (murmillo vs murmillo):
+ * `0.9 + 2 x 1.5861850532796753 x 1.1`. `BAND_HIGH` is the widest (hoplomachus
+ * vs hoplomachus): `3.1 + 2 x 2.0141936921763492 x 1.1`, which is where the
+ * flat region has to end for the band to be flat for every pairing -- it
+ * mirrors `ArenaCamera.ts`'s own `BAND_HIGH_EXTENT`, whose
+ * `WIDEST_EQUIPMENT_RADIUS` moved with the same measurement.
  */
-const BAND_LOW = 4.040646674352817
-const BAND_HIGH = 7.088106201771723
+const BAND_LOW = 4.389607117215286
+const BAND_HIGH = 7.531226122787968
 
 /**
  * The fastest the framing distance may travel, in world units per second, on
@@ -67,22 +67,26 @@ const MAX_ZOOM_UNITS_PER_SECOND = 5
 
 /**
  * The three archetypes' `horizontalEquipmentRadius`, measured off the skinned
- * models' rest-pose `Box3` via `getArenaDebugSnapshot().framingTargets` (Task
- * 6 replaced the procedural rig with skinned models, which changed all three
- * numbers). Written out so the real-bout replay at the bottom of this file
- * frames with the widths the shipping camera actually sees: with a
- * placeholder radius the group extent is wrong by up to 1.5 world units, which
- * is twice the framing dead zone at the band edge and moves every crossing in
- * the trace.
+ * models' rest-pose `Box3` through
+ * `createSkinnedFighter(...).horizontalEquipmentRadius` in the running app --
+ * the same quantity `ArenaView` hands the camera as
+ * `HorizontalFramingTarget.radius`. Task 6 replaced the procedural rig with
+ * skinned models and Task 7b then stood them 2.0 units tall instead of 1.8, so
+ * all three numbers have moved twice (previous values: 1.4275666701603713,
+ * 1.5955894278773255, 1.8127755462598738). Written out so the real-bout replay
+ * at the bottom of this file frames with the widths the shipping camera
+ * actually sees: with a placeholder radius the group extent is wrong by up to
+ * 1.5 world units, which is twice the framing dead zone at the band edge and
+ * moves every crossing in the trace.
  *
  * Keyed by `Archetype` rather than by `string` on purpose: a fourth archetype
  * would otherwise index to `undefined` here, make every extent `NaN`, and turn
  * the bout replays into vacuous passes. This way it is a compile error.
  */
 const RIG_EQUIPMENT_RADIUS: Readonly<Record<Archetype, number>> = {
-  heavy: 1.4275666701603713,
-  fast: 1.5955894278773255,
-  technical: 1.8127755462598738,
+  heavy: 1.5861850532796753,
+  fast: 1.772876372587171,
+  technical: 2.0141936921763492,
 }
 
 /** A symmetric pair, `separation` apart, whose axis sits `axisDegrees` off world X -- the exact input the camera's yaw exists to answer. */
@@ -289,12 +293,13 @@ describe('ArenaCamera', () => {
 
     it('reaches the far clamp inside the eased region rather than at it', () => {
       // EASE_WIDTH_EXTENT is 7.0, so the clamp is reached at BAND_HIGH + 7.0 =
-      // 14.09 -- above the widest extent the nine pairings produce (12.36,
-      // re-measured for Task 7's skinned-model radii; was 11.37). The camera
-      // therefore still tops out near 16.6 in play, and the `18` clamp is a
-      // guard rather than a framing the fight ever sits at.
-      expect(extentToDistance(12.36, MIN_DISTANCE, MAX_DISTANCE)).toBeLessThan(MAX_DISTANCE)
-      expect(extentToDistance(12.36, MIN_DISTANCE, MAX_DISTANCE)).toBeGreaterThan(15)
+      // 14.53 -- above the widest extent the nine pairings produce (12.83,
+      // re-measured for Task 7b's 2.0-unit models; was 12.36 under Task 7's
+      // skinned radii and 11.37 on the procedural rig). The camera therefore
+      // still tops out near 16.6 in play (measured: 16.64), and the `18` clamp
+      // is a guard rather than a framing the fight ever sits at.
+      expect(extentToDistance(12.83, MIN_DISTANCE, MAX_DISTANCE)).toBeLessThan(MAX_DISTANCE)
+      expect(extentToDistance(12.83, MIN_DISTANCE, MAX_DISTANCE)).toBeGreaterThan(15)
       expect(extentToDistance(BAND_HIGH + 7.0, MIN_DISTANCE, MAX_DISTANCE)).toBeCloseTo(MAX_DISTANCE, 9)
     })
   })
@@ -321,24 +326,27 @@ describe('ArenaCamera', () => {
     /**
      * How far the pair swings either side of the band edge in the oscillation
      * test. It has to clear the framing dead zone, which is 12% of the sticky
-     * extent reference -- `0.12 x 7.088106201771723 = 0.850573` world units of
-     * extent at the edge (re-measured for Task 7's skinned-model radii; was
-     * `0.12 x 6.07242 = 0.7287`). Measured: at amplitude `0.5`, and at `0.84`
-     * (just inside the dead zone, re-measured; was `0.72`), the distance is
-     * bit-for-bit constant across all 600 ticks -- see the sibling test below,
-     * which now pins exactly that at `0.84`. A test driven that gently would
-     * prove only that the dead zone swallowed the wobble, never that the
-     * mapping behaves once it does not.
+     * extent reference -- `0.12 x 7.531226122787968 = 0.903747` world units of
+     * extent at the edge (re-measured for Task 7b's 2.0-unit models; was
+     * `0.12 x 7.088106201771723 = 0.850573` under Task 7's skinned radii, and
+     * `0.12 x 6.07242 = 0.7287` before them). Measured: at amplitude `0.5`, and
+     * at `0.89` (just inside the dead zone, re-measured; was `0.84`), the
+     * distance is bit-for-bit constant across all 600 ticks -- see the sibling
+     * test below, which now pins exactly that at `0.89`. A test driven that
+     * gently would prove only that the dead zone swallowed the wobble, never
+     * that the mapping behaves once it does not.
      *
-     * `1.0` was not rescaled with the dead zone: it clears it by 17.6% now
-     * (was 37% at the old, narrower dead zone -- `1.0` was chosen as a round
-     * number that puts the swing across the flat/eased junction, not to hit a
-     * specific clearance percentage), and swings the extent from 6.088 to
-     * 8.088 (re-measured; was 5.07 to 7.07), i.e. still right across the
-     * junction between the flat region and the eased one. 17.6% remains
-     * comfortably above the sibling test's ~1% margins (`0.84`/`0.86` against
-     * the same `0.850573` boundary), so the test still measures tracking
-     * rather than dead-zone-boundary noise.
+     * `1.0` was not rescaled with the dead zone: it clears it by 10.7% now
+     * (was 17.6% at Task 7's dead zone and 37% at the procedural rig's -- `1.0`
+     * was chosen as a round number that puts the swing across the flat/eased
+     * junction, not to hit a specific clearance percentage), and swings the
+     * extent from 6.531 to 8.531 (re-measured; was 6.088 to 8.088), i.e. still
+     * right across the junction between the flat region and the eased one.
+     * 10.7% remains several times the sibling test's ~1-2% margins
+     * (`0.89`/`0.91` against the same `0.903747` boundary), so the test still
+     * measures tracking rather than dead-zone-boundary noise -- and it is still
+     * measurably a tracking drive: all six of the pair's turns are followed,
+     * with no extra reversal (asserted below).
      */
     const OSCILLATION_AMPLITUDE = 1.0
 
@@ -357,19 +365,21 @@ describe('ArenaCamera', () => {
       }
 
       // The drive has to reach the camera at all, or every bound below is
-      // vacuous. Measured span: 0.2252 world units (8.810 to 9.035),
-      // re-measured for Task 7's skinned-model radii (was 0.1768, 8.810 to
-      // 8.987) -- the wider `BAND_HIGH` moved the *undamped* target signal's
-      // own span (the sticky extent reference's `distanceReference`, before
-      // the 1.25 s `approach()` damping ever sees it -- what a chattering,
-      // undamped camera would show) from about 0 (a same-amplitude swing sat
-      // almost entirely inside the old, narrower dead zone) to about 0.381 at
-      // the new, wider one, and the damped signal measured below moved with
-      // it. Headroom against the unchanged `expect(span).toBeLessThan(0.35)`
-      // two lines down shrank from 0.1732 (the old span was 51% of that
-      // ceiling) to 0.1248 (the new span is 64% of it) -- comfortable still,
-      // but real, and it is the dead zone widening with `BAND_HIGH`, not this
-      // test's own inputs, that ate the margin. `0.35` is NOT loosened.
+      // vacuous. Measured span: 0.2421 world units (8.810 to 9.052),
+      // re-measured for Task 7b's 2.0-unit models (was 0.2252, 8.810 to 9.035,
+      // under Task 7's skinned radii, and 0.1768 before them) -- each widening
+      // of `BAND_HIGH` widens the 12% dead zone with it, so the sticky extent
+      // reference fires later in each swing and captures an extent further into
+      // the eased region. The *undamped* target signal's own span (the sticky
+      // reference's `distanceReference`, before the 1.25 s `approach()` damping
+      // ever sees it -- what a chattering, undamped camera would show) has gone
+      // about 0 -> 0.381 -> 0.4218 across the same three rigs, and the damped
+      // signal measured below moved with it. Headroom against the unchanged
+      // `expect(span).toBeLessThan(0.35)` two lines down is now 0.1079 (the span
+      // is 69% of that ceiling; it was 64% under Task 7 and 51% before) --
+      // comfortable still, but shrinking, and it is the dead zone widening with
+      // `BAND_HIGH`, not this test's own inputs, that eats the margin. `0.35`
+      // is NOT loosened.
       const span = Math.max(...distances) - Math.min(...distances)
       expect(span).toBeGreaterThan(0.1)
       expect(span).toBeLessThan(0.35)
@@ -384,8 +394,8 @@ describe('ArenaCamera', () => {
       expect(driveTurns.length).toBe(6)
       expect(cameraTurns.length).toBe(driveTurns.length)
 
-      // Each camera reversal trails the drive's own turning point by 49-64
-      // ticks (0.8-1.1 s: the 1.25 s damping, plus the delay while the
+      // Each camera reversal trails the drive's own turning point by 50-73
+      // ticks (0.8-1.2 s: the 1.25 s damping, plus the delay while the
       // sticky extent reference waits for the swing to clear the dead zone).
       // This is what tells tracking from chattering: a chattering camera
       // reverses on its own schedule, at the tick rate of the input crossing
@@ -406,11 +416,13 @@ describe('ArenaCamera', () => {
       // makes this a non-event, and this test is why that constant is
       // load-bearing for the band edge rather than merely documented: it is
       // the only thing between a hovering pair and a 5 Hz zoom.
-      // Re-measured for Task 7's skinned-model radii: the dead zone is 0.12 x
-      // BAND_HIGH, so it widened along with BAND_HIGH (was 0.12 x 6.07242 =
-      // 0.72869, with `insideDeadZone`/`outsideDeadZone` at 0.72/0.74; the
-      // dead zone is now 0.12 x 7.088106201771723 = 0.85057274421260066).
-      const insideDeadZone = 0.84
+      // Re-measured for Task 7b's 2.0-unit models: the dead zone is 0.12 x
+      // BAND_HIGH, so it widens along with BAND_HIGH. It was 0.12 x 6.07242 =
+      // 0.72869 on the procedural rig (`insideDeadZone`/`outsideDeadZone`
+      // 0.72/0.74), then 0.12 x 7.088106201771723 = 0.85057 under Task 7's
+      // skinned radii (0.84/0.86); it is now 0.12 x 7.531226122787968 =
+      // 0.9037471347345561, straddled here at 0.89/0.91.
+      const insideDeadZone = 0.89
       const held = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
       settle(held, BAND_HIGH)
       for (let step = 0; step < 600; step += 1) {
@@ -421,11 +433,12 @@ describe('ArenaCamera', () => {
       // the dead zone is the chatter, in full. It is the measure of what the
       // dead zone is holding back, so it is asserted quantitatively rather
       // than as "something moved" -- re-measured for the widened dead zone at
-      // 61 reversals and a 0.074-unit span over the same 600 ticks, i.e. a
-      // 5 Hz tremor (was 59 reversals, 0.0553 units, at the old BAND_HIGH).
+      // 57 reversals and a 0.0817-unit span over the same 600 ticks, i.e. a
+      // 5 Hz tremor (was 61 reversals / 0.074 units under Task 7's BAND_HIGH,
+      // and 59 / 0.0553 before it).
       const moved = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
       settle(moved, BAND_HIGH)
-      const outsideDeadZone = 0.86
+      const outsideDeadZone = 0.91
       const chattering: number[] = []
       for (let step = 0; step < 600; step += 1) {
         chattering.push(moved.update(targetsWithExtent(BAND_HIGH + outsideDeadZone * Math.sin(step / 2)), 1 / 60).distance)
@@ -464,11 +477,11 @@ describe('ArenaCamera', () => {
       for (let e = BAND_HIGH; e <= BAND_HIGH + 6; e += 0.05) step(e)
       for (let e = BAND_HIGH + 6; e >= BAND_HIGH; e -= 0.05) step(e)
       const atSweepEnd = seen.length
-      // The sweep ends with the camera still 3.44 units wide of home
-      // (re-measured for Task 7's skinned-model radii; was 3.3) -- that is
-      // the 1.25 s lag, not overshoot, and there is no way to tell the two
-      // apart without letting it arrive. 600 idle ticks is 10 s, eight time
-      // constants.
+      // The sweep ends with the camera still 3.48 units wide of home
+      // (re-measured for Task 7b's 2.0-unit models; was 3.44 under Task 7's
+      // skinned radii and 3.3 before them) -- that is the 1.25 s lag, not
+      // overshoot, and there is no way to tell the two apart without letting it
+      // arrive. 600 idle ticks is 10 s, eight time constants.
       for (let i = 0; i < 600; i += 1) step(BAND_HIGH)
 
       expect(seenUnclamped).toEqual(seen)
@@ -478,8 +491,8 @@ describe('ArenaCamera', () => {
       // it would put the camera inside the framing the whole band is shot at,
       // and on the shipped camera the clamp would hide that. (The ceiling is
       // the brief's own assertion, kept verbatim -- but note it is guaranteed
-      // by the same clamp and is slack besides: the sweep peaks at 14.25, up
-      // from 13.99 before Task 7's wider radii.)
+      // by the same clamp and is slack besides: the sweep peaks at 14.31, up
+      // from 14.25 under Task 7's radii and 13.99 before them.)
       expect(Math.max(...seen)).toBeLessThanOrEqual(MAX_DISTANCE + 1e-6)
       expect(Math.min(...seenUnclamped)).toBeGreaterThanOrEqual(FLAT_DISTANCE)
 
@@ -493,18 +506,18 @@ describe('ArenaCamera', () => {
       // Home again -- but not exactly on `FLAT_DISTANCE`, and the residue is
       // structural rather than a settling artefact. The 12% dead zone is
       // sticky on EXTENT: coming back down, the last firing leaves the extent
-      // reference at 7.59 rather than at the band edge's 7.088106201771723
-      // (0.50 of extent, comfortably inside its own 0.91-wide dead zone at
-      // that width), and 7.59 maps to 8.945. Structurally the residue cannot
-      // exceed `extentToDistance(BAND_HIGH / 0.88) - FLAT_DISTANCE = 0.4773`;
-      // re-measured for Task 7's skinned-model radii it is 0.1351 (was 0.0677
-      // at the old, narrower BAND_HIGH), which is 1.5% of the framing
-      // distance. Bounded at 0.16 -- about 18% over the measurement, roughly a
-      // third of the structural ceiling -- so it pins what the camera does
-      // rather than accommodating what it could do.
+      // reference at 7.9836 rather than at the band edge's 7.531226122787968
+      // (0.45 of extent, comfortably inside its own 0.958-wide dead zone at
+      // that width), and 7.9836 maps to 8.9202. Structurally the residue
+      // cannot exceed `extentToDistance(BAND_HIGH / 0.88) - FLAT_DISTANCE =
+      // 0.5354`; re-measured for Task 7b's 2.0-unit models it is 0.1102 (was
+      // 0.1351 under Task 7's radii and 0.0677 before them), which is 1.3% of
+      // the framing distance. Bounded at 0.13 -- about 18% over the
+      // measurement, roughly a quarter of the structural ceiling -- so it pins
+      // what the camera does rather than accommodating what it could do.
       const settled = seenUnclamped[seenUnclamped.length - 1]
       expect(settled).toBeGreaterThanOrEqual(FLAT_DISTANCE)
-      expect(settled).toBeLessThan(FLAT_DISTANCE + 0.16)
+      expect(settled).toBeLessThan(FLAT_DISTANCE + 0.13)
 
       expect(maxZoomRate(seen)).toBeLessThan(MAX_ZOOM_UNITS_PER_SECOND)
     })
@@ -695,9 +708,11 @@ describe('ArenaCamera', () => {
       const flat = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
       const rotated = new ArenaCamera({ minDistance: 11, maxDistance: 18 })
       // Wide enough that the mapping sits off both clamps: BAND_HIGH_EXTENT
-      // widened under Task 7's skinned-model radii, so `8` (extent 9.1) now
-      // maps to exactly this test's own `minDistance` (11) rather than clear
-      // of it; `10` (extent 11.1) maps to 14.4, comfortably off both clamps.
+      // widened under Task 7's skinned-model radii and again under Task 7b's
+      // 2.0-unit models, so `8` (extent 9.1) maps to exactly this test's own
+      // `minDistance` (11) rather than clear of it; `10` (extent 11.1) maps to
+      // 13.54 (was 14.4 at Task 7's narrower band), comfortably off both
+      // clamps.
       const spread = 10
 
       const flatState = flat.reset(pairOnAxis(0, spread))

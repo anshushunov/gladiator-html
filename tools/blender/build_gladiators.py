@@ -24,7 +24,13 @@ from mathutils import Euler, Matrix, Vector
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 SRC = os.path.join(ROOT, 'assets', 'kaykit')
 OUT = os.path.join(ROOT, 'public', 'models')
-TARGET_HEIGHT = 1.8
+# Standing height of the body silhouette (feet to crown, helmet and held props
+# excluded) in world units, applied by scaling the whole rig uniformly.
+# 2.0, not the 1.8 this shipped with first: at 1.8 the slow legibility harness
+# measured a p92 on-screen body height of 117-124 px against a 130 px bar in
+# eight of the nine pairings, and 130 / 117 = 1.11 -- the fix the spec calls for
+# is the armature scale, not a wider camera or a lowered bar.
+TARGET_HEIGHT = 2.0
 
 KEEP_CLIPS = {
     'Idle', 'Walking_A', 'Hit_A', 'Death_A',
@@ -291,7 +297,10 @@ def build_offhand_disc(name, arm, material, slot, radius, depth, vertices):
 
 def build_net(arm):
     rope = solid_material('net_rope', (0.6, 0.55, 0.4, 1))
-    return build_offhand_disc('net', arm, rope, 'net', radius=0.42, depth=0.02, vertices=24)
+    # 0.30, not 0.42: at the larger radius the net disc -- which is worn on the
+    # offhand and so is NOT exempt from the legibility harness's safe-area
+    # inset, unlike a polearm -- poked outside the 5 % inset at 1024x768.
+    return build_offhand_disc('net', arm, rope, 'net', radius=0.30, depth=0.02, vertices=24)
 
 
 def build_buckler(arm):

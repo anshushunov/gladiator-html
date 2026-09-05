@@ -102,6 +102,23 @@ Archetype mapping:
 The three characters already differ in build and texture, which is what the
 2026-08-23 legibility playtest asked for; house colours stay in the HUD.
 
+**Amendment, 2026-09-05 (Task 7b): the standing height in step 8 is 2.0 world
+units, not 1.8.** With 1.8 the slow legibility harness measured the on-screen
+body height at the 92nd percentile of in-band ticks, 1280x820, at **117.0–124.4
+px against the pre-committed 130 px floor, failing in eight of the nine
+pairings** (worst: 08 nerva vs cassius, 117.04 px). §7 and §9 named the two
+available fixes as the armature scale or the camera's `FLAT_DISTANCE`, and the
+armature scale was chosen — `FLAT_DISTANCE` and `EASE_WIDTH_EXTENT` are swept
+constants and stay put. At 2.0 the same harness measures p92 **146.05–164.72
+px**, clearing the floor in all nine pairings by 12.4–26.7 %. The rise is more
+than the 11 % of height because the camera is elevated: a taller man's head sits
+markedly closer to it than his feet, so projected body height grows faster than
+the model. Every archetype's `horizontalEquipmentRadius` scales by 10/9 with the
+rig, so `ArenaCamera.ts`'s measured `WIDEST_EQUIPMENT_RADIUS` (and the band edge
+derived from it) moved in the same commit. The retiarius' net disc was also cut
+from 0.42 to 0.30 source units, for the safe-area reason recorded in the task-7b
+report.
+
 ### 2.3 The glTF contract
 
 A unit test (`src/presentation/fighterModelContract.test.ts`) reads each shipped
