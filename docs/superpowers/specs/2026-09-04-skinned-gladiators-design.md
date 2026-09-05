@@ -71,9 +71,15 @@ For each archetype it:
 2. Deletes weapon and shield meshes the archetype does not use, and the cape.
 3. Builds the props the pack lacks from primitives and parents them to the
    hand slots: a **trident** (shaft + three prongs) and a **net** (flat disc
-   with a rim) for the retiarius; a **spear** (shaft + leaf tip) for the
-   hoplomachus. The murmillo uses the pack's `Rectangle_Shield` and `1H_Sword`.
-   The hoplomachus uses the pack's `Round_Shield`.
+   with a rim) for the retiarius; a **spear** (shaft + leaf tip) and a
+   **buckler** (flat disc on the off hand) for the hoplomachus. The murmillo
+   uses the pack's `Rectangle_Shield` and `1H_Sword`.
+
+   *Deviation, as built:* the hoplomachus' shield is **built by the script**,
+   not the pack's `Round_Shield` — that mesh exists only in `Knight.glb`, and
+   the Rogue the hoplomachus is built from ships no shield at all; importing
+   the Knight's would have dragged a second 1024×1024 atlas into the file for
+   one disc.
 4. Adds three empties parented to bones: `weaponTip` (end of the weapon, child
    of `handslot.r`), `shieldCenter` (child of `handslot.l`, at the shield's
    face; for the retiarius, at the net), `hitCenter` (child of `spine`, at chest
@@ -97,7 +103,7 @@ Archetype mapping:
 |-------------|-----------|----------------------|--------------------|-----------|
 | `heavy`     | Knight    | `1H_Sword`           | `Rectangle_Shield` | helmet    |
 | `fast`      | Barbarian | trident (built)      | net (built)        | —         |
-| `technical` | Rogue     | spear (built)        | `Round_Shield`     | —         |
+| `technical` | Rogue     | spear (built)        | buckler (built)    | —         |
 
 The three characters already differ in build and texture, which is what the
 2026-08-23 legibility playtest asked for; house colours stay in the HUD.
@@ -336,6 +342,34 @@ Lost, knowingly:
   the PR, and a paragraph on whether the strike frames read as landing on
   contact.
 
+**What the legibility numbers are measured on, as built (final review, I4).**
+`ArenaView.accumulateProjectedBounds` projects each mesh's own
+`geometry.boundingBox` through its `matrixWorld`, and for a `SkinnedMesh`
+neither factor is the drawn thing. The geometry box is the **bind pose** —
+skinning runs in the vertex shader off the skeleton's bone matrices, which no
+`Object3D` transform above the mesh reflects — and `matrixWorld` still carries
+the `Rig` node's armature scale (0.8641 heavy, 0.9148 fast, 0.9145 technical),
+which at draw time is cancelled by `SkinnedMesh`'s default `AttachedBindMode`
+(it re-derives `bindMatrixInverse` from `matrixWorld` every frame) but is not
+cancelled by a measurement that stops at the multiply. Measured on the shipped
+files: the drawn standing body is 2.000 units, the projected box is 1.728 /
+1.830 / 1.829. Bone-parented props — spear, trident, net, both shields, the
+helmet — are ordinary meshes under a bone and do track the drawn pose exactly.
+
+So **the 130 px floor and the 5 % safe-area inset are stated over the
+bind-pose body box, scaled by the rig node and carried by the live root
+transform**, not over the posed silhouette the player sees. That is a
+different guarantee from the procedural rig's, whose limbs were separate
+meshes and whose boxes were therefore posed every frame. It is kept because
+it is the conservative direction for the floor twice over (a pose cannot
+inflate the height, and the measured body is 9–14 % shorter than the drawn
+one, so clearing the bar here clears it on screen with room to spare) and
+because a pose-independent standing height is the stable quantity to hold a
+camera constant against. It is not conservative for the safe area in the same
+way — a smaller box is easier to keep inside an inset — which is one more
+reason the `FLAT_DISTANCE` re-sweep below is the honest way to retire the
+pairing-05 deviation rather than a tighter bar on the current measurement.
+
 ## 8. Determinism
 
 The simulation is untouched. Presentation stays a pure function of
@@ -361,3 +395,41 @@ snapshot" e2e tests are the regression guards.
 - **Clip fit.** Some pack clips hold a weapon in a way the built props do not
   match (e.g. the net hand). Acceptable for this slice; the fix is a
   Blender-authored clip, which is what the pipeline is for.
+
+## 10. Follow-ups
+
+Named here rather than fixed in this slice, each with what it would take.
+
+- **`Spear_Drive` reach at contact.** The authored clip's tip stops short of
+  the hoplomachus' contact point at the contact tick — the arm is still coming
+  through when the simulation resolves the hit (task-8 report). The fix is
+  re-keying the strike frame in `author_spear_drive`, measured against
+  `weaponTip`'s world position at `contactAt`, not a change to
+  `ATTACK_CLIPS`'s `contactAt`.
+- **`FLAT_DISTANCE ≈ 9.30` re-sweep, to retire the pairing-05 deviation.**
+  §2.2's safe-area ruling records the number and why it cannot be taken on
+  faith: the existing 46,647-tick recording is of the procedural rig, so the
+  sweep needs a fresh recording of the 2.0 rig first. On the linear estimate
+  9.30 pulls the retiarius' body inside the 1024x768 inset and still leaves
+  the binding pairing near 138 px of body height.
+- **The net exemption is global, the evidence is not.** `SAFE_AREA_EXEMPT_SLOTS`
+  drops `'net'` for all 27 pairing/viewport cells, but only pairing 04 at
+  1024x768 ever needed it. Nothing re-checks that the other 26 would still
+  pass without the exemption, so a future regression that pushes some other
+  fighter's net out of frame is now invisible. A per-cell record of which
+  cells actually depend on the exemption would restore that.
+- **Blender script hardenings.** `SHIELD_REFERENCE` is a phantom dependency
+  for the two archetypes whose offhand prop is built from primitives (the
+  entry is read and the mesh kept alive only to be deleted). `weapon_axis` has
+  no sanity assertion that the tip it picks is farther from the spine than the
+  butt. `tools/inspect-glb.mjs` cannot fail — it prints `MISSING` and exits 0,
+  so it is unusable in a gate; an `--assert` flag with a non-zero exit would
+  fix that. A failure part-way through `main()` leaves `public/models` holding
+  a mix of new and previous-run files (exiting 1 does not undo the `.glb`s
+  already written); writing to a temp directory and moving on success would.
+- **`legibility.spec.ts` cites a deleted file.** Nine comments (and one in
+  `ArenaCamera.test.ts`, `ArenaView.ts`, `cameraTraces.ts`) point at
+  `scripts/measure-framing.ts`, which was deleted with the rest of the slice
+  instruments. The references are still the right provenance — they name where
+  a number came from — but they need to say "deleted, see git history", as the
+  README's own mention already does.
