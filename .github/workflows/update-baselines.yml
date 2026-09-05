@@ -9,6 +9,12 @@
 # permanently red CI on a branch that was green locally and green in the
 # container.
 #
+# Only the `fast` project is regenerated: `combat-visuals`, `season`, and
+# `smoke` own the screenshot baselines this job exists to update, while the
+# slow legibility harness measures pixels and owns no baselines of its own --
+# running it here was 1.4 h of a run that failed on nine CI-only timeouts
+# (run 33960960272) without ever reaching the commit step.
+#
 # Guessing at a matching local image is a ten-minute round trip per attempt,
 # so this job removes the guess: it captures on the same runner image the
 # `checks` workflow uses and commits whatever moved. Run it from the Actions
@@ -36,7 +42,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: npx playwright test --update-snapshots
+      - run: npx playwright test --project=fast --update-snapshots
 
       # Only the Linux set: a run here must never touch the win32 baselines a
       # developer captured on their own machine.

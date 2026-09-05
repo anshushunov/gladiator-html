@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 import { COMBAT_STYLES } from '../src/content/combatStyles'
+import { ATTACK_CLIPS, BASE_CLIPS, DEFENSE_CLIPS, MODEL_FILES } from '../src/presentation/fighterModelContract'
 import { advanceBattleTicks, createBattle, MAX_BOUT_TICKS } from '../src/simulation/battle'
+import type { Archetype } from '../src/simulation/fighters'
 import { formatTraceHash } from '../src/simulation/random'
 
 // ---------------------------------------------------------------------------
@@ -21,10 +25,11 @@ async function startBoutZeroWith(page: Page, homeFighterId: 'brutus' | 'aquila' 
   // `page.goto` resolves on `load`, which does not guarantee the app has
   // installed `window.__GLADIATOR_TEST__`: `main.ts` assigns it inside an
   // `import.meta.env.DEV` block at the end of its own module evaluation, and
-  // under a loaded machine the next line has been observed running first and
-  // failing with `TypeError: Cannot read properties of undefined (reading
-  // 'startNextSeries')`. A timeout cannot fix a `TypeError`; waiting for the
-  // surface can.
+  // that evaluation now suspends on a top-level `await loadFighterModels()`
+  // -- so the surface reliably appears one network round-trip AFTER `load`,
+  // where it used to appear before it only by luck. A timeout cannot fix the
+  // resulting `TypeError`; waiting for the surface can. Every `goto` in the
+  // suite is followed by this same wait, for the same reason.
   await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   // `main.ts` now boots straight onto the season board (Task 8) -- there is
   // no bridge past it -- so `startNextSeries()` is what actually opens
@@ -101,6 +106,92 @@ async function arenaSnapshot(page: Page) {
   return page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
 }
 
+/**
+ * Renders the frame the runtime is currently holding at an explicit alpha and
+ * reads the debug snapshot back in the SAME synchronous callback -- the race
+ * every other reader in this file documents (`main.ts`'s background
+ * `requestAnimationFrame` keeps re-syncing at its own paused-pegged alpha, so
+ * two round-trips can observe two different renders).
+ *
+ * `alpha` matters for the clip assertions below and is therefore explicit
+ * rather than defaulted: `clipMapping` derives clip TIME from `tick + alpha`,
+ * so a checkpoint that wants a phase's exact opening frame has to ask for
+ * alpha 0, and one that only cares which clip is playing can use either.
+ */
+async function renderedSnapshotAt(page: Page, alpha: number) {
+  return page.evaluate((a) => {
+    window.__GLADIATOR_TEST__.renderActiveBattleAtAlpha!(a)
+    return window.__GLADIATOR_TEST__.getArenaDebugSnapshot!()!
+  }, alpha)
+}
+
+// ---------------------------------------------------------------------------
+// Clip durations, read from the shipped `.glb`'s own JSON chunk.
+//
+// The animation layer's assertions (final-review fix I1) are stated against
+// the real clip lengths rather than against the durations §2.1 of the design
+// records: those were measured on the SOURCE pack, and the Blender round-trip
+// re-times every clip slightly (`Idle` ships at 1.042 s, not the pack's
+// 1.067 s). A glTF animation's duration is the largest keyframe time over its
+// samplers' input accessors, which is exactly how three.js derives
+// `AnimationClip.duration` when `GLTFLoader` parses the same file -- so this
+// reads the same number the runtime is using, from the same bytes, without a
+// browser.
+// ---------------------------------------------------------------------------
+
+interface GlbAnimationJson {
+  animations?: { name?: string; samplers: { input: number }[] }[]
+  accessors?: { max?: number[] }[]
+}
+
+function clipDurations(archetype: Archetype): ReadonlyMap<string, number> {
+  const buffer = readFileSync(resolve(process.cwd(), 'public', MODEL_FILES[archetype]))
+  const jsonLength = buffer.readUInt32LE(12)
+  const json = JSON.parse(buffer.subarray(20, 20 + jsonLength).toString('utf8')) as GlbAnimationJson
+  const durations = new Map<string, number>()
+  for (const animation of json.animations ?? []) {
+    const ends = animation.samplers.map((sampler) => json.accessors?.[sampler.input]?.max?.[0] ?? 0)
+    durations.set(String(animation.name), Math.max(0, ...ends))
+  }
+  return durations
+}
+
+const CLIP_DURATIONS: Readonly<Record<Archetype, ReadonlyMap<string, number>>> = {
+  heavy: clipDurations('heavy'),
+  fast: clipDurations('fast'),
+  technical: clipDurations('technical'),
+}
+
+/**
+ * Asserts that `id` is playing `clip`, at a time inside the clip.
+ *
+ * This is the assertion the suite did not have before the final review, and
+ * its absence was structural rather than an oversight: `jointRotations` has no
+ * consumer outside `ArenaView.ts`, and `jointTransformsFinite` is satisfied by
+ * a rig that never moves -- so a `FighterAnimator.apply` that returned early,
+ * or a `selectClip` hard-wired to `Idle`, would have kept every fast test
+ * green with the bout playing as a row of statues. The clip NAME is what ties
+ * a frozen simulation state to `ATTACK_CLIPS`/`DEFENSE_CLIPS`/`BASE_CLIPS`;
+ * the TIME bound is what proves it is being played rather than merely
+ * selected.
+ */
+function expectClip(
+  snapshot: { activeClip: Record<string, { clip: string; time: number }> },
+  id: string,
+  archetype: Archetype,
+  clip: string,
+  label: string,
+): number {
+  const active = snapshot.activeClip[id]
+  expect(active, `${label}: ${id} should have an active clip`).toBeDefined()
+  expect(active.clip, `${label}: ${id} clip`).toBe(clip)
+  const duration = CLIP_DURATIONS[archetype].get(clip)
+  expect(duration, `${label}: ${clip} should exist in the ${archetype} model`).toBeGreaterThan(0)
+  expect(active.time, `${label}: ${id} clip time`).toBeGreaterThanOrEqual(0)
+  expect(active.time, `${label}: ${id} clip time should stay inside ${clip} (${duration!} s)`).toBeLessThanOrEqual(duration!)
+  return duration!
+}
+
 // ---------------------------------------------------------------------------
 // Step 1: cross-runtime determinism vs. render interpolation.
 //
@@ -145,6 +236,7 @@ function nodeCanonicalDuelHash(): string {
 
 test('matches the Node trace hash in Chromium', async ({ page }) => {
   await page.goto('/?snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
 
   const hash = await page.evaluate(async () => {
     // Root-relative specifiers (resolved by Vite's dev server against the
@@ -212,21 +304,8 @@ test('interpolates presentation without advancing simulation', async ({ page }) 
 // ---------------------------------------------------------------------------
 // Root-yaw regression (2026-08-19 combat-legibility follow-up).
 //
-// `ProceduralFighter.ts` used to register the rig's world-placement root
-// `Group` as an ordinary semantic joint (`joints.set('root', root)`, with
-// `'root'` first in `SEMANTIC_JOINT_NAMES`). `ArenaView.applyFrame` sets the
-// correct facing on `rig.fighter.root.rotation` from interpolated simulation
-// state, then immediately calls `applyPoseToJoints`, which walks
-// `SEMANTIC_JOINT_NAMES` and does `joint.rotation.set(...)` for every entry
-// it finds a joint for -- including, back then, `'root'`. No authored pose
-// in `poses/combatPoses.ts` defines a `root` entry, so that pose sample's
-// `root` transform was always the identity, and every fighter's yaw was
-// silently zeroed back to world `+Z` on every rendered frame regardless of
-// which way the simulation actually had it facing. This is the actual root
-// cause behind the "fighters always face the camera" playtest report. The
-// fix stops registering `root` as a joint at all (see that file's own
-// comment), so `applyPoseToJoints`'s existing `if (!joint) continue` guard
-// now permanently -- not just for this pose set -- excludes it.
+// Root-yaw regression: pose application must never touch the root's world
+// facing. Kept as the guard for the clip-driven rig too.
 //
 // `renderActiveBattleAtAlpha(1)` (the same dev-only hook the key-pose
 // captures below use) forces a full-alpha render, so the rendered facing is
@@ -285,7 +364,7 @@ test("keeps each rig's rendered root yaw locked to its simulation facing, never 
 //
 //   Bout A -- home.brutus (heavy) vs away.drusus (fast), series 0 bout 0:
 //   heavy guard/cleave, fast burst/disengage, an ordinary hit+stagger, a
-//   shield block, a defense-declined recognition window, and the bout's own
+//   shield block, a defense-declined window, and the bout's own
 //   defeat.
 //
 //   Bout B -- home.nerva (technical) vs away.cassius (technical), series 0
@@ -304,9 +383,9 @@ test("keeps each rig's rendered root yaw locked to its simulation facing, never 
 // owned files can read without modifying `ArenaView.ts`/`main.ts`: it proves
 // every rendered joint transform is finite (never NaN/Infinity) and reports
 // which contact-flash effect IDs are live, at each frozen tick -- the
-// "blocking pose checks" the brief asks for. `PoseController`'s own pose
-// math (which semantic pose a given phase/tag maps to) is already unit
-// tested elsewhere (Tasks 15-16); this task's job is proving these specific
+// "blocking pose checks" the brief asks for. `clipMapping`'s own selection
+// math (which clip and clip time a given phase/state maps to) is already unit
+// tested elsewhere; this task's job is proving these specific
 // semantic states are actually reachable, at these specific frozen ticks, in
 // a real deterministic run.
 // ---------------------------------------------------------------------------
@@ -320,8 +399,8 @@ test("keeps each rig's rendered root yaw locked to its simulation facing, never 
 // pre-committed scale floor is a floor on how big the *man* reads, and a
 // hoplomachus holding a 1.30-unit spear or a murmillo behind a 1.10-unit
 // scutum would satisfy a floor measured over everything on screen without
-// being any easier to see. `ProceduralFighter.test.ts` pins the slot
-// partition those two numbers are built from; this pins that the partition
+// being any easier to see. `fighterModelContract.test.ts` pins the slot tags
+// the shipped models carry; this pins that the partition
 // actually reaches the rendered pixels, against a real bout, through the real
 // projection, at the viewport the floor is stated at.
 //
@@ -386,18 +465,58 @@ test('separates body height from full prop bounds in the arena debug snapshot', 
     const withoutWeapon = snapshot.boundsPxWithoutWeapon[id]
     expect(withoutWeapon.maxY - withoutWeapon.minY).toBeLessThanOrEqual(fullHeight + 1e-6)
     expect(withoutWeapon.maxY - withoutWeapon.minY).toBeGreaterThanOrEqual(body - 1e-6)
+
+    // `boundsPxWithoutExemptProps` drops every safe-area-exempt slot
+    // (`'weapon'` AND, since the 2026-09-05 amendment, `'net'`) -- a strict
+    // superset of what `boundsPxWithoutWeapon` drops (`'weapon'` alone) -- so
+    // it nests one step further in: body <= withoutExemptProps <=
+    // withoutWeapon <= full, on both axes (body itself is a height-only
+    // scalar, so its bound only applies to the Y axis). This is the fast-e2e
+    // trip wire for a slot-set typo in `HELD_EQUIPMENT_SLOTS`/
+    // `SAFE_AREA_EXEMPT_SLOTS`: a mistake there would otherwise surface only
+    // 24 minutes later, in the slow legibility harness.
+    const withoutExempt = snapshot.boundsPxWithoutExemptProps[id]
+    const withoutExemptHeight = withoutExempt.maxY - withoutExempt.minY
+    const withoutWeaponHeight = withoutWeapon.maxY - withoutWeapon.minY
+    expect(withoutExemptHeight, `${id} withoutExemptProps height should not exceed withoutWeapon`).toBeLessThanOrEqual(
+      withoutWeaponHeight + 1e-6,
+    )
+    expect(withoutExemptHeight, `${id} withoutExemptProps height should not fall below body`).toBeGreaterThanOrEqual(
+      body - 1e-6,
+    )
+
+    const fullWidth = full.maxX - full.minX
+    const withoutWeaponWidth = withoutWeapon.maxX - withoutWeapon.minX
+    const withoutExemptWidth = withoutExempt.maxX - withoutExempt.minX
+    expect(withoutWeaponWidth, `${id} withoutWeapon width should not exceed full`).toBeLessThanOrEqual(fullWidth + 1e-6)
+    expect(withoutExemptWidth, `${id} withoutExemptProps width should not exceed withoutWeapon`).toBeLessThanOrEqual(
+      withoutWeaponWidth + 1e-6,
+    )
   }
 
-  // The spear carrier specifically: his props must add real, measurable height
-  // beyond his own body, or the two numbers would be measuring the same thing
-  // and the floor could be satisfied by the polearm.
+  // The spear carrier specifically: his polearm must add real, measurable
+  // extent beyond everything he wears, or the two numbers would be measuring
+  // the same thing and the scale floor could be satisfied by the polearm.
+  //
+  // Measured across both axes, and against `boundsPxWithoutWeapon` (body +
+  // helmet + shield) rather than against `bodyHeightPx` alone. The procedural
+  // hoplomachus held his spear upright, so the prop's whole contribution was
+  // vertical and a height difference was a sufficient proxy; the shipped model
+  // levels the spear at his opponent, which puts the same reach into
+  // `minX`/`maxX` instead -- 36 px of width here against 1.6 px of extra
+  // height. Asserting height alone would now be asserting the authored pose
+  // rather than the slot partition this test exists for. Same 5 px magnitude.
   const spearCarrier = 'home.nerva'
   const spearFull = snapshot.fullBoundsPx[spearCarrier]
-  const overhang = spearFull.maxY - spearFull.minY - snapshot.bodyHeightPx[spearCarrier]
+  const spearWorn = snapshot.boundsPxWithoutWeapon[spearCarrier]
+  const overhang = Math.max(
+    spearFull.maxX - spearFull.minX - (spearWorn.maxX - spearWorn.minX),
+    spearFull.maxY - spearFull.minY - (spearWorn.maxY - spearWorn.minY),
+  )
   expect(overhang, 'the hoplomachus should carry visible prop beyond his own silhouette').toBeGreaterThan(5)
 })
 
-test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger, a shield block, defense-declined recognition, and defeat', async ({ page }) => {
+test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger, a shield block, a defense-declined window, and defeat', async ({ page }) => {
   await startBoutZeroWith(page, 'brutus')
   const cursor = { current: 0 }
 
@@ -429,12 +548,16 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
   expect(snapshot!.activeEffectIds.some((id) => id.startsWith('body-'))).toBe(true)
+  // ...and the animation layer, not merely the transform layer: a staggered
+  // fighter must actually be playing the pack's hit reaction.
+  expectClip(await renderedSnapshotAt(page, 1), 'home.brutus', 'heavy', BASE_CLIPS.hit, 't232 stagger')
 
   // tick 250: home.brutus mid `heavy-guard` windup, reacting to away.drusus's
   // `fast-slash` (the guard's windup runs 246..253).
   await advanceToTick(page, 250, cursor)
   const guardWindup = await combatantState(page, 'home.brutus')
   expect(guardWindup.action).toMatchObject({ type: 'active', definitionId: 'heavy-guard', phase: 'windup' })
+  expectClip(await renderedSnapshotAt(page, 1), 'home.brutus', 'heavy', DEFENSE_CLIPS['heavy-guard'], 't250 guard windup')
 
   // tick 254: the guard actually blocks -- `attack-blocked` + a shield-zone
   // `damage-dealt` (reduced chip damage, not the full hit), and the shield
@@ -469,50 +592,28 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   expect(disengaging.locomotionIntent).toBe('disengage')
   expect(disengaging.forcedDisengageStartTick).toBe(926)
 
-  // tick 1200: a quiet baseline read, before the decline below -- away.drusus
-  // is neutral (its stagger cleared at tick 1168 and it has no action of its
-  // own running), so no reaction-overlay layer (recognition-flinch,
-  // block/evade/parry, stagger, or defeat) touches its `head` joint here.
-  // `PoseController`'s own layering leaves an untouched joint at the identity
-  // transform, so this is `[0, 0, 0]` -- captured only to give the tick-1123
-  // assertion below a same-run, same-rig comparison point, not asserted as a
-  // standalone fact about the renderer.
-  await advanceToTick(page, 1200, cursor)
-  const drususBaselineHead = (await arenaSnapshot(page))!.jointRotations['away.drusus'].head
-
   // tick 1242: a `defense-declined` window -- away.drusus declined to defend
   // against home.brutus (instance `home.brutus:11`, the SAME instance the old
   // freeze named, at event tick 1239), and the eventual damage has not landed
   // yet.
   //
-  // This is the recognition-flinch trigger window `PoseController`/
-  // `ArenaView` consume (see `ArenaView.ts`'s `pendingDefenseDeclinedTick`).
-  // Asserting only `jointTransformsFinite` here would pass identically even
-  // if the flinch had never been wired into `PoseController`/`ArenaView` at
-  // all -- an unrendered flinch is still a finite, non-crashing frame. The
-  // renderer-specific guarantee is the `head` joint itself: `PoseController`
-  // only ever writes `head` from `recognitionFlinch`/`stagger`/`defeat`
-  // overlays (`buildRecognitionFlinch` in `combatPoses.ts` sets it to
-  // `[0.14, 0.08, 0]`, distinct from every other overlay's own value), and
-  // away.drusus is in neither a stagger nor defeated state at this tick, so
-  // observing that exact value -- differing from the tick-400 baseline
-  // above, taken from the same rig in the same run -- is only possible if
-  // the flinch overlay actually fired. Removing the `defenseDeclinedTick`
-  // wiring in `ArenaView.ts`, or the `recognitionFlinchActive` branch in
-  // `PoseController.ts`, would leave this `head` reading at the tick-400
-  // baseline and fail this assertion, unlike the old finite-only check.
+  // The skinned rig plays authored clips, and the clip table has no entry for
+  // "declined a defense" -- a decline is a decision, not an action with its
+  // own phase timeline, so nothing in `clipMapping` branches on it. (The
+  // procedural rig used to overlay a recognition flinch here, keyed off a
+  // `pendingDefenseDeclinedTick` `ArenaView` no longer carries.) What is
+  // still worth pinning is that this window is reachable at this frozen tick
+  // and renders without a NaN: the surrounding state assertions isolate it
+  // from a stagger or a defeat, so the frame really is the decline's own.
   await advanceToTick(page, 1242, cursor)
   const declineEvents = await eventsAtTick(page, 1239)
   expect(declineEvents).toContainEqual(expect.objectContaining({ type: 'defense-declined', defenderId: 'away.drusus', incomingActionId: 'home.brutus:11' }))
   const drususBeforeDamage = await combatantState(page, 'away.drusus')
   expect(drususBeforeDamage.hp).toBe(287) // unchanged -- the decline's own damage has not landed yet
-  expect(drususBeforeDamage.staggerUntilTick).toBeLessThanOrEqual(1242) // not staggered -- isolates the flinch overlay from the stagger overlay
-  expect(drususBeforeDamage.status).toBe('active') // not defeated -- isolates the flinch overlay from the defeat overlay
+  expect(drususBeforeDamage.staggerUntilTick).toBeLessThanOrEqual(1242) // not staggered
+  expect(drususBeforeDamage.status).toBe('active') // not defeated
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
-  const drususFlinchHead = snapshot!.jointRotations['away.drusus'].head
-  expect(drususFlinchHead).not.toEqual(drususBaselineHead)
-  expect(drususFlinchHead).toEqual([0.14, 0.08, 0])
 
   // tick 1658: both fighters mid-windup on their signature committed attacks
   // -- home.brutus's `heavy-cleave` (started 1654) and away.drusus's
@@ -530,6 +631,28 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   expect(Number.isFinite(snapshot!.rootPositions['home.brutus'].x)).toBe(true)
   expect(Number.isFinite(snapshot!.rootPositions['away.drusus'].x)).toBe(true)
 
+  // Both signature attacks reach the rig as their own authored clip, one per
+  // archetype, at the same frozen tick.
+  const atCleaveWindup = await renderedSnapshotAt(page, 1)
+  expectClip(atCleaveWindup, 'home.brutus', 'heavy', ATTACK_CLIPS['heavy-cleave'].clip, 't1658 cleave windup')
+  expectClip(atCleaveWindup, 'away.drusus', 'fast', ATTACK_CLIPS['fast-burst-lunge'].clip, 't1658 burst windup')
+
+  // tick 1659: still the same windup, one tick later -- so the same clip, at a
+  // later clip time, and therefore a DIFFERENT skeleton. This is the assertion
+  // that the mixer is actually sampling: `activeClip` proves the right clip
+  // was selected and handed over, but an animator that never advanced the
+  // pose would satisfy that and every finiteness check in this file while the
+  // bout played as a row of statues.
+  await advanceToTick(page, 1659, cursor)
+  const oneTickLater = await renderedSnapshotAt(page, 1)
+  expect(oneTickLater.activeClip['home.brutus'].clip).toBe(atCleaveWindup.activeClip['home.brutus'].clip)
+  expect(oneTickLater.activeClip['home.brutus'].time).toBeGreaterThan(atCleaveWindup.activeClip['home.brutus'].time)
+  const movedBones = Object.entries(oneTickLater.jointRotations['home.brutus']).filter(([bone, rotation]) => {
+    const before = atCleaveWindup.jointRotations['home.brutus'][bone as keyof typeof atCleaveWindup.jointRotations['home.brutus']]
+    return rotation.some((value, axis) => value !== before[axis])
+  })
+  expect(movedBones.length, 'at least one bone must move between two ticks of the same cleave windup').toBeGreaterThan(0)
+
   // tick 1827: away.drusus's defeat -- the bout's decisive `fighter-defeated`.
   // The bout CHANGES HANDS with this slice: the murmillo used to be the one
   // who fell here, at tick 2106. Same checkpoint, same condition, opposite
@@ -542,6 +665,7 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   expect(drususDefeated.hp).toBe(0)
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
+  expectClip(await renderedSnapshotAt(page, 1), 'away.drusus', 'fast', BASE_CLIPS.death, 't1827 defeat')
 })
 
 test('freezes technical measure/parry/counter', async ({ page }) => {
@@ -575,6 +699,7 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
   await advanceToTick(page, 908, cursor)
   const parryWindup = await combatantState(page, 'home.nerva')
   expect(parryWindup.action).toMatchObject({ type: 'active', definitionId: 'technical-parry', phase: 'windup' })
+  expectClip(await renderedSnapshotAt(page, 1), 'home.nerva', 'technical', DEFENSE_CLIPS['technical-parry'], 't908 parry windup')
 
   // tick 913: the parry connects -- `attack-parried` on the frozen trace,
   // weapon-zone contact flash live.
@@ -584,11 +709,27 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.activeEffectIds.some((id) => id.startsWith('weapon-'))).toBe(true)
 
+  // The clip layer at the same instant, on both fighters, because the two
+  // sides of this exchange exercise two different rules of `clipMapping`'s
+  // first-match-wins order. The parrier is still on his defence clip; the
+  // thrower is NOT on his attack clip, even though his `technical-thrust` is
+  // in its contact phase this very tick -- the parry staggered him, and the
+  // stagger rule outranks the attack rule. Pinned rather than worked around:
+  // an attack whose own strike frame is pre-empted by the hit reaction it just
+  // earned is the correct thing to draw.
+  const atParryContact = await renderedSnapshotAt(page, 0)
+  expectClip(atParryContact, 'home.nerva', 'technical', DEFENSE_CLIPS['technical-parry'], 't913 parry contact')
+  const cassiusAtParry = await combatantState(page, 'away.cassius')
+  expect(cassiusAtParry.action).toMatchObject({ type: 'active', definitionId: 'technical-thrust', phase: 'contact' })
+  expect(cassiusAtParry.staggerUntilTick).toBeGreaterThan(913)
+  expectClip(atParryContact, 'away.cassius', 'technical', BASE_CLIPS.hit, 't913 staggered thrower')
+
   // tick 916: the forced `technical-parry-counter` windup immediately follows
   // the parry (started tick 914, the very next tick).
   await advanceToTick(page, 916, cursor)
   const counterWindup = await combatantState(page, 'home.nerva')
   expect(counterWindup.action).toMatchObject({ type: 'active', definitionId: 'technical-parry-counter', phase: 'windup' })
+  expectClip(await renderedSnapshotAt(page, 1), 'home.nerva', 'technical', ATTACK_CLIPS['technical-parry-counter'].clip, 't916 counter windup')
 
   // tick 922: the counter connects -- `damage-dealt` against away.cassius.
   await advanceToTick(page, 922, cursor)
@@ -596,6 +737,34 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
   expect(counterEvents).toContainEqual(expect.objectContaining({ type: 'damage-dealt', actorId: 'home.nerva', actionId: 'technical-parry-counter' }))
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
+
+  // STRIKE-FRAME ALIGNMENT, against a real trace rather than hand-built state.
+  // `clipMapping`'s contract is that the clip's strike frame lands on the
+  // simulation's contact tick whatever the action's tick counts are; this is
+  // that tick -- the counter's CONTACT phase opens here (`phaseStartedTick`
+  // 922) and lands its damage here -- so at alpha 0 phase progress is exactly
+  // 0 and the contract reduces to `time === contactAt x duration`, with both
+  // factors read from the table and from the shipped `.glb` rather than
+  // restated. Alpha 0 deliberately: any later alpha is a point part-way into
+  // the post-strike hold, which is a strictly weaker claim.
+  //
+  // `clipMapping.test.ts` proves the same property over hand-built states for
+  // every attack; what this adds is that the frozen tick a human reviewer
+  // looks at is really the one the clip's strike frame is on.
+  const atCounterContact = await renderedSnapshotAt(page, 0)
+  const counterAction = await combatantState(page, 'home.nerva')
+  expect(counterAction.action).toMatchObject({
+    type: 'active',
+    definitionId: 'technical-parry-counter',
+    phase: 'contact',
+    phaseStartedTick: 922,
+  })
+  const counter = ATTACK_CLIPS['technical-parry-counter']
+  const counterDuration = expectClip(atCounterContact, 'home.nerva', 'technical', counter.clip, 't922 counter contact')
+  expect(
+    atCounterContact.activeClip['home.nerva'].time,
+    `t922: ${counter.clip} should sit on its strike frame (${counter.contactAt} x ${counterDuration} s)`,
+  ).toBeCloseTo(counter.contactAt * counterDuration, 3)
 })
 
 // ---------------------------------------------------------------------------
@@ -611,11 +780,30 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
 // ---------------------------------------------------------------------------
 
 // Every capture in this file inherits `playwright.config.ts`'s
-// `maxDiffPixelRatio`. That used to be a per-test override here, tighter than
-// a loose 0.05 global; the global is now the single measured value for the
-// whole suite (0.04, set between a 9.0% frame swap and 2.5% of cross-machine
-// WebGL shading -- see the config's own comment), so pose captures and the
-// safe-frame capture are held to the same bar and neither can silently drift.
+// `maxDiffPixelRatio` (0.04). That used to be a per-test override here,
+// tighter than a loose 0.05 global; one number for the whole suite is still
+// the right shape, but it is NOT a drift guard for these arena captures, and
+// this slice measured exactly how far short it falls.
+//
+// The measurement: replacing the entire procedural rig with skinned KayKit
+// models -- new silhouettes, new proportions, new equipment, a re-scaled
+// camera -- moved three of the five arena captures by LESS than 4%, so they
+// passed against the old procedural baselines untouched (Task 6 and Task 8;
+// the Linux run of 2026-09-05 did it again on the runner image, which is why
+// `heavy-cleave`, `fast-burst` and `technical-parry` had to be deleted by hand
+// and regenerated). The config's own comment records the same conclusion from
+// the other direction, with the per-pair figures.
+//
+// The ratio is NOT lowered here: the README records why 4% cannot come down
+// for a WebGL capture (up to 2.5% of a frame differs between two machines
+// running the same OS and the same Chromium, because the software rasterizer
+// picks SIMD paths from the host CPU). What actually guards an intentional rig
+// change is the README's baseline procedure -- DELETE the PNG so the run fails
+// with "snapshot missing" (`updateSnapshots: 'none'` in the config never
+// writes one), regenerate it deliberately, and look at every regenerated
+// frame before committing it. The structural guards live elsewhere in this
+// file and in `legibility.spec.ts`: projected per-fighter bounds, and (since
+// the final review) `activeClip`.
 /**
  * Seconds of simulated camera time every capture settles before shooting.
  * `?snapshot` holds the runtime paused and a paused frame advances no camera

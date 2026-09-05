@@ -2,11 +2,13 @@ import { expect, test } from '@playwright/test'
 
 test('shows the decision panel only when asked for, actually within the viewport', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await expect(page.getByTestId('decision-panel')).toHaveCount(0)
 
   const viewport = { width: 1280, height: 800 }
   await page.setViewportSize(viewport)
   await page.goto('/?seed=20260815&snapshot&debugDecisions=1')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   // Task 8 removed the old auto-advance bridge: a fresh load now lands on
   // the season board, not the planning screen. This test exists to catch
   // `.below-arena-row` (and the panel it can hold) being pushed below the
@@ -69,6 +71,7 @@ function overlaps(a: Rect, b: Rect): boolean {
 
 async function startSeededBoutAndMeasure(page: import('@playwright/test').Page, url: string) {
   await page.goto(url)
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await assignAndConfirm(page)
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(200))
   const box = async (testId: string) => page.getByTestId(testId).boundingBox()
@@ -142,6 +145,7 @@ for (const width of [1024, 1280, 1440]) {
 
 test('records decisions once a bout is running, without being swamped by skipped noise', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot&debugDecisions=1')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   // Drive the bout through the existing dev test API rather than the UI --
   // same roster ids and call sequence `tests/smoke.spec.ts`'s
   // `startSeededFirstBout` uses.
@@ -170,6 +174,7 @@ test('records decisions once a bout is running, without being swamped by skipped
 
 test('clears decisions on rematch, with no leak into the next bout', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot&debugDecisions=1')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await assignAndConfirm(page)
 
   // Play out all three bouts of the series so `continueSeason()` (which only

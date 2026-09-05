@@ -123,6 +123,7 @@ async function breakTheThreeVeterans(page: Page): Promise<void> {
 
 test('plays a full three-series season through the real dev command surface, ending with nine outcomes and a season summary', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await expect(page.getByTestId('season-board')).toBeVisible()
 
   // The exact three lineups `seasonBalance.test.ts`'s "golden season" cohort
@@ -184,6 +185,7 @@ test('plays a full three-series season through the real dev command surface, end
 // the test that owns it.
 test('names the order each recorded bout was fought under on the season summary', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await expect(page.getByTestId('season-board')).toBeVisible()
 
   await page.evaluate(() => {
@@ -239,6 +241,7 @@ test('names the order each recorded bout was fought under on the season summary'
 
 test('keeps a gladiator driven to broken off the roster, says why on the planning screen, and still lets the player confirm the short lineup', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await breakTheThreeVeterans(page)
 
   const boardState = await getSeasonState(page)
@@ -333,6 +336,7 @@ test('keeps a gladiator driven to broken off the roster, says why on the plannin
 
 test('forfeits a slot when fewer than three gladiators are fit to fight, and the season still completes', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await breakTheThreeVeterans(page)
 
   // Only `vitus`/`sura` are fightable now -- field both, into slots 0 and 1,
@@ -392,6 +396,7 @@ test('the between-bouts screen names the forfeited slot\'s opponent by gladiator
   // `between-bouts` with that forfeit as the latest result -- exactly the state
   // a real player sits in, looking at the button that starts bout 2.
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await breakTheThreeVeterans(page)
 
   await page.evaluate(() => {
@@ -430,6 +435,7 @@ test('the between-bouts screen names the forfeited slot\'s opponent by gladiator
 test('matches the stable season-board snapshot', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 820 })
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await expect(page.getByTestId('season-board')).toBeVisible()
 
   // Structural assertions carry the actual regression-catching weight here,

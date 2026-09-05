@@ -1,6 +1,7 @@
-// The gait cycle's own math, in one place. `PoseController` needs the full
-// classification (which half of the cycle, how far into it, which foot is
-// planted) to build a pose; `CombatAudio` needs only the planted foot, to
+// The gait cycle's own math, in one place. `clipMapping` needs the phase
+// (how far into the cycle) to time the walk clip, and the full
+// classification is still what `CombatAudio` narrows: it needs only the
+// planted foot, to
 // decide when a footstep cue fires. Those were two independent copies of the
 // same modulo-and-halves arithmetic, kept in agreement only by both reading
 // the authored `STYLE_GAIT_CYCLE_DISTANCE` table -- so they agreed on *when*
@@ -11,8 +12,14 @@
 // wall-clock time, so equal travelled distance always yields an equal gait
 // regardless of frame rate or how many ticks elapsed to get there.
 
-import type { Archetype } from '../../simulation/fighters'
-import { STYLE_GAIT_CYCLE_DISTANCE } from './combatPoses'
+import type { Archetype } from '../simulation/fighters'
+
+/** Travelled distance per full gait cycle (both feet), per archetype. Authored content, shared by the clip mapping's walk time and the footstep audio thresholds. */
+export const STYLE_GAIT_CYCLE_DISTANCE: Readonly<Record<Archetype, number>> = {
+  heavy: 1.4,
+  fast: 0.95,
+  technical: 1.15,
+}
 
 /** Fraction of each gait half-cycle, on either side of its boundary, treated as a "both feet planted" double-support window. */
 export const DOUBLE_SUPPORT_FRACTION = 0.12
@@ -20,8 +27,8 @@ export const DOUBLE_SUPPORT_FRACTION = 0.12
 export interface GaitClassification {
   /** `'A'`: the authored `locomotion` pose applies as-is. `'B'`: mirrored
    * left/right, alternating which leg reads as forward from the single
-   * authored snapshot (combatPoses.ts's own doc comment: "the future gait
-   * cycle mirrors/offsets this from travelled distance"). */
+   * authored snapshot. Retained for `classifyPlantedFoot`'s own left/right
+   * alternation; the shipped walk clip carries both halves itself. */
   half: 'A' | 'B'
   /** `0..1` envelope across the current half-cycle: `0` at each foot-plant
    * boundary, `1` at the half-cycle's midpoint (peak stride extension). */

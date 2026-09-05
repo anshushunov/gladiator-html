@@ -73,8 +73,10 @@ jobs:
     runs-on: ubuntu-latest
     # Generous, because these are 12-minute measurements on a runner slower
     # than the machine they were timed on, and a timeout that fires is
-    # indistinguishable from a failure nobody can reproduce.
-    timeout-minutes: 120
+    # indistinguishable from a failure nobody can reproduce. Doubled again
+    # after run 33960960272: the skinned rig's software-GL rendering ran 1.4 h
+    # before nine tests even got the chance to hit their own timeouts.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

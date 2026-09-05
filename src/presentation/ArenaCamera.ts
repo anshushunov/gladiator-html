@@ -150,20 +150,37 @@ const MIN_DEAD_ZONE_REFERENCE = 1e-6
 /** design.md: the tactical band's upper edge, in PAIR SEPARATION -- the longest authored attack reach. */
 const BAND_HIGH_SEPARATION = 3.1
 
-/** The widest `horizontalEquipmentRadius` in the roster: the hoplomachus', measured off the built rig. */
-const WIDEST_EQUIPMENT_RADIUS = 1.3511
+/**
+ * The widest `horizontalEquipmentRadius` in the roster: the hoplomachus'
+ * (the `technical` archetype, the spear), measured off the skinned models'
+ * rest-pose `Box3` through `createSkinnedFighter(...).horizontalEquipmentRadius`
+ * in the running app -- the same quantity `ArenaView` feeds this module as
+ * `HorizontalFramingTarget.radius`. Task 6 replaced the procedural rig with
+ * skinned models and Task 7b then stood them 2.0 units tall instead of 1.8
+ * (the on-screen body height missed the 130 px legibility floor by ~11% at
+ * 1.8), so every archetype's radius has moved twice: `technical` 1.3511 ->
+ * 1.8127755462598738 -> 2.0141936921763492 (still the widest), `heavy` ->
+ * 1.4275666701603713 -> 1.5861850532796753, `fast` -> 1.5955894278773255 ->
+ * 1.772876372587171. This constant tracks the measurement, not a swept tuning
+ * value: `FLAT_DISTANCE` and `EASE_WIDTH_EXTENT` below are the swept pair, and
+ * stay put.
+ */
+const WIDEST_EQUIPMENT_RADIUS = 2.0141936921763492
 
 /**
  * The same band edge, expressed in the GROUP EXTENT that `extentToDistance`
  * below actually consumes.
  *
  * Extent adds both fighters' equipment radii with this module's own margin, so
- * the band's edges differ per pairing -- from 2.46-4.66 (murmillo vs murmillo,
- * the narrowest) to 3.87-6.07 (hoplomachus vs hoplomachus, the widest). The
- * flat region has to cover the band for EVERY pairing, so it ends at the widest
- * one's upper edge, which is what this arithmetic spells out (6.07242). Written
- * as the derivation rather than as the number so that it stays correct if the
- * margin changes, and so it is checkable without a spreadsheet.
+ * the band's edges differ per pairing -- from 4.39-6.59 (murmillo vs murmillo,
+ * the narrowest) to 5.33-7.53 (hoplomachus vs hoplomachus, the widest). Both
+ * ranges have widened twice: 2.46-4.66 and 3.87-6.07 on the procedural rig,
+ * then 4.04-6.24 and 4.89-7.09 under Task 7's skinned models, then these under
+ * Task 7b's 2.0-unit standing height. The flat region has to cover the band for
+ * EVERY pairing, so it ends at the widest one's upper edge, which is what this
+ * arithmetic spells out (7.531226122787968). Written as the derivation rather
+ * than as the number so that it stays correct if the margin changes, and so it
+ * is checkable without a spreadsheet.
  */
 const BAND_HIGH_EXTENT = BAND_HIGH_SEPARATION + 2 * WIDEST_EQUIPMENT_RADIUS * (1 + EQUIPMENT_MARGIN_FRACTION)
 
@@ -230,10 +247,12 @@ export const FLAT_DISTANCE = 8.81
  * close while the pair spreads right out, and they then crop horizontally on
  * the narrow 542 px canvas at 1024x768.
  *
- * At `7.00` the far clamp is reached at extent `6.07 + 7.00 = 13.07`, above the
- * widest extent the nine pairings actually produce (11.37) -- so in play the
- * camera tops out near 16.6 and `maxDistance` is a guard rather than a framing
- * the fight sits at.
+ * At `7.00` the far clamp is reached at extent `BAND_HIGH_EXTENT + 7.00 =
+ * 14.53` (`7.53 + 7.00`; was `7.09 + 7.00 = 14.09` under Task 7's skinned-model
+ * radii, and `6.07 + 7.00 = 13.07` on the procedural rig before them), above the
+ * widest extent the nine pairings actually produce (12.83; was 12.36, and 11.37
+ * before that) -- so in play the camera still tops out near 16.6 (measured:
+ * 16.64) and `maxDistance` is a guard rather than a framing the fight sits at.
  */
 const EASE_WIDTH_EXTENT = 7.0
 

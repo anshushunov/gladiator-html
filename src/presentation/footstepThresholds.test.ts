@@ -4,7 +4,7 @@ import { combatant, freeArena } from '../testSupport/combatFixtures'
 import { createEncounter, type EncounterState } from '../simulation/encounter'
 import { collectFootstepThresholds, type PlantedFootByCombatant } from './footstepThresholds'
 
-const HEAVY_GAIT_CYCLE = 1.4 // STYLE_GAIT_CYCLE_DISTANCE.heavy, poses/combatPoses.ts
+const HEAVY_GAIT_CYCLE = 1.4 // STYLE_GAIT_CYCLE_DISTANCE.heavy, gait.ts
 
 function baseEncounter(): EncounterState {
   return createEncounter({

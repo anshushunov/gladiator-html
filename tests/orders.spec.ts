@@ -33,6 +33,7 @@ import { formatTraceHash } from '../src/simulation/random'
  * clicks in this file are spent on the controls this task actually added. */
 async function openPlannedSeries(page: Page): Promise<void> {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await expect(page.getByTestId('season-board')).toBeVisible()
   await page.getByTestId('start-series').click()
   await expect(page.getByRole('heading', { name: 'Plan the series' })).toBeVisible()
@@ -266,6 +267,7 @@ test('refuses to re-order a resolved bout or a bout beyond the next one', async 
 
 test('shows every challenge\'s opponent temperaments on the season board', async ({ page }) => {
   await page.goto('/?seed=20260815&snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await expect(page.getByTestId('season-board')).toBeVisible()
 
   // Three challenges x three opponents, one badge each.
@@ -328,6 +330,7 @@ function nodeCanonicalDuelHash(): string {
 test('leaves the canonical duel hash untouched under explicit standard dispositions', async ({ page }) => {
   const CANONICAL_DUEL_HASH = nodeCanonicalDuelHash()
   await page.goto('/?snapshot')
+  await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
 
   const { standardHash, pressHash, omittedHash } = await page.evaluate(async () => {
     // Root-relative specifiers held in `string`-typed locals, exactly as

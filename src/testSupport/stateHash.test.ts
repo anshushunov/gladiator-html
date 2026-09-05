@@ -125,7 +125,11 @@ describe('ArenaView never mutates a frozen render frame', () => {
         dataset: {},
       } as unknown as HTMLCanvasElement
 
-      const view = new ArenaView(fakeCanvas)
+      // `null` models: this proof is about `sync()`'s freeze, which happens
+      // before `applyFrame`'s own `contextLost` early return, and Node has no
+      // WebGL context to build rigs into anyway (`new THREE.WebGLRenderer`
+      // throws here, which is what sets `contextLost` in the first place).
+      const view = new ArenaView(fakeCanvas, null)
 
       const previous = createBattle({ home: homeRoster[0], away: opponents[0], seed: BASELINE_TEST_SEED, combatStyles: COMBAT_STYLES })
       const current = advanceBattleTicks(previous, 5)

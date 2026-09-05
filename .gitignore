@@ -19,3 +19,5 @@ debug.log
 # artifacts -- regenerate them from the seed instead of committing ~100 MB of
 # video. The filled-in review document beside them IS committed.
 docs/reviews/clips/
+# Python bytecode from tools/blender (py_compile / Blender runs)
+__pycache__/

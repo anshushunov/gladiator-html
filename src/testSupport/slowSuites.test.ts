@@ -15,11 +15,13 @@ import { SLOW_E2E_SUITES, SLOW_UNIT_SUITES } from './slowSuites'
 // A list checked against another list cannot catch that. A list checked against
 // what is actually on disk can.
 //
-// `import.meta.glob` rather than `node:fs`: `src/` is compiled by the same
-// tsconfig as the app and has no `@types/node`, so `readdirSync` and
-// `__dirname` do not typecheck here. Vite resolves these patterns at transform
-// time against the real tree, which is the same evidence for this purpose and
-// costs nothing at runtime because nothing is imported — only the keys are read.
+// `import.meta.glob` rather than `node:fs`: `@types/node` is installed and
+// `readdirSync`/`__dirname` do typecheck in `src/` now, but `nodeImportBoundary.test.ts`
+// forbids non-test `src/` modules from importing `node:fs` anyway (this file is
+// exempt, being a test). `import.meta.glob` is kept regardless because Vite
+// resolves these patterns at transform time against the real tree, which is
+// the same evidence for this purpose, and it costs nothing at runtime because
+// nothing is imported — only the keys are read.
 
 const unitFilesOnDisk = Object.keys(import.meta.glob('/src/**/*.test.ts')).map((path) => path.replace(/^\//, ''))
 const e2eFilesOnDisk = Object.keys(import.meta.glob('/tests/**/*.spec.ts')).map((path) => path.replace(/^\//, ''))

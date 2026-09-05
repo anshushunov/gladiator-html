@@ -27,6 +27,7 @@ cp /tmp/shots/tests/__screenshots__/linux/*.png tests/__screenshots__/linux/
 
 ## Other commands
 
+- `npm run models:build` — rebuild `public/models/*.glb` from `assets/kaykit/` via `tools/blender/build_gladiators.py` (needs Blender 5.2). `tools/inspect-glb.mjs` inspects an already-built `.glb`'s bones/anchors/clips without Blender.
 - `npm run benchmark:encounter` / `npm run benchmark:duel-log` — informational timings for the 100-combatant kernel and the duel adapter's event log. Neither asserts a threshold; both exit nonzero only on a structural failure.
 - `npm run review:clips` — records the human-review material (nine `×1` pairing bouts, three with the HUD hidden, one `×2` series, plus each clip's event trace) into the gitignored `docs/reviews/clips/`. Recording only: the gate itself needs two humans who did not implement the combat.
 
