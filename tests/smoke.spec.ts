@@ -364,6 +364,11 @@ test('renders movement-rich encounter combat', async ({ page }) => {
 })
 
 test('carries events from every tick in a multi-tick batch to the arena, not just the last', async ({ page }) => {
+  // The 700 single-tick `advanceTicks(1)` calls below each render a skinned
+  // frame; locally that's ~6.5 s, but over the 30 s default under the CI
+  // runner's software GL (run 33960960272), so triple the budget.
+  test.slow()
+
   // A single large `advanceTicks` burst mirrors what happens at x2/x4 speed
   // (or any render that falls behind): many `stepBattleTick()` calls run
   // before the one `syncArena()` call that follows. Every event from every

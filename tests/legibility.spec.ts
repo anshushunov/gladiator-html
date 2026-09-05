@@ -645,9 +645,14 @@ function report(line: string): void {
 // ---------------------------------------------------------------------------
 // A trace is ~1200-2700 stepped-and-rendered ticks; the default 30 s test
 // timeout is for DOM tests, not for these.
+//
+// Locally each trace is well under 180 s (47 tests in ~24 min). On
+// ubuntu-latest's software GL, the skinned rig pushed 8 traces past 180 s in
+// run 33960960272. 600 s below is a time budget for that slower runner, not
+// an acceptance criterion -- the acceptance checks stay unchanged.
 // ---------------------------------------------------------------------------
 
-const TRACE_TIMEOUT_MS = 180_000
+const TRACE_TIMEOUT_MS = 600_000
 
 // Deliberately NOT `test.describe.configure({ mode: 'parallel' })`. Every test
 // here is independent (its own page, its own navigation, no shared state), and
