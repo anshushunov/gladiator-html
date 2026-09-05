@@ -28,11 +28,23 @@ import type { BoutIndex } from '../src/simulation/series'
 //      to the camera, never an output of it -- do not re-derive it here, and
 //      do not move it.
 //
-//   2. SAFE AREA. Long handheld props -- the hoplomachus' spear shaft and the
-//      retiarius' trident -- MAY leave frame. Everything else (body, helmet,
-//      shield, net, galerus, greaves, and the murmillo's gladius, which is not
-//      a polearm) stays inside the 5% CANVAS inset, on every tick of all nine
-//      pairings, at all three viewports.
+//   2. SAFE AREA. Long or thrown handheld props -- the hoplomachus' spear
+//      shaft, the retiarius' trident, and the retiarius' net -- MAY leave
+//      frame. Everything else (body, helmet, shield, galerus, greaves, and the
+//      murmillo's gladius, which is not a polearm) stays inside the 5% CANVAS
+//      inset, on every tick of all nine pairings, at all three viewports,
+//      except for the named deviations in `KNOWN_SAFE_AREA_DEVIATIONS` below.
+//
+//      AMENDED AGAIN 2026-09-05 (design-owner ruling on the Task 7b report),
+//      on two points:
+//
+//        a. the NET joins the exemption. It is held at arm's length and thrown,
+//           exactly like the trident it is paired with, and it was the only
+//           thing putting pairing 04 outside the inset at 1024x768 -- proved by
+//           a controlled rebuild (net disc 0.30 -> 0.05 source units removed
+//           every violation in 04 and moved pairing 05's `minX` not at all).
+//        b. pairing 05 at 1024x768 is a NAMED DEVIATION, not a loosened rule.
+//           See `KNOWN_SAFE_AREA_DEVIATIONS`.
 //
 // Everything else the plan states is unchanged, including that the safe area is
 // an inset of the CANVAS (730x518 at a 1280x820 page, 542x518 at 1024x768,
@@ -149,11 +161,72 @@ const TYPE_NAME: Readonly<Record<Archetype, string>> = {
 }
 
 /**
- * The kits whose weapon is a polearm, and so the only two the amended safe area
- * lets out of frame. Deliberately NOT "every weapon": the murmillo's gladius is
- * built under the same `'weapon'` slot and is still required inside the inset.
+ * The kits whose held props the amended safe area lets out of frame -- the
+ * hoplomachus' spear and the retiarius' trident and net. Deliberately NOT
+ * "every weapon": the murmillo's gladius is built under the same `'weapon'`
+ * slot and is still required inside the inset, because he is not one of these
+ * two.
  */
 const POLEARM_ARCHETYPES: ReadonlySet<Archetype> = new Set<Archetype>(['fast', 'technical'])
+
+/**
+ * SAFE-AREA DEVIATIONS THAT ARE KNOWN, MEASURED AND RULED ON -- not a loosened
+ * rule. Every pairing/viewport NOT named here is still asserted at exactly zero
+ * violating ticks; a pairing named here is asserted against its own recorded
+ * bound, so the deviation cannot silently grow and cannot silently spread to a
+ * pairing that does not have one.
+ *
+ * The single entry below is the retiarius-vs-hoplomachus pairing at 1024x768,
+ * ruled a permitted deviation by the design owner on 2026-09-05 after Task 7b.
+ * What was measured:
+ *
+ *   - it is `home.aquila`'s OWN BODY leaving the left edge, not a prop. Proved
+ *     by a controlled rebuild: with the net disc cut from 0.30 to 0.05 source
+ *     units the box's `minX` is bit-identical, so the 59.8 px of box left of
+ *     his root at the worst tick is arm and torso. Exempting the net (above)
+ *     therefore does nothing here, and no build-script change reaches it;
+ *   - 9 violating ticks of 2088 (734-742), worst overshoot 13.49 px at tick
+ *     740, on a 542x518 canvas whose 5% inset starts at x = 27.1. A real frame,
+ *     not a degenerate one: camera at 8.82 (inside the flat region), group
+ *     extent 7.46, body 138.1 px tall;
+ *   - it PRE-DATES the 2.0-unit models. The same probe against the 1.8-unit
+ *     build with the same net measured 1 violating tick, -0.66 px, at the same
+ *     tick, same fighter, same edge;
+ *   - and it cannot be scaled away. The safe area needs a standing height of
+ *     about 1.79 units; the 130 px floor (criterion 1 above, which is NOT
+ *     negotiable) needs about 1.89. There is no height that satisfies both, so
+ *     one of the two criteria has to record a deviation, and the floor wins.
+ *
+ * The documented way to REMOVE this entry, deliberately left to its own slice
+ * because it is measurement work rather than an edit: re-sweep `FLAT_DISTANCE`
+ * against a fresh recording of the 2.0-unit rig (the existing 46,647-tick
+ * recording is from the procedural rig and is not a valid input). ~9.30 is the
+ * distance that pulls the body inside the inset, and on the linear estimate it
+ * still leaves the binding pairing at ~138 px of body height. See
+ * `docs/superpowers/specs/2026-09-04-skinned-gladiators-design.md` section 2.2's
+ * 2026-09-05 amendment and the task-7b report.
+ *
+ * The bounds are set about a third above what was measured (9 -> 12 ticks,
+ * 13.49 -> 18 px) so that ordinary noise does not fail the run while a real
+ * regression -- the deviation spreading to more ticks, or deepening by half
+ * again -- still does.
+ */
+interface SafeAreaDeviation {
+  pairing: string
+  viewport: string
+  maxViolatingTicks: number
+  maxOvershootPx: number
+}
+
+const KNOWN_SAFE_AREA_DEVIATIONS: readonly SafeAreaDeviation[] = [
+  { pairing: '05 aquila vs cassius', viewport: '1024x768', maxViolatingTicks: 12, maxOvershootPx: 18 },
+]
+
+function knownDeviationFor(pairingLabel: string, viewport: { width: number; height: number }): SafeAreaDeviation | undefined {
+  return KNOWN_SAFE_AREA_DEVIATIONS.find(
+    (entry) => entry.pairing === pairingLabel && entry.viewport === `${viewport.width}x${viewport.height}`,
+  )
+}
 
 // ---------------------------------------------------------------------------
 // The nine pairings, built exactly as `scripts/measure-framing.ts` builds them:
@@ -218,6 +291,8 @@ interface Sample {
   bodyHeightPx: [number, number]
   fullBoundsPx: [BoundsPx, BoundsPx]
   boundsPxWithoutWeapon: [BoundsPx, BoundsPx]
+  /** Every safe-area-exempt slot dropped (`'weapon'` AND `'net'`) -- what the amended rule below is asserted on. */
+  boundsPxWithoutExemptProps: [BoundsPx, BoundsPx]
   worldSeparation: number
   screenSeparationPx: number
 }
@@ -388,6 +463,7 @@ async function collectPerTick(page: Page, maxTicks: number): Promise<Trace> {
           bodyHeightPx: [snapshot.bodyHeightPx[home], snapshot.bodyHeightPx[away]],
           fullBoundsPx: [snapshot.fullBoundsPx[home], snapshot.fullBoundsPx[away]],
           boundsPxWithoutWeapon: [snapshot.boundsPxWithoutWeapon[home], snapshot.boundsPxWithoutWeapon[away]],
+          boundsPxWithoutExemptProps: [snapshot.boundsPxWithoutExemptProps[home], snapshot.boundsPxWithoutExemptProps[away]],
           worldSeparation: Math.hypot(dxWorld, dzWorld),
           screenSeparationPx: Math.hypot(dxScreen, dyScreen),
         })
@@ -470,22 +546,28 @@ function median(values: readonly number[]): number {
 }
 
 /**
- * The boxes the AMENDED safe area is asserted on: a polearm carrier drops the
- * `'weapon'` slot (`boundsPxWithoutWeapon`), everyone else keeps everything
- * (`fullBoundsPx`).
+ * The boxes the AMENDED safe area is asserted on: a carrier of a long or thrown
+ * handheld prop drops the exempt slots (`boundsPxWithoutExemptProps` -- both
+ * `'weapon'` and, since the 2026-09-05 amendment, `'net'`), everyone else keeps
+ * everything (`fullBoundsPx`).
  *
- * This is the weapon-excluded snapshot variant the amendment calls for, applied
- * only where the amendment allows it. `boundsPxWithoutWeapon` alone would be
- * too permissive -- the murmillo's gladius carries the same `'weapon'` slot
- * tag as the polearms, and the ruling exempts the spear shaft and the trident, not
- * every blade. Task 5 measured that the two variants happen to bind at the same
- * distance today (the binding frame is retiarius vs hoplomachus, which carries
- * no gladius at all); asserting the narrower one means that stays a measured
- * coincidence rather than a load-bearing one.
+ * This is the prop-excluded snapshot variant the amendment calls for, applied
+ * only where the amendment allows it. `boundsPxWithoutExemptProps` alone would
+ * be too permissive -- the murmillo's gladius carries the same `'weapon'` slot
+ * tag as the polearms, and the ruling exempts the spear shaft, the trident and
+ * the net, not every blade. Task 5 measured that the variants happen to bind at
+ * the same distance today (the binding frame is retiarius vs hoplomachus, which
+ * carries no gladius at all); asserting the narrower one means that stays a
+ * measured coincidence rather than a load-bearing one.
+ *
+ * The net was added to the exemption on evidence, not on taste: it was the sole
+ * cause of pairing 04's violations at 1024x768 (a controlled rebuild with the
+ * disc cut to 0.05 source units removed all five), and it is the same kind of
+ * object as the trident it is thrown alongside.
  */
 function amendedSafeAreaBoxes(sample: Sample, archetypes: readonly Archetype[]): BoundsPx[] {
   return sample.fullBoundsPx.map((box, index) =>
-    POLEARM_ARCHETYPES.has(archetypes[index]) ? sample.boundsPxWithoutWeapon[index] : box,
+    POLEARM_ARCHETYPES.has(archetypes[index]) ? sample.boundsPxWithoutExemptProps[index] : box,
   )
 }
 
@@ -675,7 +757,7 @@ for (const viewport of VIEWPORTS) {
     test.use({ viewport })
 
     for (const pairing of PAIRINGS) {
-      test(`nothing but a polearm leaves the ${SAFE_INSET * 100}% canvas inset -- ${pairing.label}`, async ({ page }) => {
+      test(`nothing but a long or thrown handheld prop leaves the ${SAFE_INSET * 100}% canvas inset -- ${pairing.label}`, async ({ page }) => {
         test.setTimeout(TRACE_TIMEOUT_MS)
         await startBout(page, pairing)
         const trace = await collectPerTick(page, MAX_BOUT_TICKS)
@@ -713,15 +795,40 @@ for (const viewport of VIEWPORTS) {
           }
         }
 
+        const deviation = knownDeviationFor(pairing.label, viewport)
+
         report(
           `safe area ${viewport.width}x${viewport.height} ${pairing.label}: ${violations} violation ticks` +
             `${nonFinite > 0 ? ` (${nonFinite} non-finite)` : ''}, ` +
-            `tightest ${tightest.toFixed(2)} px at tick ${tightestTick}, canvas ${canvas.width}x${canvas.height}, ${trace.samples.length} ticks`,
+            `tightest ${tightest.toFixed(2)} px at tick ${tightestTick}, canvas ${canvas.width}x${canvas.height}, ${trace.samples.length} ticks` +
+            `${deviation ? ` [KNOWN DEVIATION: <=${deviation.maxViolatingTicks} ticks, >=-${deviation.maxOvershootPx} px]` : ''}`,
         )
+
+        if (deviation) {
+          // A named, ruled-on deviation (`KNOWN_SAFE_AREA_DEVIATIONS`): still
+          // asserted, just against its own recorded bound instead of zero, so
+          // that it cannot deepen or spread without failing. Both halves are
+          // needed -- a few very deep ticks and many shallow ones are different
+          // regressions, and either alone would let the other through.
+          expect(
+            violations,
+            `${pairing.label} at ${viewport.width}x${viewport.height}: violating ticks against the recorded deviation (${nonFinite} of them non-finite)`,
+          ).toBeLessThanOrEqual(deviation.maxViolatingTicks)
+          expect(
+            tightest,
+            `${pairing.label} at ${viewport.width}x${viewport.height}: worst overshoot against the recorded deviation, at tick ${tightestTick}`,
+          ).toBeGreaterThanOrEqual(-deviation.maxOvershootPx)
+          // A deviation entry must never become a way to stop measuring: an
+          // all-non-finite trace leaves `tightest` at `Infinity`, which would
+          // satisfy the bound above.
+          expect(tightest).toBeLessThan(Number.POSITIVE_INFINITY)
+          expect(nonFinite, `${pairing.label}: a deviation covers overshoot, never a non-finite bound`).toBe(0)
+          return
+        }
 
         expect(
           violations,
-          `${pairing.label} at ${viewport.width}x${viewport.height}: ticks with anything but a polearm outside the ${SAFE_INSET * 100}% canvas inset (${nonFinite} of them non-finite)`,
+          `${pairing.label} at ${viewport.width}x${viewport.height}: ticks with anything but an exempt handheld prop outside the ${SAFE_INSET * 100}% canvas inset (${nonFinite} of them non-finite)`,
         ).toBe(0)
         // Belt and braces on the same population, and not a restatement: this
         // one fails on `Infinity` -- the value `tightest` still holds if the

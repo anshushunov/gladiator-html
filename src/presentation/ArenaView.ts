@@ -125,6 +125,26 @@ export interface ArenaDebugSnapshot {
    */
   boundsPxWithoutWeapon: Readonly<Record<CombatantId, ScreenBoundsPx>>
   /**
+   * `fullBoundsPx` minus every slot the safe-area rule exempts as of the
+   * 2026-09-05 amendment: `'weapon'` AND `'net'` (`SAFE_AREA_EXEMPT_SLOTS`) --
+   * "long or thrown handheld props", the spear shaft, the trident and the
+   * retiarius' net.
+   *
+   * Deliberately a SECOND field rather than a widening of
+   * `boundsPxWithoutWeapon` above. That one is documented as "body + helmet +
+   * shield" and `tests/combat-visuals.spec.ts` reads it as exactly that (the
+   * hoplomachus' spear-overhang assertion, and a between-body-and-full
+   * invariant on every rig); widening it in place would have moved a number
+   * that test asserts on without the test being about this rule at all. The
+   * retiarius is the only fighter for whom the two differ -- he is the only one
+   * carrying a `'net'` -- so for everybody else this is
+   * `boundsPxWithoutWeapon`'s twin.
+   *
+   * `tests/legibility.spec.ts` is the only consumer; nothing under `src/`
+   * reads it, and adding it changed no behaviour.
+   */
+  boundsPxWithoutExemptProps: Readonly<Record<CombatantId, ScreenBoundsPx>>
+  /**
    * Each rig's root (ground) point projected to canvas pixels -- the same
    * point `rootPositions` reports in world space, deliberately, so that
    * "screen separation / world separation" pairs two measurements of the
@@ -183,6 +203,17 @@ export const HELD_EQUIPMENT_SLOTS: ReadonlySet<string> = new Set(['weapon', 'shi
 
 /** The held slot `boundsPxWithoutWeapon` drops: the gladius, spear and trident are all built under it. */
 const LONG_HANDHELD_WEAPON_SLOT = 'weapon'
+
+/**
+ * The slots `boundsPxWithoutExemptProps` drops -- the safe-area rule's
+ * exemption list as amended on 2026-09-05: a fighter may let a long or thrown
+ * handheld prop leave frame, and the retiarius' net is one (it is held at
+ * arm's length and thrown, exactly like the trident it is paired with), while
+ * the murmillo's gladius is not exempt on its own account -- it is under
+ * `'weapon'` but he is not a polearm carrier, and the harness applies this
+ * list only to those.
+ */
+const SAFE_AREA_EXEMPT_SLOTS: ReadonlySet<string> = new Set([LONG_HANDHELD_WEAPON_SLOT, 'net'])
 
 /**
  * The lower clamp is `FLAT_DISTANCE` itself, not a separate number.
@@ -1169,6 +1200,7 @@ function buildArenaDebugSnapshot(
   const bodyHeightPx: Record<CombatantId, number> = {}
   const fullBoundsPx: Record<CombatantId, ScreenBoundsPx> = {}
   const boundsPxWithoutWeapon: Record<CombatantId, ScreenBoundsPx> = {}
+  const boundsPxWithoutExemptProps: Record<CombatantId, ScreenBoundsPx> = {}
   const centerPx: Record<CombatantId, ScreenPointPx> = {}
   const framingTargets: HorizontalFramingTarget[] = []
   let jointTransformsFinite = true
@@ -1235,6 +1267,10 @@ function buildArenaDebugSnapshot(
     accumulateProjectedBounds(rig.fighter.root, projection, (slot) => slot !== LONG_HANDHELD_WEAPON_SLOT, withoutWeapon)
     boundsPxWithoutWeapon[id] = { minX: withoutWeapon.minX, maxX: withoutWeapon.maxX, minY: withoutWeapon.minY, maxY: withoutWeapon.maxY }
 
+    const withoutExempt = emptyBounds()
+    accumulateProjectedBounds(rig.fighter.root, projection, (slot) => !SAFE_AREA_EXEMPT_SLOTS.has(slot), withoutExempt)
+    boundsPxWithoutExemptProps[id] = { minX: withoutExempt.minX, maxX: withoutExempt.maxX, minY: withoutExempt.minY, maxY: withoutExempt.maxY }
+
     MEASURED_CORNER.setFromMatrixPosition(rig.fighter.root.matrixWorld)
     centerPx[id] = projectToCanvasPx(MEASURED_CORNER, projection)
 
@@ -1263,6 +1299,7 @@ function buildArenaDebugSnapshot(
     bodyHeightPx,
     fullBoundsPx,
     boundsPxWithoutWeapon,
+    boundsPxWithoutExemptProps,
     centerPx,
     canvasPx: { width: projection.widthPx, height: projection.heightPx },
   }

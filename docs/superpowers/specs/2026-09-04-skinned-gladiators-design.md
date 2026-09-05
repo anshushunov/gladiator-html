@@ -119,6 +119,44 @@ derived from it) moved in the same commit. The retiarius' net disc was also cut
 from 0.42 to 0.30 source units, for the safe-area reason recorded in the task-7b
 report.
 
+**Safe-area ruling of the same date (design owner, on the Task 7b report).**
+Standing the models at 2.0 put two pairings outside the 5 % canvas inset at
+1024x768 — the one viewport whose canvas (542x518) is narrow rather than wide,
+and therefore the only one where horizontal fit is ever decided. Both were
+diagnosed by a controlled rebuild (the same trace replayed against a build
+differing only in the net disc's radius, 0.30 → 0.05 source units), and they
+have different causes and different answers:
+
+1. **Pairing 04 (retiarius vs retiarius) was the net**, and cutting the disc
+   removed every violation. The net is exempted instead of shrunk further: the
+   amended rule now reads "long **or thrown** handheld props — the spear shaft,
+   the trident, and the retiarius' net — may leave frame", since the net is held
+   at arm's length and thrown exactly like the trident it is paired with, and
+   the size that would have kept it inside (source radius ≤ 0.205, a disc about
+   half the buckler) no longer reads as a net. `ArenaView`'s debug snapshot
+   gained `boundsPxWithoutExemptProps` so the harness can assert on it;
+   `boundsPxWithoutWeapon` is unchanged and still means "body + helmet +
+   shield".
+2. **Pairing 05 (retiarius vs hoplomachus) is the fighter's own body** — with
+   the net reduced to a token disc, `home.aquila`'s `minX` is bit-identical, so
+   the 59.8 px of box left of his root is arm and torso. It is recorded as a
+   **named deviation** (`KNOWN_SAFE_AREA_DEVIATIONS` in
+   `tests/legibility.spec.ts`), not as a loosened rule: 9 violating ticks of
+   2088, worst overshoot −13.49 px, bounded in the harness at 12 ticks and 18 px
+   so it can neither deepen nor spread unnoticed, while every other
+   pairing/viewport is still asserted at exactly zero. It pre-dates the 2.0 rig
+   (the 1.8 build measured 1 tick, −0.66 px, at the same tick and edge) and no
+   standing height removes it: **the safe area needs ≤ 1.79 units and the 130 px
+   floor needs ≥ 1.89**, so the two criteria cannot both be met and the floor
+   wins.
+
+The documented way to retire the deviation, deliberately left to a later slice
+because it is measurement work rather than an edit: re-sweep `FLAT_DISTANCE`
+against a fresh recording of the 2.0 rig (the existing 46,647-tick recording is
+of the procedural rig and is not a valid input). **≈9.30** is the distance that
+pulls the body inside the inset, and on the linear estimate it still leaves the
+binding pairing near 138 px of body height.
+
 ### 2.3 The glTF contract
 
 A unit test (`src/presentation/fighterModelContract.test.ts`) reads each shipped
