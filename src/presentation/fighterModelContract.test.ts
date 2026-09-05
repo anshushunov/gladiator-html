@@ -34,8 +34,54 @@ const REQUIRED_NODE_NAMES: readonly string[] = [...new Set([...FIGHTER_BONE_NAME
 const sanitize = (name: string): string => PropertyBinding.sanitizeNodeName(name)
 
 interface GlbJson {
-  nodes: { name?: string; mesh?: number; children?: number[]; extras?: Record<string, unknown> }[]
+  nodes: { name?: string; mesh?: number; children?: number[]; extras?: Record<string, unknown>; scale?: number[] }[]
+  meshes?: { primitives: { attributes: Record<string, number> }[] }[]
+  accessors?: { min?: number[]; max?: number[] }[]
   animations?: { name?: string }[]
+}
+
+/**
+ * The standing height the build script targets (`TARGET_HEIGHT` in
+ * `tools/blender/build_gladiators.py`), and the tolerance the assertion below
+ * holds it to. 2.0, raised from 1.8 by Task 7b for the 130 px legibility
+ * floor; the shipped files measure 2.0000000 to seven places, so 0.01 is a
+ * loose bound that still catches any real scale mistake.
+ */
+const TARGET_STANDING_HEIGHT = 2.0
+const STANDING_HEIGHT_TOLERANCE = 0.01
+
+/**
+ * The bind-pose vertical span of everything tagged `slot: 'body'`, in world
+ * units, read straight from the POSITION accessors' mandatory `min`/`max`.
+ *
+ * Deliberately NOT multiplied by the `Rig` node's `scale[1]`, even though the
+ * build script's height comes from scaling that node and the loaded scene puts
+ * the body meshes under it. The exporter writes skinned vertex data in final
+ * world units and inverse bind matrices to match -- checked on the shipped
+ * files: `jointGlobalTransform x inverseBindMatrix` is the identity for every
+ * joint, which is exactly the glTF statement "at bind time a skinned vertex is
+ * already where the accessor says it is", and which is why the node's own
+ * transform is specified to be ignored for skinned meshes. Multiplying by the
+ * `Rig` scale would therefore double-count it and give 1.728 (heavy) / 1.830
+ * (fast, technical) -- three different numbers for three rigs the script
+ * builds to one height, which is the tell that the multiply is wrong.
+ * `SkinnedMesh` cancels the same factor at draw time through
+ * `AttachedBindMode`, and a browser probe of the loaded rigs confirmed the
+ * drawn standing height is 2.000 for all three.
+ */
+function bodyVerticalSpan(json: GlbJson): { min: number; max: number } {
+  let min = Infinity
+  let max = -Infinity
+  for (const node of json.nodes) {
+    if (node.mesh === undefined || node.extras?.slot !== 'body') continue
+    for (const primitive of json.meshes?.[node.mesh]?.primitives ?? []) {
+      const accessor = json.accessors?.[primitive.attributes.POSITION]
+      if (!accessor?.min || !accessor.max) throw new Error(`body mesh ${node.name} has a POSITION accessor without min/max`)
+      min = Math.min(min, accessor.min[1])
+      max = Math.max(max, accessor.max[1])
+    }
+  }
+  return { min, max }
 }
 
 /** Minimal GLB reader: the JSON chunk only, no three.js, no WebGL. */
@@ -124,6 +170,31 @@ describe.each(ARCHETYPES)('shipped model for %s', (archetype) => {
       const slot = node.extras?.slot
       expect(MESH_SLOTS.has(String(slot)), `${node.name} has slot ${String(slot)}`).toBe(true)
     }
+  })
+
+  /**
+   * The scale half of the contract, which nothing else in the fast suite could
+   * see (final-review fix I5). `standing_height()` in the build script used to
+   * return `-inf` when no mesh carried an armature modifier, and
+   * `TARGET_HEIGHT / -inf` is `-0.0`: a zero-scale rig exports as a perfectly
+   * valid `.glb` with every bone, clip, anchor and slot in place, so every
+   * assertion above passes and the arena draws nothing at all. The script now
+   * raises instead; this is the check on the shipped bytes.
+   *
+   * Two assertions, because the height alone does not pin the rig to the
+   * floor: a body that spanned 2.0 from y=1.0 to y=3.0 would be a man
+   * hovering a metre in the air, and the camera's fixed pitch frames feet at
+   * y=0.
+   */
+  it('stands 2.0 world units tall with its feet on the ground', () => {
+    const { json } = readGlbJson(path)
+    const bodyNodes = json.nodes.filter((node) => node.mesh !== undefined && node.extras?.slot === 'body')
+    expect(bodyNodes.length, `${archetype} has no mesh node tagged slot 'body'`).toBeGreaterThan(0)
+
+    const { min, max } = bodyVerticalSpan(json)
+    expect(max - min, `${archetype} standing height`).toBeCloseTo(TARGET_STANDING_HEIGHT, 2)
+    expect(Math.abs(max - min - TARGET_STANDING_HEIGHT)).toBeLessThan(STANDING_HEIGHT_TOLERANCE)
+    expect(Math.abs(min), `${archetype} feet should sit at y = 0, not ${min}`).toBeLessThan(STANDING_HEIGHT_TOLERANCE)
   })
 
   it('stays under the size budget', () => {

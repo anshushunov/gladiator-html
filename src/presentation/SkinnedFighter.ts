@@ -79,7 +79,12 @@ export function createSkinnedFighter(models: FighterModelSet, archetype: Archety
     byName.set(object.name, object)
     if ((object as THREE.Mesh).isMesh) {
       object.castShadow = true
-      object.frustumCulled = false // skinned parts move outside their bind-pose bounds
+      // Only the skinned parts: their drawn pose leaves the bind-pose bounds
+      // three.js culls against, so culling them is wrong. A bone-parented prop
+      // (weapon, shield, net, helmet) is an ordinary `Mesh` whose `matrixWorld`
+      // does track where it is drawn, so its bounds are correct and it keeps
+      // the culling.
+      if ((object as THREE.SkinnedMesh).isSkinnedMesh) object.frustumCulled = false
     }
   })
 
@@ -106,7 +111,17 @@ export function createSkinnedFighter(models: FighterModelSet, archetype: Archety
     horizontalEquipmentRadius,
     dispose(): void {
       if (disposed) return
-      root.clear() // geometries/materials are shared with the source GLTF and stay alive
+      // `SkeletonUtils.clone` gives every cloned `SkinnedMesh` its OWN
+      // `Skeleton` (that is the whole reason it is used instead of
+      // `Object3D.clone`), and a `Skeleton` owns a GPU bone texture allocated
+      // on first render. Geometries and materials are shared with the source
+      // GLTF and must stay alive; the per-instance skeletons must not, or
+      // every disposed rig leaks one bone texture for the session.
+      root.traverse((object) => {
+        const skinned = object as THREE.SkinnedMesh
+        if (skinned.isSkinnedMesh) skinned.skeleton?.dispose()
+      })
+      root.clear()
       disposed = true
     },
     isDisposed: () => disposed,

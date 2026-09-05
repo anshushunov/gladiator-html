@@ -134,14 +134,30 @@ def world_vertices(obj):
 
 
 def standing_height():
-    """Height of the skinned body in the bind pose (props excluded)."""
+    """Height of the skinned body in the bind pose (props excluded).
+
+    Raises rather than returning a sentinel when nothing contributed. With the
+    plain `hi - lo` this used to return `-inf` if no mesh carried an armature
+    modifier (a renamed body part, an import that lost its skinning, a source
+    file swapped for one whose meshes are not skinned), and the caller's
+    `TARGET_HEIGHT / height` then quietly produced `-0.0`. That exported a
+    zero-scale rig -- a valid .glb, every bone and clip and slot present, so
+    the contract test passed -- which draws as nothing at all.
+    """
     lo, hi = math.inf, -math.inf
     for obj in all_mesh_objects():
         if not is_body_part(obj):
             continue
         for point in world_vertices(obj):
             lo, hi = min(lo, point.z), max(hi, point.z)
-    return hi - lo
+    if lo == math.inf:
+        raise RuntimeError(
+            'standing_height: no skinned body mesh found (nothing carries an '
+            'armature modifier) -- the rig would export at scale 0')
+    height = hi - lo
+    if height <= 0:
+        raise RuntimeError(f'standing_height: degenerate body height {height}')
+    return height
 
 
 def world_bounds(obj):
@@ -428,7 +444,11 @@ def build_archetype(archetype, spec):
 
     os.makedirs(OUT, exist_ok=True)
     out = os.path.join(OUT, f'{archetype}.glb')
-    bpy.ops.export_scene.gltf(
+    # `bpy.ops` returns a status set rather than raising: an exporter that
+    # bailed answers {'CANCELLED'} and leaves either no file or the previous
+    # run's, and without this check the script would go on to log "wrote" and
+    # exit 0 over a stale .glb.
+    status = bpy.ops.export_scene.gltf(
         filepath=out,
         export_format='GLB',
         export_extras=True,
@@ -443,6 +463,8 @@ def build_archetype(archetype, spec):
         export_unused_images=False,
         export_unused_textures=False,
     )
+    if status != {'FINISHED'}:
+        raise RuntimeError(f'{archetype}: glTF export returned {status}, not FINISHED ({out})')
     log(archetype, 'wrote', out, os.path.getsize(out), 'bytes')
 
 
