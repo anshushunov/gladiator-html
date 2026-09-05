@@ -290,7 +290,6 @@ interface Sample {
   /** Home first, then away -- see `collectPerTick`. */
   bodyHeightPx: [number, number]
   fullBoundsPx: [BoundsPx, BoundsPx]
-  boundsPxWithoutWeapon: [BoundsPx, BoundsPx]
   /** Every safe-area-exempt slot dropped (`'weapon'` AND `'net'`) -- what the amended rule below is asserted on. */
   boundsPxWithoutExemptProps: [BoundsPx, BoundsPx]
   worldSeparation: number
@@ -462,7 +461,6 @@ async function collectPerTick(page: Page, maxTicks: number): Promise<Trace> {
           distance: snapshot.camera.distance,
           bodyHeightPx: [snapshot.bodyHeightPx[home], snapshot.bodyHeightPx[away]],
           fullBoundsPx: [snapshot.fullBoundsPx[home], snapshot.fullBoundsPx[away]],
-          boundsPxWithoutWeapon: [snapshot.boundsPxWithoutWeapon[home], snapshot.boundsPxWithoutWeapon[away]],
           boundsPxWithoutExemptProps: [snapshot.boundsPxWithoutExemptProps[home], snapshot.boundsPxWithoutExemptProps[away]],
           worldSeparation: Math.hypot(dxWorld, dzWorld),
           screenSeparationPx: Math.hypot(dxScreen, dyScreen),

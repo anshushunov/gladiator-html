@@ -375,6 +375,33 @@ test('separates body height from full prop bounds in the arena debug snapshot', 
     const withoutWeapon = snapshot.boundsPxWithoutWeapon[id]
     expect(withoutWeapon.maxY - withoutWeapon.minY).toBeLessThanOrEqual(fullHeight + 1e-6)
     expect(withoutWeapon.maxY - withoutWeapon.minY).toBeGreaterThanOrEqual(body - 1e-6)
+
+    // `boundsPxWithoutExemptProps` drops every safe-area-exempt slot
+    // (`'weapon'` AND, since the 2026-09-05 amendment, `'net'`) -- a strict
+    // superset of what `boundsPxWithoutWeapon` drops (`'weapon'` alone) -- so
+    // it nests one step further in: body <= withoutExemptProps <=
+    // withoutWeapon <= full, on both axes (body itself is a height-only
+    // scalar, so its bound only applies to the Y axis). This is the fast-e2e
+    // trip wire for a slot-set typo in `HELD_EQUIPMENT_SLOTS`/
+    // `SAFE_AREA_EXEMPT_SLOTS`: a mistake there would otherwise surface only
+    // 24 minutes later, in the slow legibility harness.
+    const withoutExempt = snapshot.boundsPxWithoutExemptProps[id]
+    const withoutExemptHeight = withoutExempt.maxY - withoutExempt.minY
+    const withoutWeaponHeight = withoutWeapon.maxY - withoutWeapon.minY
+    expect(withoutExemptHeight, `${id} withoutExemptProps height should not exceed withoutWeapon`).toBeLessThanOrEqual(
+      withoutWeaponHeight + 1e-6,
+    )
+    expect(withoutExemptHeight, `${id} withoutExemptProps height should not fall below body`).toBeGreaterThanOrEqual(
+      body - 1e-6,
+    )
+
+    const fullWidth = full.maxX - full.minX
+    const withoutWeaponWidth = withoutWeapon.maxX - withoutWeapon.minX
+    const withoutExemptWidth = withoutExempt.maxX - withoutExempt.minX
+    expect(withoutWeaponWidth, `${id} withoutWeapon width should not exceed full`).toBeLessThanOrEqual(fullWidth + 1e-6)
+    expect(withoutExemptWidth, `${id} withoutExemptProps width should not exceed withoutWeapon`).toBeLessThanOrEqual(
+      withoutWeaponWidth + 1e-6,
+    )
   }
 
   // The spear carrier specifically: his polearm must add real, measurable
