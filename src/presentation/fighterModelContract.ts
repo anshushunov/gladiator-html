@@ -32,8 +32,8 @@ export const ANCHOR_NODE_NAMES: Readonly<Record<EquipmentAnchorName, string>> = 
 }
 export const FIGHTER_ANCHOR_NAMES: readonly EquipmentAnchorName[] = ['weaponHand', 'offHand', 'weaponTip', 'shieldCenter', 'hitCenter']
 
-/** `extras.slot` values the build script writes on every mesh node. */
-export const MESH_SLOTS: ReadonlySet<string> = new Set(['body', 'helmet', 'weapon', 'shield', 'net'])
+/** `extras.slot` values the build script writes on every mesh node. `armour` is worn kit that is not the body and not the helmet (manica, greave). */
+export const MESH_SLOTS: ReadonlySet<string> = new Set(['body', 'helmet', 'armour', 'weapon', 'shield', 'net'])
 
 export const MODEL_FILES: Readonly<Record<Archetype, string>> = {
   heavy: 'models/heavy.glb',

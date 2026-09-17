@@ -251,7 +251,12 @@ export interface ScreenPointPx {
 /**
  * Which mesh slots (`userData.slot`, written into each `.glb` by the build
  * script as `extras.slot` -- see `fighterModelContract.MESH_SLOTS`) count
- * toward `ArenaDebugSnapshot.bodyHeightPx`: the man and what he wears.
+ * toward `ArenaDebugSnapshot.bodyHeightPx`: the man and what he wears --
+ * the skinned body, the helmet, and `armour` (worn kit that is neither: the
+ * murmillo's manica and greave, rigid pieces parented to a limb bone). Worn
+ * armour can never be tagged `body`: the contract test reads the `body`
+ * slot's POSITION accessors for the 2.0 / feet-at-0 assertion, and a rigid
+ * cylinder's accessor is in its own local frame.
  *
  * The three *held* slots (`HELD_EQUIPMENT_SLOTS` below) are absent on
  * purpose, and so is anything a later kit adds: an unrecognised slot counts
@@ -263,13 +268,14 @@ export interface ScreenPointPx {
  *
  * Exported for that test only; nothing else outside this module reads it.
  */
-export const BODY_SILHOUETTE_SLOTS: ReadonlySet<string> = new Set(['body', 'helmet'])
+export const BODY_SILHOUETTE_SLOTS: ReadonlySet<string> = new Set(['body', 'helmet', 'armour'])
 
 /**
  * The complement of `BODY_SILHOUETTE_SLOTS` over the slots the models really
- * emit: what a fighter *holds* rather than wears. These are what
- * `fullBoundsPx` adds on top of the body silhouette, and the reason
- * `bodyHeightPx` exists as a separate number at all.
+ * emit: what a fighter *holds* rather than wears (worn armour is on the other
+ * side of the partition). These are what `fullBoundsPx` adds on top of the
+ * body silhouette, and the reason `bodyHeightPx` exists as a separate number
+ * at all.
  */
 export const HELD_EQUIPMENT_SLOTS: ReadonlySet<string> = new Set(['weapon', 'shield', 'net'])
 
