@@ -525,6 +525,36 @@ h1 span { color: #c78b4f; font-style: italic; }
 .arena canvas { display: block; width: 100%; height: 100%; }
 .arena canvas[hidden] { display: none; }
 
+/* Damage numbers: DOM digits over the canvas, placed per frame from the
+   simulation's own contact point. Same z-index as `.arena__status` but
+   earlier in tree order (inserted right after the canvas), so a digit rising
+   under the heading paints beneath its text; the WebGL fallback (z-index 2)
+   still covers everything. */
+.arena__numbers {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.arena__damage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: #f3e9d8;
+  font: 700 22px/1 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-shadow: 0 1px 0 #000, 0 0 6px rgba(0, 0, 0, 0.85);
+  will-change: transform, opacity;
+}
+
+.arena__damage[hidden] { display: none; }
+.arena__damage[data-kind="shield"] { color: #b9ae9c; font-size: 18px; }
+.arena__damage[data-kind="critical"] { color: #e8c876; font-size: 30px; }
+
 .arena__webgl-fallback {
   position: absolute;
   z-index: 2;

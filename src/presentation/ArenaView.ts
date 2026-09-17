@@ -17,6 +17,7 @@ import { createSkinnedFighter, type FighterModelSet, type SkinnedFighter } from 
 import { FighterAnimator } from './FighterAnimator'
 import { selectClip, type ClipSelection } from './clipMapping'
 import { FIGHTER_BONE_NAMES, type FighterBoneName } from './fighterModelContract'
+import { classifyDamage, DamageNumberPool, type DamageNumberKind } from './DamageNumbers'
 import type { BattleState } from '../simulation/battle'
 import type { ContactZone } from '../simulation/combatActions'
 import type { CombatantId, EncounterEvent, FighterCombatState } from '../simulation/encounter'
@@ -97,6 +98,13 @@ export interface ArenaDebugSnapshot {
    */
   activeClip: Readonly<Record<CombatantId, { clip: string; time: number }>>
   activeEffectIds: readonly string[]
+  /**
+   * The live damage numbers in spawn order (feedback spec §6.6). Separate
+   * from `activeEffectIds` on purpose: that field means "transient 3D
+   * effects, empty under reduced motion", and a number is neither -- it is
+   * DOM, and it is the reduced-motion hit channel.
+   */
+  activeDamageNumbers: readonly { id: string; amount: number; kind: DamageNumberKind }[]
   trailPointCounts: Readonly<Record<CombatantId, number>>
   camera: ArenaCameraState
   eventCursor: number
@@ -474,6 +482,43 @@ function lerpVec2(a: Readonly<Vec2>, b: Readonly<Vec2>, t: number): Vec2 {
 }
 
 /**
+ * Everything a projection to canvas pixels needs: the live perspective camera
+ * and the canvas's own CSS size. Shared by the per-frame damage-number
+ * placement and the dev-only pixel measurements below.
+ */
+interface ProjectionContext {
+  camera: THREE.PerspectiveCamera
+  widthPx: number
+  heightPx: number
+}
+
+/** Scratch vectors, module-level so a per-frame placement or a per-tick measurement run allocates nothing. */
+const PROJECTED_POINT = new THREE.Vector3()
+const NUMBER_ANCHOR = new THREE.Vector3()
+
+/**
+ * A world point in canvas pixels, top-left origin, `y` downward. A pure
+ * function of the camera and the canvas size, so it is also the overlay's
+ * coordinate system: `.arena__numbers` is `inset: 0` over a canvas that
+ * fills the same box.
+ *
+ * Points behind the camera would project through the perspective divide with
+ * a negative `w` and come back mirrored. Nothing projected here can be behind
+ * it -- the camera always sits `CAMERA_MIN_DISTANCE..CAMERA_MAX_DISTANCE`
+ * (8.81..18) units back from the look target it is
+ * pointed at, and everything projected is a fighter, or a contact point on
+ * one, inside a `7.7`-radius arena floor -- so this deliberately carries no
+ * guard that would silently substitute a fake number for a real geometry bug.
+ */
+function projectToCanvasPx(point: THREE.Vector3, projection: ProjectionContext): ScreenPointPx {
+  PROJECTED_POINT.copy(point).project(projection.camera)
+  return {
+    x: (PROJECTED_POINT.x * 0.5 + 0.5) * projection.widthPx,
+    y: (0.5 - PROJECTED_POINT.y * 0.5) * projection.heightPx,
+  }
+}
+
+/**
  * Every object `deepFreeze` has already visited, module-level so it stays
  * effective across the whole session rather than being rebuilt per call:
  * `BattleState.descriptor` and (whenever a tick emits nothing)
@@ -789,6 +834,14 @@ export class ArenaView {
   private readonly perspectiveCamera = new THREE.PerspectiveCamera(CAMERA_FOV_DEGREES, 1, CAMERA_NEAR, CAMERA_FAR)
   private readonly arenaCamera: ArenaCamera
   private readonly flashes: ContactFlashEffects
+  /**
+   * The damage-number pool (feedback spec §6). Entries-only until the
+   * constructor binds it to the overlay, which it does only when the canvas
+   * has a parent -- `stateHash.test.ts` constructs this view in plain Node
+   * with neither a `parentElement` nor a `document`, and on that path no
+   * `document.*` call may be made.
+   */
+  private readonly numbers = new DamageNumberPool()
   private readonly rigs = new Map<CombatantId, FighterRig>()
   private readonly observer: ResizeObserver
 
@@ -863,6 +916,10 @@ export class ArenaView {
     this.scene.fog = new THREE.Fog(0x16131a, 14, 24)
 
     this.flashes = new ContactFlashEffects(this.scene)
+    // The overlay goes directly after the canvas -- before the status heading
+    // `index.html` places after it, so a rising digit paints beneath the
+    // heading's text -- and only when the canvas has a parent (see `numbers`).
+    if (canvas.parentElement) this.numbers.attach(canvas.parentElement, canvas)
     this.buildArena()
     this.applyCameraTransform(this.arenaCamera.state)
 
@@ -873,6 +930,8 @@ export class ArenaView {
     this.canvas.addEventListener('webglcontextlost', this.handleContextLost, false)
 
     if (this.contextLost) {
+      // The same state `handleContextLost` produces: a dead arena keeps no overlay.
+      this.numbers.dispose()
       this.canvas.hidden = true
       this.showFallback()
     }
@@ -891,9 +950,12 @@ export class ArenaView {
           this.applyCameraTransform(this.arenaCamera.update(targets, 1 / SETTLE_STEPS_PER_SECOND))
         }
         this.renderer!.render(this.scene, this.perspectiveCamera)
+        // A direct render outside `applyFrame`: the numbers follow the camera
+        // that was just drawn, at the frame's own tick (no time has passed).
+        this.placeDamageNumbers(this.lastFrame.current.encounter.tick * MS_PER_TICK, this.isReducedMotion())
       }
       this.getDebugSnapshot = (): ArenaDebugSnapshot =>
-        buildArenaDebugSnapshot(this.rigs, this.flashes, this.arenaCamera.state, this.eventCursor, {
+        buildArenaDebugSnapshot(this.rigs, this.flashes, this.numbers, this.arenaCamera.state, this.eventCursor, {
           camera: this.perspectiveCamera,
           // The canvas's CSS size, not the drawing-buffer size: `resize()`
           // hands the renderer exactly these numbers with `updateStyle:
@@ -921,6 +983,7 @@ export class ArenaView {
     if (this.contextLost) return
 
     this.flashes.clear()
+    this.numbers.clear()
 
     for (const rig of this.rigs.values()) this.disposeRig(rig)
     this.rigs.clear()
@@ -958,6 +1021,7 @@ export class ArenaView {
     if (this.contextLost) return // see `startBout`'s matching guard
 
     this.flashes.clear()
+    this.numbers.clear()
     for (const rig of this.rigs.values()) this.disposeRig(rig)
     this.rigs.clear()
   }
@@ -968,6 +1032,7 @@ export class ArenaView {
     for (const rig of this.rigs.values()) this.disposeRig(rig)
     this.rigs.clear()
     this.flashes.dispose(this.scene)
+    this.numbers.dispose()
     if (!this.contextLost) this.renderer?.dispose()
     if (this.fallbackElement) {
       this.fallbackElement.remove()
@@ -1113,10 +1178,30 @@ export class ArenaView {
     // `this.renderer`/`this.contextLost` are always set together (see the
     // field's own doc comment).
     this.renderer!.render(this.scene, this.perspectiveCamera)
+    // After the render, so the camera's matrices are the ones just drawn.
+    this.placeDamageNumbers(presentationMs, reducedMotion)
 
     if (this.activeBoutIndex !== undefined) this.canvas.dataset.activeBoutIndex = String(this.activeBoutIndex)
     this.canvas.dataset.lastEventId = String(this.eventCursor)
     this.canvas.dataset.renderedCombatants = String(this.rigs.size)
+  }
+
+  /**
+   * Ages the damage numbers on the encounter clock and places each live one
+   * over its contact point through the camera just rendered (feedback spec
+   * §6.3): `(worldX, DAMAGE_NUMBER_HEIGHT, worldZ)` projected to canvas
+   * pixels, which are the overlay's own pixels. Runs after every direct
+   * `renderer.render` -- `applyFrame` and the dev-only `settleCameraSeconds`.
+   */
+  private placeDamageNumbers(presentationMs: number, reducedMotion: boolean): void {
+    const projection: ProjectionContext = {
+      camera: this.perspectiveCamera,
+      widthPx: this.canvas.clientWidth,
+      heightPx: this.canvas.clientHeight,
+    }
+    this.numbers.update(presentationMs, reducedMotion, {
+      project: (x, y, z) => projectToCanvasPx(NUMBER_ANCHOR.set(x, y, z), projection),
+    })
   }
 
   /**
@@ -1143,6 +1228,11 @@ export class ArenaView {
    * tick: the paired spray gets the larger base scale. `current` is the
    * frame's state, read only for the two combatants' positions so the spray
    * can point the way the blow travelled (feedback spec §4.1).
+   *
+   * Every `damage-dealt` also spawns a damage number -- blocked chip damage
+   * included, in its own `shield` style -- and does so under reduced motion
+   * too, because the number is the reduced-motion hit channel (§6.4). Its
+   * kind is read off the same two batch-local sets; nothing is re-derived.
    */
   private processNewEvents(events: readonly EncounterEvent[], current: BattleState, reducedMotion: boolean, presentationMs: number): void {
     const blockedInstanceIds = new Set<string>()
@@ -1169,14 +1259,18 @@ export class ArenaView {
         case 'critical-hit':
           criticalInstanceIds.add(event.actionInstanceId)
           break
-        case 'damage-dealt':
-          if (!reducedMotion && !blockedInstanceIds.has(event.actionInstanceId)) {
+        case 'damage-dealt': {
+          const blocked = blockedInstanceIds.has(event.actionInstanceId)
+          const critical = criticalInstanceIds.has(event.actionInstanceId)
+          if (!reducedMotion && !blocked) {
             this.flashes.spawn(event.contactZone, event.contactPoint, presentationMs, {
               direction: blowDirection(current, event.actorId, event.targetId),
-              scaleBase: criticalInstanceIds.has(event.actionInstanceId) ? SPRAY_CRITICAL_SCALE : 1,
+              scaleBase: critical ? SPRAY_CRITICAL_SCALE : 1,
             })
           }
+          this.numbers.spawn(event, classifyDamage(event, blocked, critical), presentationMs)
           break
+        }
         case 'fighter-staggered': {
           const rig = this.rigs.get(event.combatantId)
           if (rig) rig.staggerStartTick = event.tick
@@ -1339,6 +1433,8 @@ export class ArenaView {
     for (const rig of this.rigs.values()) this.disposeRig(rig)
     this.rigs.clear()
     this.flashes.dispose(this.scene)
+    // Removed, not hidden: a dead arena must not keep floating numbers.
+    this.numbers.dispose()
     this.renderer?.dispose()
 
     this.canvas.hidden = true
@@ -1408,39 +1504,8 @@ export class ArenaView {
 // generally do not prune unused members out of an otherwise-live class.
 // ---------------------------------------------------------------------------
 
-/**
- * Everything the pixel measurements below need in order to turn a world
- * point into a canvas pixel: the live perspective camera and the canvas's own
- * CSS size.
- */
-interface ProjectionContext {
-  camera: THREE.PerspectiveCamera
-  widthPx: number
-  heightPx: number
-}
-
-/** Scratch vectors, module-level so a per-tick measurement run allocates nothing. */
-const PROJECTED_POINT = new THREE.Vector3()
+/** Scratch vector, module-level so a per-tick measurement run allocates nothing. `projectToCanvasPx` and `ProjectionContext` live with the shared helpers above. */
 const MEASURED_CORNER = new THREE.Vector3()
-
-/**
- * A world point in canvas pixels, top-left origin, `y` downward.
- *
- * Points behind the camera would project through the perspective divide with
- * a negative `w` and come back mirrored. Nothing measured here can be behind
- * it -- the camera always sits `CAMERA_MIN_DISTANCE..CAMERA_MAX_DISTANCE`
- * (8.81..18) units back from the look target it is
- * pointed at, and everything measured is a fighter inside a `7.7`-radius
- * arena floor -- so this deliberately carries no guard that would silently
- * substitute a fake number for a real geometry bug.
- */
-function projectToCanvasPx(point: THREE.Vector3, projection: ProjectionContext): ScreenPointPx {
-  PROJECTED_POINT.copy(point).project(projection.camera)
-  return {
-    x: (PROJECTED_POINT.x * 0.5 + 0.5) * projection.widthPx,
-    y: (0.5 - PROJECTED_POINT.y * 0.5) * projection.heightPx,
-  }
-}
 
 interface MutableBoundsPx {
   minX: number
@@ -1505,6 +1570,7 @@ function accumulateProjectedBounds(
 function buildArenaDebugSnapshot(
   rigs: ReadonlyMap<CombatantId, FighterRig>,
   flashes: ContactFlashEffects,
+  numbers: DamageNumberPool,
   cameraState: ArenaCameraState,
   eventCursor: number,
   projection: ProjectionContext,
@@ -1607,6 +1673,7 @@ function buildArenaDebugSnapshot(
     jointRotations,
     activeClip,
     activeEffectIds: flashes.activeEffectIds(),
+    activeDamageNumbers: numbers.snapshot(),
     trailPointCounts,
     camera: cameraState,
     eventCursor,

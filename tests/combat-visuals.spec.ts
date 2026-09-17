@@ -517,6 +517,14 @@ test('separates body height from full prop bounds in the arena debug snapshot', 
 })
 
 test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger, a shield block, a defense-declined window, and defeat', async ({ page }) => {
+  // Six checkpoints across a whole 1827-tick bout, each a skinned render plus
+  // a snapshot read: 8.0 s alone on this machine, but over the 30 s default
+  // when the slow legibility suite runs concurrently (measured 2026-09-17,
+  // the whole fast project ran 6.2 min instead of ~1.1). The feedback spec's
+  // §12 names this remedy for a fast test that crosses 30 s: triple the
+  // budget, not fewer assertions.
+  test.slow()
+
   await startBoutZeroWith(page, 'brutus')
   const cursor = { current: 0 }
 
@@ -548,6 +556,22 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
   expect(snapshot!.activeEffectIds.some((id) => id.startsWith('body-'))).toBe(true)
+  // The damage number (feedback spec §8.2): equality, not containment, is
+  // legitimate here only because 231 is the bout's FIRST `damage-dealt` (the
+  // hp fixture above already pins it as 420 - 31), so the pool holds exactly
+  // this one entry. And the DOM half: the one visible pooled span reads '31'
+  // and sits inside the arena's own box -- the 4 % screenshot ratio cannot
+  // see a 22 px digit, so this is the guard that the overlay renders at all.
+  expect(snapshot!.activeDamageNumbers).toEqual([{ id: expect.any(String), amount: 31, kind: 'body' }])
+  const visibleNumbers = page.locator('[data-testid="damage-number"]:visible')
+  await expect(visibleNumbers).toHaveCount(1)
+  await expect(visibleNumbers).toHaveText('31')
+  const numberBox = (await visibleNumbers.boundingBox())!
+  const arenaBox = (await page.getByTestId('arena').boundingBox())!
+  expect(numberBox.x).toBeGreaterThanOrEqual(arenaBox.x)
+  expect(numberBox.y).toBeGreaterThanOrEqual(arenaBox.y)
+  expect(numberBox.x + numberBox.width).toBeLessThanOrEqual(arenaBox.x + arenaBox.width)
+  expect(numberBox.y + numberBox.height).toBeLessThanOrEqual(arenaBox.y + arenaBox.height)
   // ...and the animation layer, not merely the transform layer: a staggered
   // fighter must actually be playing the pack's hit reaction.
   expectClip(await renderedSnapshotAt(page, 1), 'home.brutus', 'heavy', BASE_CLIPS.hit, 't232 stagger')
@@ -578,6 +602,14 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   // alone is satisfied by either outcome, so it is not a regression guard for
   // that dedupe -- assert the count.
   expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('shield-'))).toHaveLength(1)
+  // Both numbers, in spawn order: the 31 spawned at pres(232) is 22 ticks old
+  // here, well under its 54-tick life, and the burst 251..254 adds the 11 in
+  // the `shield` style (blocked chip damage). Not `toHaveLength(1)` -- the
+  // burst semantics make that wrong (feedback spec §8.2).
+  expect(snapshot!.activeDamageNumbers).toMatchObject([
+    { amount: 31, kind: 'body' },
+    { amount: 11, kind: 'shield' },
+  ])
 
   // tick 430, the miss checkpoint (feedback spec §8.2): the bout's first
   // `attack-missed` -- home.brutus at tick 429, reason `geometry` -- with the
@@ -603,6 +635,10 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('miss-'))).toHaveLength(2)
   expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('body-'))).toHaveLength(2)
+  // The number count equals the batch's `damage-dealt` count -- the actual
+  // guard that a miss and an evade spawn puffs and NO number. The 31/11 from
+  // 232/254 are 198/176 ticks old and dead.
+  expect(snapshot!.activeDamageNumbers.map((entry) => entry.amount)).toEqual([31, 31, 19])
 
   // tick 930: away.drusus's forced disengage (Fast's post-burst-lunge
   // recovery locomotion), stamped at 926 and still held here, four ticks in
