@@ -30,15 +30,17 @@ const MAX_DISTANCE = 18
 
 /**
  * The tactical band in group-extent terms, re-measured off the skinned models
- * (Task 7, then Task 7b's 2.0-unit standing height; see `RIG_EQUIPMENT_RADIUS`
- * below). `BAND_LOW` is the narrowest pairing (murmillo vs murmillo):
- * `0.9 + 2 x 1.5861850532796753 x 1.1`. `BAND_HIGH` is the widest (hoplomachus
- * vs hoplomachus): `3.1 + 2 x 2.0141936921763492 x 1.1`, which is where the
- * flat region has to end for the band to be flat for every pairing -- it
- * mirrors `ArenaCamera.ts`'s own `BAND_HIGH_EXTENT`, whose
- * `WIDEST_EQUIPMENT_RADIUS` moved with the same measurement.
+ * (Task 7, then Task 7b's 2.0-unit standing height, then the murmillo kit; see
+ * `RIG_EQUIPMENT_RADIUS` below). `BAND_LOW` is the narrowest pairing (murmillo
+ * vs murmillo): `0.9 + 2 x 1.679186605264372 x 1.1` (was `0.9 + 2 x
+ * 1.5861850532796753 x 1.1 = 4.389607117215286` on the Knight-bodied murmillo).
+ * `BAND_HIGH` is the widest (hoplomachus vs hoplomachus): `3.1 + 2 x
+ * 2.0141936921763492 x 1.1`, which is where the flat region has to end for the
+ * band to be flat for every pairing -- it mirrors `ArenaCamera.ts`'s own
+ * `BAND_HIGH_EXTENT`, whose `WIDEST_EQUIPMENT_RADIUS` moved with the same
+ * measurement. The murmillo kit did not move it: the spear is still the widest.
  */
-const BAND_LOW = 4.389607117215286
+const BAND_LOW = 4.594210531581619
 const BAND_HIGH = 7.531226122787968
 
 /**
@@ -73,7 +75,13 @@ const MAX_ZOOM_UNITS_PER_SECOND = 5
  * `HorizontalFramingTarget.radius`. Task 6 replaced the procedural rig with
  * skinned models and Task 7b then stood them 2.0 units tall instead of 1.8, so
  * all three numbers have moved twice (previous values: 1.4275666701603713,
- * 1.5955894278773255, 1.8127755462598738). Written out so the real-bout replay
+ * 1.5955894278773255, 1.8127755462598738). The murmillo kit
+ * (`docs/superpowers/specs/2026-09-17-kit-design.md`) then moved `heavy` a
+ * third time, 1.5861850532796753 -> 1.679186605264372: the Knight body at rig
+ * scale 0.8641 became the Barbarian body at 0.9148, and the farthest rest-pose
+ * point is still the transplanted sword's tip, so the radius grew with the
+ * scale. `fast` and `technical` were re-read in the same browser pass and came
+ * back bit-identical. Written out so the real-bout replay
  * at the bottom of this file frames with the widths the shipping camera
  * actually sees: with a placeholder radius the group extent is wrong by up to
  * 1.5 world units, which is twice the framing dead zone at the band edge and
@@ -84,7 +92,7 @@ const MAX_ZOOM_UNITS_PER_SECOND = 5
  * the bout replays into vacuous passes. This way it is a compile error.
  */
 const RIG_EQUIPMENT_RADIUS: Readonly<Record<Archetype, number>> = {
-  heavy: 1.5861850532796753,
+  heavy: 1.679186605264372,
   fast: 1.772876372587171,
   technical: 2.0141936921763492,
 }

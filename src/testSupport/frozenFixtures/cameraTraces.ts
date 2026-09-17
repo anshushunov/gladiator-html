@@ -100,8 +100,30 @@ export interface RecordedCameraTrace {
 // often. Every `expectSmoothFraming` bound was re-checked unmodified after the
 // move and passes with the same margin as before (0 direction reversals in all
 // three traces and all nine standalone pairings).
+//
+// RE-RECORDED A THIRD TIME by the murmillo kit
+// (`docs/superpowers/specs/2026-09-17-kit-design.md`, PR-1). `heavy.glb` is
+// now the Barbarian body at rig scale 0.9148 instead of the Knight's at 0.8641,
+// with the Knight's sword and shield transplanted, so the murmillo's
+// `horizontalEquipmentRadius` grew 1.5861850532796753 -> 1.679186605264372
+// (read in the browser; `fast` and `technical` re-read in the same pass and
+// bit-identical). `WIDEST_EQUIPMENT_RADIUS` did NOT move -- the hoplomachus'
+// spear is still the widest rig -- so the band edge stays at 7.5312 and only
+// the one trace that fields a murmillo has a new opening shot. `ticks` again
+// does not move (`src/simulation/**` is untouched):
+//
+//   01 murmillo vs retiarius    1827 -> 1827 ticks   opening 15.4353 -> 15.6163   crossings 1 -> 1
+//   04 retiarius vs retiarius   1705 -> 1705 ticks   opening 15.7947 (unchanged)  crossings 3 -> 3
+//   07 hoplomachus vs retiarius 1261 -> 1261 ticks   opening 16.2333 (unchanged)  crossings 1 -> 1
+//
+// Traces 04 and 07 field no murmillo, so their inputs are byte-identical and
+// they were predicted not to move; they did not. The opening distance on 01
+// rose because the reset shot's group extent is 0.093 x 1.1 wider: the
+// murmillo's outer edge sits that much further out, the retiarius' is where it
+// was. `expectSmoothFraming` was re-run unmodified over the three traces and
+// the nine standalone pairings and holds.
 export const RECORDED_TRACES: readonly RecordedCameraTrace[] = [
-  { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 1827, openingDistance: 15.435310845379714, crossings: 1 },
+  { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 1827, openingDistance: 15.616315888413556, crossings: 1 },
   { label: '04 retiarius vs retiarius', lineup: ['aquila', 'nerva', 'brutus'], ticks: 1705, openingDistance: 15.794692273631078, crossings: 3 },
   { label: '07 hoplomachus vs retiarius', lineup: ['nerva', 'brutus', 'aquila'], ticks: 1261, openingDistance: 16.233329149631913, crossings: 1 },
 ]
