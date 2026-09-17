@@ -933,7 +933,7 @@ test('keeps the sound control (and its audio voice/cursor reset) working across 
   await expect(page.getByTestId('toggle-sound')).toBeVisible()
 })
 
-test('audio debug: triggers all nine cues via the dev-only ?audioDebug=1 panel without starting a bout', async ({ page }) => {
+test('audio debug: triggers all ten cues via the dev-only ?audioDebug=1 panel without starting a bout', async ({ page }) => {
   await page.goto('/?audioDebug=1&seed=20260815&snapshot')
   await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
@@ -945,6 +945,7 @@ test('audio debug: triggers all nine cues via the dev-only ?audioDebug=1 panel w
     'footstep-heavy',
     'weapon-whoosh-light',
     'weapon-whoosh-heavy',
+    'weapon-miss',
     'body-hit',
     'shield-block',
     'weapon-parry',
