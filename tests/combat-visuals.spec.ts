@@ -579,6 +579,31 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   // that dedupe -- assert the count.
   expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('shield-'))).toHaveLength(1)
 
+  // tick 430, the miss checkpoint (feedback spec §8.2): the bout's first
+  // `attack-missed` -- home.brutus at tick 429, reason `geometry` -- with the
+  // sand puff lit. The burst 255..430 also carries away.drusus's evade at 274
+  // and three body hits at 296/337/371, and under `advanceTicks`'s batch
+  // semantics every effect in the burst spawns at age 0 on the burst's last
+  // tick, so both `miss` slots (the evade's puff and the miss's puff) and
+  // both `body` slots (the 337 and 371 sprays) are live here. A miss and an
+  // evade spawn puffs and nothing else: the batch's three `damage-dealt` are
+  // the only events that spawn a spray, and the counts below pin that.
+  // (If a future kernel change moves the first miss, re-locate this
+  // checkpoint by the condition, like every other one in this file.)
+  await advanceToTick(page, 430, cursor)
+  const missEvents = await eventsAtTick(page, 429)
+  expect(missEvents).toContainEqual(expect.objectContaining({ type: 'attack-missed', actorId: 'home.brutus', reason: 'geometry' }))
+  const burstContactEvents = await page.evaluate(() => {
+    const battle = window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!
+    return battle.events.filter((event) => event.tick >= 255 && event.tick <= 430).map((event) => ({ type: event.type, tick: event.tick }))
+  })
+  expect(burstContactEvents.filter((event) => event.type === 'attack-evaded')).toEqual([{ type: 'attack-evaded', tick: 274 }])
+  expect(burstContactEvents.filter((event) => event.type === 'attack-missed')).toEqual([{ type: 'attack-missed', tick: 429 }])
+  expect(burstContactEvents.filter((event) => event.type === 'damage-dealt').map((event) => event.tick)).toEqual([296, 337, 371])
+  snapshot = await arenaSnapshot(page)
+  expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('miss-'))).toHaveLength(2)
+  expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('body-'))).toHaveLength(2)
+
   // tick 930: away.drusus's forced disengage (Fast's post-burst-lunge
   // recovery locomotion), stamped at 926 and still held here, four ticks in
   // -- it stays until drusus has opened the range back out to

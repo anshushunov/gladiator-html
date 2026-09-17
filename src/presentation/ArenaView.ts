@@ -20,6 +20,7 @@ import { FIGHTER_BONE_NAMES, type FighterBoneName } from './fighterModelContract
 import type { BattleState } from '../simulation/battle'
 import type { ContactZone } from '../simulation/combatActions'
 import type { CombatantId, EncounterEvent, FighterCombatState } from '../simulation/encounter'
+import type { Archetype } from '../simulation/fighters'
 import { normalizeVec2, TICKS_PER_SECOND, type Vec2 } from '../simulation/movement'
 
 /**
@@ -352,13 +353,13 @@ const TRAIL_COLOR = 0xf4ead7
 const MS_PER_TICK = 1000 / TICKS_PER_SECOND
 
 /**
- * A pooled contact effect's kind: today the three contact zones, each with
- * its own visual (blood spray, shield ring, weapon spark). The
- * `2026-09-17-feedback-design` spec §4.3 generalises the pool per kind so the
- * miss's sand puff can join as a fourth kind without a second pool.
+ * A pooled contact effect's kind: the three contact zones, each with its own
+ * visual (blood spray, shield ring, weapon spark), plus `miss` -- the sand
+ * puff on the ground where a swing that hit nothing ended
+ * (`2026-09-17-feedback-design` spec §4.3, §5). One pool, four kinds.
  */
-type FlashKind = ContactZone
-const FLASH_KINDS: readonly FlashKind[] = ['body', 'shield', 'weapon']
+type FlashKind = ContactZone | 'miss'
+const FLASH_KINDS: readonly FlashKind[] = ['body', 'shield', 'weapon', 'miss']
 const FLASH_SLOTS_PER_KIND = 2
 
 /**
@@ -370,15 +371,66 @@ const FLASH_SLOTS_PER_KIND = 2
  * 260 ms; the spray holds 420 ms (25.2 ticks) -- deliberately longer than the
  * fastest attack's 22-tick repeat, so one attacker landing twice overlaps his
  * own sprays by ~3 ticks, which the second slot absorbs (feedback spec §4.2).
+ * The puff lives 220 ms (13 ticks); a miss cannot repeat faster than the
+ * fastest attack either, so two slots cover it too (§5.3).
  */
-const FLASH_DURATION_MS: Readonly<Record<FlashKind, number>> = { body: 420, shield: 260, weapon: 260 }
+const FLASH_DURATION_MS: Readonly<Record<FlashKind, number>> = { body: 420, shield: 260, weapon: 260, miss: 220 }
 /** Peak opacity of the ring and the spark, which fade linearly from the first frame. */
 const FLASH_PEAK_OPACITY = 0.85
 
 /** design.md: "plus an authored height" -- presentation-only per-zone contact height, distinct from (and never derived from) any rig anchor's own rest-pose height. */
 const CONTACT_ZONE_HEIGHT: Readonly<Record<ContactZone, number>> = { body: 1.05, shield: 1.22, weapon: 1.30 }
-/** Dark arterial red for the spray, HUD gold for the ring, white for the spark: the three zones differ in shape *and* colour. */
-const FLASH_COLOR: Readonly<Record<FlashKind, number>> = { body: 0x8e1b21, shield: 0xe8c876, weapon: 0xe7ecf5 }
+/** The puff sits on the floor, just above it so it never z-fights the arena plane (feedback spec §5.2). */
+const MISS_PUFF_HEIGHT = 0.03
+/** Height each effect kind spawns at: the three contact zones' authored heights, and the floor for the puff. */
+const FLASH_HEIGHT: Readonly<Record<FlashKind, number>> = { ...CONTACT_ZONE_HEIGHT, miss: MISS_PUFF_HEIGHT }
+/** Dark arterial red for the spray, HUD gold for the ring, white for the spark, dry sand (lighter than the floor's 0x8a6845) for the puff: the four kinds differ in shape *and* colour. */
+const FLASH_COLOR: Readonly<Record<FlashKind, number>> = { body: 0x8e1b21, shield: 0xe8c876, weapon: 0xe7ecf5, miss: 0xd9c29a }
+
+// Sand puff (feedback spec §5). `attack-missed`/`attack-evaded` carry no
+// contact point, so the puff is placed from state: along the attacker's line
+// to his target, at the horizontal distance his weapon reaches on the strike
+// frame -- never further than the target himself, and never so close it sits
+// under the attacker's own feet.
+/** Peak opacity of the puff, which fades linearly from the first frame. */
+const MISS_PUFF_PEAK_OPACITY = 0.7
+/** How much the puff grows over its life: uniform scale 1 -> 2.4 (0.16 -> 0.38 outer radius, about 12 -> 29 px). */
+const MISS_PUFF_GROWTH = 1.4
+/** Subtracted from the root-to-root distance so the puff lands in front of the target rather than under him. */
+const MISS_REACH_TARGET_MARGIN = 0.25
+/** Floor on the puff's distance from the attacker: closer than this and it reads as his own footfall. */
+const MISS_REACH_MIN = 0.6
+/**
+ * The horizontal distance from the root at which each archetype's
+ * `weaponTip` sits on the strike frame of its attack clips, in world units
+ * (feedback spec §5.2): an authored presentation table, the same discipline
+ * as `CONTACT_ZONE_HEIGHT`, and the ceiling on how far from the attacker a
+ * puff can be placed.
+ *
+ * Measured 2026-09-17 on the shipped `.glb`s, in the browser, at the seed
+ * 20260815 bouts: a throwaway Playwright spec stepped bout 0 of the
+ * `brutus`, `nerva` and `aquila` lineups and bout 1 of the `brutus/aquila/
+ * nerva` lineup one tick at a time, and on every tick that opened an
+ * attack's `contact` phase (the strike frame: `clipMapping.attackTime` puts
+ * the clip at exactly `contactAt` there) rendered at alpha 0 and read
+ * `hypot(weaponTip.world - root.world)` off the rig through a temporary
+ * debug-snapshot field, keeping only ticks whose rendered clip was the
+ * attack's own (an attacker staggered on his own contact tick plays `Hit_A`
+ * instead). Every attack measured the same figure on every sample:
+ *
+ *   heavy-shield-jab 1.466 (n=10), heavy-cleave 0.625 (n=7);
+ *   fast-slash 1.251 (n=22), fast-burst-lunge 2.135 (n=26);
+ *   technical-thrust 2.500 (n=20), technical-driving-thrust 2.065 (n=11),
+ *   technical-parry-counter 2.541 (n=3).
+ *
+ * Per-archetype median across the archetype's attacks, rounded to 0.05:
+ * heavy 1.046 -> 1.05, fast 1.693 -> 1.70, technical 2.500 -> 2.50. The
+ * spec's starting values were { heavy: 1.15, fast: 1.85, technical: 1.75 };
+ * fast and technical were outside its 0.10 tolerance, so the measured
+ * figures are what ships. The heavy figure is low because the cleave's
+ * strike frame is an overhead chop with the tip high rather than far.
+ */
+const MISS_REACH: Readonly<Record<Archetype, number>> = { heavy: 1.05, fast: 1.7, technical: 2.5 }
 
 // Blood spray (feedback spec §4). Seven droplets authored in local space
 // along +Z, the spray axis; `spawn` orients that axis along the blow.
@@ -483,6 +535,8 @@ function buildContactFlashGeometry(kind: FlashKind): THREE.BufferGeometry {
       return new THREE.RingGeometry(0.09, 0.19, 16)
     case 'weapon':
       return new THREE.OctahedronGeometry(0.13, 0)
+    case 'miss':
+      return new THREE.RingGeometry(0.06, 0.16, 12)
   }
 }
 
@@ -516,7 +570,8 @@ interface FlashSpawnOptions {
  * from their peak, exactly as before; the spray shoots out along its axis
  * in the first ~120 ms and holds its length, drops 0.22 units under
  * gravity by the end, and holds full opacity for the first 45 % of its life
- * before fading.
+ * before fading. The puff grows outward on the floor with the same ease-out
+ * the spray shoots with, fading from the first frame (§5.3).
  */
 function animateFlash(kind: FlashKind, slot: FlashSlot, t: number): void {
   switch (kind) {
@@ -532,17 +587,23 @@ function animateFlash(kind: FlashKind, slot: FlashSlot, t: number): void {
     case 'weapon':
       slot.material.opacity = FLASH_PEAK_OPACITY * (1 - t)
       break
+    case 'miss': {
+      const spread = 1 + MISS_PUFF_GROWTH * (1 - (1 - t) * (1 - t))
+      slot.mesh.scale.set(spread, spread, spread)
+      slot.material.opacity = MISS_PUFF_PEAK_OPACITY * (1 - t)
+      break
+    }
   }
 }
 
 class ContactFlashEffects {
   private readonly geometries: THREE.BufferGeometry[] = []
   private readonly slotsByKind: Record<FlashKind, FlashSlot[]>
-  private readonly roundRobin: Record<FlashKind, number> = { body: 0, shield: 0, weapon: 0 }
+  private readonly roundRobin: Record<FlashKind, number> = { body: 0, shield: 0, weapon: 0, miss: 0 }
   private nextSerial = 0
 
   constructor(scene: THREE.Scene) {
-    this.slotsByKind = { body: [], shield: [], weapon: [] }
+    this.slotsByKind = { body: [], shield: [], weapon: [], miss: [] }
     for (const kind of FLASH_KINDS) {
       const geometry = buildContactFlashGeometry(kind)
       this.geometries.push(geometry)
@@ -557,6 +618,8 @@ class ContactFlashEffects {
         const mesh = new THREE.Mesh(geometry, material)
         mesh.visible = false
         mesh.frustumCulled = false
+        // The puff lies flat on the floor; `spawn` never rotates it (only the spray is turned, by `lookAt`).
+        if (kind === 'miss') mesh.rotation.x = -Math.PI / 2
         scene.add(mesh)
         this.slotsByKind[kind].push({ mesh, material, spawnedAtPresentationMs: 0, id: '', scaleBase: 1 })
       }
@@ -574,7 +637,7 @@ class ContactFlashEffects {
     const index = this.roundRobin[kind] % slots.length
     this.roundRobin[kind] += 1
     const slot = slots[index]
-    const height = CONTACT_ZONE_HEIGHT[kind]
+    const height = FLASH_HEIGHT[kind]
     slot.mesh.position.set(point.x, height, point.z)
     if (kind === 'body') {
       const direction = options.direction ?? SPRAY_FALLBACK_DIRECTION
@@ -645,6 +708,29 @@ function blowDirection(current: BattleState, actorId: CombatantId, targetId: Com
   const length = Math.hypot(dx, dz)
   if (length <= 1e-9) return { ...SPRAY_FALLBACK_DIRECTION }
   return { x: dx / length, z: dz / length }
+}
+
+/**
+ * Where a swing that hit nothing ended (feedback spec §5.2): along the
+ * attacker's line to his target, `clamp(distance - 0.25, 0.6, MISS_REACH[archetype])`
+ * out from his root -- the weapon's own reach on the strike frame, capped so
+ * the puff never lands under the target, floored so it never lands under the
+ * attacker. Read from the frame's state, which is the tick the batch was
+ * flushed on rather than the event's own tick (the accepted approximation of
+ * §5.2: a miss carries no contact point, and presentation keeps no position
+ * history). World +Z from the attacker when the two coincide; the floor
+ * distance ahead of him when the target is missing; the origin when the
+ * attacker himself is (the event always names a live combatant, so neither
+ * fallback is reachable from the kernel).
+ */
+function missPoint(current: BattleState, actorId: CombatantId, targetId: CombatantId): Vec2 {
+  const actor = current.encounter.combatants[actorId] as FighterCombatState | undefined
+  const target = current.encounter.combatants[targetId] as FighterCombatState | undefined
+  if (!actor) return { x: 0, z: 0 }
+  const towardTarget = blowDirection(current, actorId, targetId)
+  const distance = target ? Math.hypot(target.position.x - actor.position.x, target.position.z - actor.position.z) : 0
+  const reach = Math.min(Math.max(distance - MISS_REACH_TARGET_MARGIN, MISS_REACH_MIN), MISS_REACH[actor.definition.archetype])
+  return { x: actor.position.x + towardTarget.x * reach, z: actor.position.z + towardTarget.z * reach }
 }
 
 // ---------------------------------------------------------------------------
@@ -1073,6 +1159,12 @@ export class ArenaView {
           break
         case 'attack-parried':
           if (!reducedMotion) this.flashes.spawn('weapon', event.contactPoint, presentationMs)
+          break
+        case 'attack-missed':
+        case 'attack-evaded':
+          // Steel through air, from the attacker's side, whatever the reason:
+          // a sand puff where the swing ended (feedback spec §5).
+          if (!reducedMotion) this.flashes.spawn('miss', missPoint(current, event.actorId, event.targetId), presentationMs)
           break
         case 'critical-hit':
           criticalInstanceIds.add(event.actionInstanceId)
