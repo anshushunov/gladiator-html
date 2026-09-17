@@ -8,8 +8,9 @@ Contract (checked by src/presentation/fighterModelContract.test.ts):
          upperleg.r lowerleg.r foot.r            (all from the pack, untouched)
   empties weaponTip (child of handslot.r), shieldCenter (child of handslot.l),
          hitCenter (child of spine)
-  extras.slot on every mesh: body | helmet | weapon | shield | net
-  clips  the KEEP_CLIPS set below plus Spear_Drive on technical
+  extras.slot on every mesh: body | helmet | armour | weapon | shield | net
+  clips  the KEEP_CLIPS set below plus each archetype's authored `clips`
+         (Spear_Drive on technical)
 
 The shipped .glb files are generated only by this script -- never hand-edited.
 Re-runnable from a clean state: every archetype starts from an empty scene.
@@ -40,17 +41,27 @@ KEEP_CLIPS = {
 }
 AUTHORED_CLIP = 'Spear_Drive'
 
-# archetype -> (source character, kept pack meshes -> slot, props to build)
+# archetype -> source character, optional donor (a second pack file whose named
+# meshes are transplanted onto the source's identical skeleton, mesh -> slot),
+# the pack meshes that place the anchors (`weapon_reference` is also the axis
+# a built shaft weapon runs along; `shield_reference` None means the built
+# offhand prop defines `shieldCenter`), the props to build, the clips authored
+# here. References are per archetype, not per source file: `heavy` measures
+# its anchors off the transplanted Knight props.
 BUILDS = {
     'heavy': {
-        'source': 'Knight.glb',
-        'keep': {'1H_Sword': 'weapon', 'Rectangle_Shield': 'shield', 'Knight_Helmet': 'helmet'},
-        'build': [],
+        # A murmillo is a Barbarian body (tunic, belt, fur kilt) under a
+        # script-built galea, manica and greave, holding the Knight's sword and
+        # scutum. The Knight's plate read as a knight, not a gladiator.
+        'source': 'Barbarian.glb',
+        'donor': ('Knight.glb', {'1H_Sword': 'weapon', 'Rectangle_Shield': 'shield'}),
+        'weapon_reference': '1H_Sword', 'shield_reference': 'Rectangle_Shield',
+        'build': ['galea', 'manica', 'greave'], 'clips': [],
     },
     'fast': {
-        'source': 'Barbarian.glb',
-        'keep': {},  # a retiarius fights bare-headed: trident and net, no helmet
-        'build': ['trident', 'net'],
+        'source': 'Barbarian.glb',  # a retiarius fights bare-headed: trident and net, no helmet
+        'weapon_reference': '1H_Axe', 'shield_reference': None,
+        'build': ['trident', 'net'], 'clips': [],
     },
     'technical': {
         'source': 'Rogue.glb',
@@ -58,14 +69,10 @@ BUILDS = {
         # Knight.glb -- the Rogue pack ships no shield at all. Rather than drag
         # a second 1024x1024 atlas into the file, the buckler is built here,
         # like the trident/spear/net.
-        'keep': {},
-        'build': ['spear', 'buckler'],
+        'weapon_reference': 'Knife', 'shield_reference': None,
+        'build': ['spear', 'buckler'], 'clips': [AUTHORED_CLIP],
     },
 }
-
-# Pack meshes that serve as the placement reference for built props.
-WEAPON_REFERENCE = {'Knight.glb': '1H_Sword', 'Barbarian.glb': '1H_Axe', 'Rogue.glb': 'Knife'}
-SHIELD_REFERENCE = {'Knight.glb': 'Rectangle_Shield', 'Barbarian.glb': 'Barbarian_Round_Shield', 'Rogue.glb': 'Knife_Offhand'}
 
 WEAPON_BONE = 'handslot.r'
 SHIELD_BONE = 'handslot.l'
@@ -114,8 +121,8 @@ def delete_object(obj):
     bpy.data.objects.remove(obj, do_unlink=True)
 
 
-def prune_clips(arm):
-    keep = KEEP_CLIPS | {AUTHORED_CLIP}
+def prune_clips(arm, authored):
+    keep = KEEP_CLIPS | set(authored)
     if arm.animation_data:
         for track in list(arm.animation_data.nla_tracks):
             names = {s.action.name for s in track.strips if s.action}
@@ -240,6 +247,15 @@ def weapon_axis(reference, arm):
         end[axis] = value
         ends.append(end)
     butt, tip = sorted(ends, key=lambda p: (p - hand).length)
+    # Sanity: the tip must point away from the man. Sorting by distance from
+    # the hand alone would happily call the near end of a weapon whose bbox
+    # straddles the fist "the butt" and aim the shaft (and `weaponTip`) back
+    # into the fighter's own chest.
+    spine = bone_head(arm, 'spine')
+    if (tip - spine).length <= (butt - spine).length:
+        raise RuntimeError(
+            f'weapon_axis({reference.name}): tip {tuple(round(v, 3) for v in tip)} is not farther '
+            f'from spine than butt {tuple(round(v, 3) for v in butt)} -- the axis points into the body')
     return butt, tip, (tip - butt).normalized()
 
 
@@ -324,6 +340,122 @@ def build_buckler(arm):
     return build_offhand_disc('buckler', arm, board, 'shield', radius=0.34, depth=0.06, vertices=16)
 
 
+def transplant_donor(arm, donor_file, meshes):
+    """Import `donor_file` into the scene and move the named meshes (name -> slot)
+    onto `arm`, at the world placement they had on the donor's skeleton.
+
+    The three packs share one skeleton (bone for bone, head and tail), so a prop
+    that hung off the donor's `handslot.r` hangs off ours at the same place.
+    Everything else the second import added -- armature, body meshes, the other
+    props, helper empties -- is deleted; its actions come in suffixed
+    (`Idle.001`, ...) and fall to `prune_clips`. The transplanted meshes keep
+    the donor's material and atlas.
+    """
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=os.path.join(SRC, donor_file))
+    added = [o for o in bpy.data.objects if o not in before]
+    donor_arm = next(o for o in added if o.type == 'ARMATURE')
+    donor_arm.data.pose_position = 'REST'
+    sync()
+
+    kept = {}
+    for obj in added:
+        if obj.name not in meshes:
+            continue
+        if obj.parent is not donor_arm or obj.parent_type != 'BONE':
+            raise RuntimeError(f'transplant_donor: {obj.name} in {donor_file} is not bone-parented')
+        parent_to_bone(obj, arm, obj.parent_bone, obj.matrix_world.copy())
+        obj['slot'] = meshes[obj.name]
+        kept[obj.name] = obj
+    missing = set(meshes) - set(kept)
+    if missing:
+        raise RuntimeError(f'transplant_donor: {donor_file} has no {sorted(missing)}')
+
+    # Meshes first, the armature last: an armature deleted under a still-parented
+    # mesh leaves that mesh's transform to whatever Blender salvages.
+    for obj in sorted(added, key=lambda o: o.type == 'ARMATURE'):
+        if obj.name not in kept:
+            delete_object(obj)
+    sync()
+    return kept
+
+
+def bone_axis(arm, bone_name):
+    """(head, tail, unit direction head -> tail) of a bone in world space."""
+    head, tail = bone_head(arm, bone_name), bone_tail(arm, bone_name)
+    return head, tail, (tail - head).normalized()
+
+
+def build_sleeve(name, arm, bone_name, material, slot, radius, depth, along=None):
+    """A rigid cylinder on a bone, axis along the bone, centred at the bone's
+    midpoint -- or `along` source units past its head when given."""
+    head, tail, direction = bone_axis(arm, bone_name)
+    centre = (head + tail) / 2 if along is None else head + direction * along
+    sleeve = new_mesh_object(name, bpy.ops.mesh.primitive_cylinder_add, material, slot,
+                             radius=radius, depth=depth, vertices=12)
+    parent_to_bone(sleeve, arm, bone_name, Matrix.Translation(centre) @ aim(direction))
+    return sleeve
+
+
+def build_galea(arm, head_mesh):
+    """The murmillo's crested, brimmed helmet: a bronze dome under a cone cap on a
+    wide brim, a dark comb on top. Four pieces on `head`, all slot `helmet`.
+
+    Sizes and placements are off the Barbarian head's measured bounds in the
+    bind pose (`crown` is read here, not hard-coded, so the helmet sits on
+    whatever head the pack ships). Source units, z up; the head faces -Y, so
+    the small -Y offsets pull the helmet a touch over the face. The dome's 0.62
+    radius holds the head's rounded blob (its box half-diagonal is 0.73, but
+    the mesh is not a box); the 1.72 brim is the murmillo's signature at any
+    distance, wider than the torso, as the Pompeii helmets are.
+
+    Returns the shared bronze material so the manica and greave use the same
+    one: `solid_material` makes a new material per call, and the file is meant
+    to carry exactly four (body atlas, knight_texture, kit_bronze, galea_crest).
+    """
+    _lo, hi = world_bounds(head_mesh)
+    crown = hi.z
+    log('galea crown (max z of', head_mesh.name, 'in the bind pose)', round(crown, 4))
+    bronze = solid_material('kit_bronze', (0.72, 0.50, 0.20, 1))
+    # Dark, not red or blue: the HUD already owns those, and the crest is the
+    # one part of him that sits against open floor.
+    crest_material = solid_material('galea_crest', (0.12, 0.10, 0.09, 1))
+
+    dome = new_mesh_object('galea_dome', bpy.ops.mesh.primitive_cylinder_add, bronze, 'helmet',
+                           radius=0.62, depth=0.47, vertices=16)
+    parent_to_bone(dome, arm, 'head', Matrix.Translation((0, -0.03, crown - 0.12)))
+    cap = new_mesh_object('galea_cap', bpy.ops.mesh.primitive_cone_add, bronze, 'helmet',
+                          radius1=0.62, radius2=0.30, depth=0.22, vertices=16)
+    parent_to_bone(cap, arm, 'head', Matrix.Translation((0, -0.03, crown + 0.23)))
+    brim = new_mesh_object('galea_brim', bpy.ops.mesh.primitive_cylinder_add, bronze, 'helmet',
+                           radius=0.86, depth=0.05, vertices=16)
+    parent_to_bone(brim, arm, 'head', Matrix.Translation((0, -0.06, crown - 0.34)))
+    crest = new_mesh_object('galea_crest', bpy.ops.mesh.primitive_cube_add, crest_material, 'helmet',
+                            size=1)
+    parent_to_bone(crest, arm, 'head',
+                   Matrix.Translation((0, -0.05, crown + 0.36)) @ Matrix.Diagonal((0.07, 0.72, 0.26, 1)))
+    return bronze
+
+
+def build_manica(arm, bronze):
+    """Two rigid bronze sleeves on the sword arm, one per bone, so the manica
+    bends at the elbow like the arm does (the inside of the bend intersects,
+    the outside opens; invisible at this size -- laminated rings would need
+    sub-pixel gaps). Radius 0.20 clears the arm mesh's box corners (0.19); the
+    lower sleeve, 0.20 on a 0.26 bone, stops 0.03 short of the wrist so it does
+    not fight the Barbarian's own bracer."""
+    upper = build_sleeve('manica_upper', arm, 'upperarm.r', bronze, 'armour', radius=0.20, depth=0.20)
+    lower = build_sleeve('manica_lower', arm, 'lowerarm.r', bronze, 'armour', radius=0.185, depth=0.20)
+    return upper, lower
+
+
+def build_greave(arm, bronze):
+    """One bronze greave on the left (leading) leg, `lowerleg.l`, running from
+    just above the boot to over the knee: the lower leg is 0.149 long with a
+    boot below it, and a band on the shin alone is invisible."""
+    return build_sleeve('greave', arm, 'lowerleg.l', bronze, 'armour', radius=0.175, depth=0.24, along=0.01)
+
+
 def author_spear_drive(arm):
     """The one clip authored here rather than taken from the pack: a lunge with
     the spear driven forward. Frames at 24 fps; strike at frame 15 of 30 (50%)."""
@@ -378,30 +510,38 @@ def build_archetype(archetype, spec):
     height = standing_height()
     log(archetype, 'imported', spec['source'], 'bind-pose height', round(height, 4))
 
-    weapon_ref = bpy.data.objects[WEAPON_REFERENCE[spec['source']]]
-    shield_ref = bpy.data.objects[SHIELD_REFERENCE[spec['source']]]
+    # Tag body parts before anything is deleted or added: a donor's skinned
+    # meshes carry armature modifiers too and must not be mistaken for ours.
+    body_parts = {obj.name: obj for obj in all_mesh_objects() if is_body_part(obj)}
+    for obj in body_parts.values():
+        obj['slot'] = 'body'
 
-    # Tag body parts before anything is deleted or added.
-    for obj in all_mesh_objects():
-        if is_body_part(obj):
-            obj['slot'] = 'body'
+    kept = transplant_donor(arm, *spec['donor']) if 'donor' in spec else {}
+
+    weapon_ref = bpy.data.objects[spec['weapon_reference']]
+    shield_ref = bpy.data.objects[spec['shield_reference']] if spec['shield_reference'] else None
 
     # Anchor positions read off the reference props while they still exist.
     _butt, weapon_tip, _dir = weapon_axis(weapon_ref, arm)
-    shield_centre = world_centre(shield_ref)
+    shield_centre = world_centre(shield_ref) if shield_ref else None
 
-    keep = spec['keep']
-    referenced = {weapon_ref.name, shield_ref.name}
+    referenced = {o.name for o in (weapon_ref, shield_ref) if o is not None}
     for obj in list(all_mesh_objects()):
-        if is_body_part(obj):
+        if obj.name in body_parts or obj.name in kept:
             continue
-        if obj.name in keep:
-            obj['slot'] = keep[obj.name]
-        elif obj.name in referenced and spec['build']:
+        if obj.name in referenced and spec['build']:
             continue  # still needed as a placement reference; deleted below
-        else:
-            delete_object(obj)
+        delete_object(obj)
 
+    if 'galea' in spec['build']:
+        head_mesh = next(o for o in body_parts.values() if o.name.endswith('_Head'))
+        bronze = build_galea(arm, head_mesh)
+        if 'manica' in spec['build']:
+            build_manica(arm, bronze)
+        if 'greave' in spec['build']:
+            build_greave(arm, bronze)
+    elif 'manica' in spec['build'] or 'greave' in spec['build']:
+        raise RuntimeError(f'{archetype}: manica/greave share the galea\'s bronze; build the galea too')
     if 'trident' in spec['build']:
         _, weapon_tip = build_shaft_weapon('trident', weapon_ref, arm, length=1.6, radius=0.03,
                                            tip_builder=trident_tip)
@@ -413,9 +553,11 @@ def build_archetype(archetype, spec):
     if 'buckler' in spec['build']:
         shield_centre = world_centre(build_buckler(arm))
 
-    for obj in (weapon_ref, shield_ref):
-        if obj.name not in keep and obj.name in bpy.data.objects:
-            delete_object(obj)
+    for name in referenced:
+        if name not in kept and name in bpy.data.objects:
+            delete_object(bpy.data.objects[name])
+    if shield_centre is None:
+        raise RuntimeError(f'{archetype}: no shield reference and no built offhand prop to anchor shieldCenter')
 
     add_empty('weaponTip', arm, WEAPON_BONE, weapon_tip)
     add_empty('shieldCenter', arm, SHIELD_BONE, shield_centre)
@@ -425,10 +567,10 @@ def build_archetype(archetype, spec):
         'shieldCenter', tuple(round(v, 3) for v in shield_centre),
         'hitCenter', tuple(round(v, 3) for v in bone_tail(arm, 'spine')))
 
-    if archetype == 'technical':
+    if AUTHORED_CLIP in spec['clips']:
         author_spear_drive(arm)
 
-    prune_clips(arm)
+    prune_clips(arm, spec['clips'])
 
     scale = TARGET_HEIGHT / height
     arm.scale = (scale, scale, scale)
