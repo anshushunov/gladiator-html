@@ -119,8 +119,9 @@ guard keys `(0, 0, 0)` on six bones are the pack's *T-pose*, so the clip
 starts and ends with the arms out sideways. Both are authoring errors, not
 tuning.
 
-**Barbarian body** (bind pose): height 2.186 → rig scale `2.0 / 2.186 =
-0.9149`. Head mesh x ±0.543, y −0.526..0.460, z 1.135..**2.186** (crown).
+**Barbarian body** (bind pose): height 2.1863 → rig scale `2.0 / 2.1863 =
+0.9148` (the build log's printed value; the first draft of this document
+quoted 0.9149 from the height rounded to 2.186). Head mesh x ±0.543, y −0.526..0.460, z 1.135..**2.186** (crown).
 Right arm mesh cross-section ≈ 0.26 × 0.27 (box corners at 0.19 from the bone).
 Left leg mesh x 0.049..0.288, z 0..0.529 (boot included). The rendered
 Barbarian wears a blue sleeveless tunic, **a brown belt with a round buckle,
@@ -176,7 +177,7 @@ armature, six body meshes, cape, helmet, the other shields and swords, the
 `knight_texture`** (14 KB); the painted sword and the shield's emblem are worth
 that.
 
-**Rig scale** becomes `2.0 / 2.186 = 0.9149` (it was 0.8641 on the Knight);
+**Rig scale** becomes `2.0 / 2.1863 = 0.9148` (it was 0.8641 on the Knight);
 the measured bind-pose body box is 1.83 world units instead of 1.73, the same
 as the other two rigs.
 
@@ -251,7 +252,8 @@ tail (y = 0.89 on the Barbarian body — `inspect-glb` on the shipped `fast.glb`
 same skeleton, same scale — where the Knight's was 0.84).
 
 **Radius.** The sword tip is the farthest point in the rest pose, as it is
-today: `1.836 × 0.9149 ≈ 1.680` (was 1.5861850532796753). Below `fast`'s
+today: `1.836 × 0.9148 ≈ 1.680` (was 1.5861850532796753; the browser measured
+1.679186605264372 in task 3). Below `fast`'s
 1.772876372587171, so `WIDEST_EQUIPMENT_RADIUS` does not move in PR-1; only
 `RIG_EQUIPMENT_RADIUS.heavy`, `BAND_LOW` (`0.9 + 2 × heavy × 1.1 ≈ 4.595`)
 and trace 01 do (§5.1). The exact value is read from
@@ -360,7 +362,7 @@ Measured on the shipped `technical.glb` with the mid-grip projection applied,
 not deltas — including `hips:loc`. That one is Blender's pose-bone `location`:
 the offset of the bone's head from its bind position, **in the bone's own
 local frame and in scene (source) units** — for `hips` (§3) x = +X, y = along
-the bone = up, z = forward; the 0.9149 rig scale turns 0.01 of it into 0.009
+the bone = up, z = forward; the 0.9148 rig scale turns 0.01 of it into 0.009
 world, which is the ratio the measurement below quotes. `Idle` frame 0 keys
 `hips.location = (0, −0.0136, 0)` (measured on `Rogue.glb`: the pelvis sits
 1.4 cm below bind in the pack's idle), so the strike's absolute `(0, 0, 0.12)`
@@ -544,7 +546,7 @@ own small change.
 | `src/presentation/ArenaCamera.test.ts` | `RIG_EQUIPMENT_RADIUS.heavy` (PR-1) and `.technical` (PR-2) to the browser-measured values; `BAND_LOW` recomputed (PR-1). **`BAND_HIGH` stays `7.531226122787968`**: it is the flat region's edge, which §4.2.6 keeps; its comment is rewritten to say the widest *band* edge is now `3.1 + 2 × 1.772876372587171 × 1.1 = 7.000328019691777` and sits 0.53 inside the flat region by the floor. **The dead-zone straddle literals `insideDeadZone = 0.89` / `outsideDeadZone = 0.91` (lines 425/441) and the `0.12 × 7.531226122787968 = 0.9037` comment therefore do not move**; an implementer who "refreshes" them to 0.84 has moved the wrong constant. **Add** one case under "framing distance over real bouts": `extentToDistance(3.1 + 2.2 × max(RIG_EQUIPMENT_RADIUS))` equals `FLAT_DISTANCE` — the fast-suite mirror of the slow pin, so a stale floor or a rig that grows past it fails in `npm test`, not twelve minutes later | mirrors of MEASURED constants; the flat edge is VALIDATED (§4.2.6) |
 | `src/testSupport/frozenFixtures/cameraTraces.ts` | re-record `openingDistance` and `crossings` for trace 01 (PR-1: heavy radius; replay predicts 15.4353 → ≈ 15.6175, crossings 1 → 1) and for trace 07 only (PR-2: technical radius; 16.2333 → ≈ 15.373, crossings 1 → 1). Traces 04 (PR-1, PR-2) and 01 (PR-2) are predicted not to move; if they do, something other than the radius changed. **`ticks` must not move** (1827 / 1705 / 1261); if one does, stop — the simulation changed. Reason stated in the commit, per the file's own rule; the history comment records the zoom-rate margin (4.197 against 5, unchanged) | the recorded class distinction |
 | `src/presentation/ArenaCamera.ts` | PR-2: `WIDEST_EQUIPMENT_RADIUS = 1.772876372587171` with the history comment extended; **`FLAT_REGION_EDGE_FLOOR_EXTENT` and `FLAT_REGION_EDGE_EXTENT` added** and `extentToDistance` switched to the latter (§4.2.6). Nothing else | MEASURED, plus one VALIDATED floor; the SWEPT pair untouched |
-| `src/presentation/ArenaView.ts` | `BODY_SILHOUETTE_SLOTS` + `'armour'`; the rig-scale comment (0.8641 heavy → 0.9149; "about 1.73 for the murmillo" → 1.83) | slot partition; stale numbers |
+| `src/presentation/ArenaView.ts` | `BODY_SILHOUETTE_SLOTS` + `'armour'`; the rig-scale comment (0.8641 heavy → 0.9148; "about 1.73 for the murmillo" → 1.83) | slot partition; stale numbers |
 
 ### 5.2 e2e (fast, `npm run test:e2e`)
 

@@ -105,6 +105,20 @@ Archetype mapping:
 | `fast`      | Barbarian | trident (built)      | net (built)        | —         |
 | `technical` | Rogue     | spear (built)        | buckler (built)    | —         |
 
+**Superseded for `heavy`, 2026-09-17, by
+`docs/superpowers/specs/2026-09-17-kit-design.md` §4.1 and §4.3.** The
+murmillo is no longer the Knight: he is built from `Barbarian.glb`, with the
+Knight's `1H_Sword` and `Rectangle_Shield` transplanted onto the identical
+skeleton (`Knight.glb` imported as a donor, the two meshes re-parented to
+`handslot.r` / `handslot.l`, everything else the import added deleted) and a
+script-built bronze kit: a galea of four primitives on `head` (slot `helmet`),
+a manica of two rigid sleeves on `upperarm.r` / `lowerarm.r` and one greave on
+`lowerleg.l` (a new slot, `armour`, which step 5's list therefore gains and
+`ArenaView` counts as worn). `fast` and `technical` are as tabled. The
+references in step 2–3 (`WEAPON_REFERENCE` / `SHIELD_REFERENCE` per source
+file) became per-archetype entries in `BUILDS` in the same change, closing
+the §10 "phantom `SHIELD_REFERENCE`" item.
+
 The three characters already differ in build and texture, which is what the
 2026-08-23 legibility playtest asked for; house colours stay in the HUD.
 
@@ -348,13 +362,16 @@ Lost, knowingly:
 neither factor is the drawn thing. The geometry box is the **bind pose** —
 skinning runs in the vertex shader off the skeleton's bone matrices, which no
 `Object3D` transform above the mesh reflects — and `matrixWorld` still carries
-the `Rig` node's armature scale (0.8641 heavy, 0.9148 fast, 0.9145 technical),
-which at draw time is cancelled by `SkinnedMesh`'s default `AttachedBindMode`
-(it re-derives `bindMatrixInverse` from `matrixWorld` every frame) but is not
-cancelled by a measurement that stops at the multiply. Measured on the shipped
-files: the drawn standing body is 2.000 units, the projected box is 1.728 /
-1.830 / 1.829. Bone-parented props — spear, trident, net, both shields, the
-helmet — are ordinary meshes under a bone and do track the drawn pose exactly.
+the `Rig` node's armature scale (0.9148 heavy and fast — both the Barbarian
+body since 2026-09-17; the Knight-bodied murmillo was 0.8641 — 0.9145
+technical; the values the build log prints, to four decimals), which at draw
+time is cancelled by `SkinnedMesh`'s default `AttachedBindMode` (it re-derives
+`bindMatrixInverse` from `matrixWorld` every frame) but is not cancelled by a
+measurement that stops at the multiply. Measured on the shipped files: the
+drawn standing body is 2.000 units, the projected box is 1.830 / 1.830 / 1.829
+(it was 1.728 for the Knight-bodied murmillo). Bone-parented props — spear,
+trident, net, both shields, the helmet, the murmillo's manica and greave — are
+ordinary meshes under a bone and do track the drawn pose exactly.
 
 So **the 130 px floor and the 5 % safe-area inset are stated over the
 bind-pose body box, scaled by the rig node and carried by the live root
