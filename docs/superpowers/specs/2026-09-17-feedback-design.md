@@ -1,6 +1,6 @@
 # Hit and miss feedback — Design
 
-**Status:** proposed, 2026-09-17. Item 3 of the 2026-09-05 playtest's "Proposed
+**Status:** as built, 2026-09-17 (proposed the same day). Item 3 of the 2026-09-05 playtest's "Proposed
 next slice" (`docs/reviews/2026-09-05-skinned-gladiators-playtest.md`, Finding 3).
 Branch `feature/hit-miss-feedback`.
 
@@ -240,6 +240,10 @@ units), and it does not need to know *why* the miss happened.
   archetype's attacks, rounds to 0.05, and writes the measured values into
   the table with the measurement in the commit message. The starting values
   are what ships only if the measurement is within 0.10 of them.
+  *As built:* the measurement (task 3, `eb573eb`) gave `{ heavy: 1.05,
+  fast: 1.70, technical: 2.50 }` — fast (−0.15) and technical (+0.75) were
+  outside the tolerance, so the measured values ship; the per-clip figures
+  are in the `MISS_REACH` doc comment.
 
   Not `weaponTip`'s live world position: `processNewEvents` runs before this
   frame's clip is applied, and after an `advanceTicks` burst the last drawn
