@@ -880,6 +880,39 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
  */
 const CAMERA_SETTLE_SECONDS = 4
 
+/** Ticks of per-tick stepping before a capture: longer than the longest effect life (a number, 54 ticks), so nothing from the burst before it is still alive at the capture tick. */
+const EFFECT_WINDOW_TICKS = 60
+
+/**
+ * Reaches `tick` the way a player's frame does, not the way a burst does.
+ *
+ * `advanceTicks(n)` steps the kernel `n` times and renders ONCE, handing every
+ * event of the burst to `ArenaView.sync` as one batch stamped at the burst's
+ * last tick -- so a single `advanceTicks(913)` would draw every effect of the
+ * bout so far at age 0 on the capture tick (six full-opacity numbers, two
+ * sprays and two puffs at `technical-parry`), a frame no player can ever see
+ * and useless as a baseline of "what x1 looks like". So: one burst to
+ * `tick - 60` (everything in it is stamped there and dead by `tick`, since 60
+ * exceeds every effect life: 54 > 25.2 > 13 ticks), then sixty single-tick
+ * calls in the same `page.evaluate`, so every effect from the last sixty ticks
+ * is stamped at its own tick and drawn at its true x1 age. The simulation
+ * state at `tick` is identical either way (the kernel does not know about
+ * batches), `?snapshot` keeps the runtime paused so no camera time passes
+ * during the single ticks, and `captureFrame`'s settle and alpha-1 render are
+ * unchanged -- the capture stays a pure function of the tick count. Feedback
+ * spec §8.3.
+ */
+async function advanceToCaptureTick(page: Page, tick: number): Promise<void> {
+  await page.evaluate(
+    ([target, windowTicks]) => {
+      const burst = Math.max(0, target - windowTicks)
+      window.__GLADIATOR_TEST__.advanceTicks(burst)
+      for (let step = burst; step < target; step += 1) window.__GLADIATOR_TEST__.advanceTicks(1)
+    },
+    [tick, EFFECT_WINDOW_TICKS] as const,
+  )
+}
+
 async function captureFrame(page: Page, name: string): Promise<void> {
   const debugState = await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState())
   expect(debugState.paused).toBe(true)
@@ -896,7 +929,11 @@ test('key pose: heavy cleave windup', async ({ page }) => {
   // `heavy-guard` reaction (at the old tick 253 home.brutus is now mid-GUARD,
   // not mid-cleave, which is why this pose is re-located by its condition and
   // not by its number).
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(420))
+  //
+  // Effects in the window (360, 420]: the t=371 body hit (19) -- its number 49
+  // ticks old (t = 0.91: opacity ~0.20, risen ~38 px), its spray dead (49 >
+  // 25.2). So: one faint number over home.brutus, no spray, no puff.
+  await advanceToCaptureTick(page, 420)
   await captureFrame(page, 'heavy-cleave.png')
 })
 
@@ -909,7 +946,12 @@ test('key pose: fast burst-lunge windup', async ({ page }) => {
   // clash) -- from the same bout Step 2 freezes above, picked for a clearer,
   // less cluttered silhouette. The old tick 817 no longer sits inside any
   // lunge windup at all; this one is re-located by the condition.
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(890))
+  //
+  // Effects in the window (830, 890]: the t=834 body hit (19) -- number 56
+  // ticks old, dead (56 > 54), spray dead; the evade at 872 -- puff 18 ticks
+  // old, dead (18 > 13.2). Nothing visible: the clean windup silhouette this
+  // fixture was chosen for.
+  await advanceToCaptureTick(page, 890)
   await captureFrame(page, 'fast-burst.png')
 })
 
@@ -918,8 +960,13 @@ test('key pose: technical parry contact', async ({ page }) => {
   // Same re-pointing as the checkpoint test above: the parry this pose exists
   // to show no longer happens in `nerva vs drusus`. Tick 913 of
   // `nerva vs cassius` is the parry's own contact tick.
+  //
+  // Effects in the window (853, 913]: the weapon spark at age 0 only. The last
+  // `damage-dealt` (844) is 69 ticks old and outside the window, so no number
+  // and no spray; a number here means the helper stopped stepping per tick or
+  // a number life longer than `DAMAGE_NUMBER_LIFE_MS`, never the pairing.
   await startBoutOneWith(page, ['brutus', 'nerva', 'aquila'])
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(913))
+  await advanceToCaptureTick(page, 913)
   await captureFrame(page, 'technical-parry.png')
 })
 
@@ -933,13 +980,20 @@ test('combat outcomes: defeat', async ({ page }) => {
   // "combat outcome" a player sees here genuinely includes the between-
   // bouts result panel -- this is the actual, deterministic post-defeat UI,
   // not an unrelated interstitial riding along.
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(1827))
+  //
+  // Effects in the window (1767, 1827]: the killing blow's spray at age 0
+  // (scale 0.45, opacity 0.92) and its number, 63 (body), over away.drusus at
+  // age 0 -- the same 63 the feed's last "deals N" line shows in this frame.
+  // The miss at 1771 is 56 ticks old, its puff dead.
+  await advanceToCaptureTick(page, 1827)
   await captureFrame(page, 'combat-outcomes.png')
 })
 
 test('a complete safe two-fighter frame', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   await startBoutZeroWith(page, 'brutus')
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))
+  // Bout 0's first contact event is at 231, so the window (0, 60] is empty:
+  // any effect or digit in this frame is a bug.
+  await advanceToCaptureTick(page, 60)
   await captureFrame(page, 'combat-safe-frame.png')
 })
