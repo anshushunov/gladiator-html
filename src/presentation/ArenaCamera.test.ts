@@ -30,17 +30,32 @@ const MAX_DISTANCE = 18
 
 /**
  * The tactical band in group-extent terms, re-measured off the skinned models
- * (Task 7, then Task 7b's 2.0-unit standing height, then the murmillo kit; see
- * `RIG_EQUIPMENT_RADIUS` below). `BAND_LOW` is the narrowest pairing (murmillo
- * vs murmillo): `0.9 + 2 x 1.679186605264372 x 1.1` (was `0.9 + 2 x
- * 1.5861850532796753 x 1.1 = 4.389607117215286` on the Knight-bodied murmillo).
- * `BAND_HIGH` is the widest (hoplomachus vs hoplomachus): `3.1 + 2 x
- * 2.0141936921763492 x 1.1`, which is where the flat region has to end for the
- * band to be flat for every pairing -- it mirrors `ArenaCamera.ts`'s own
- * `BAND_HIGH_EXTENT`, whose `WIDEST_EQUIPMENT_RADIUS` moved with the same
- * measurement. The murmillo kit did not move it: the spear is still the widest.
+ * (Task 7, then Task 7b's 2.0-unit standing height, then the murmillo kit, then
+ * the spear re-grip; see `RIG_EQUIPMENT_RADIUS` below). `BAND_LOW` is the
+ * narrowest pairing, which since the spear re-grip is hoplomachus vs
+ * hoplomachus: `0.9 + 2 x 1.5538668786061813 x 1.1` (was the murmillo pairing's
+ * `0.9 + 2 x 1.679186605264372 x 1.1 = 4.594210531581619`, and before that
+ * `0.9 + 2 x 1.5861850532796753 x 1.1 = 4.389607117215286` on the Knight-bodied
+ * murmillo).
+ *
+ * `BAND_HIGH` is where the flat region ENDS -- it mirrors `ArenaCamera.ts`'s
+ * `FLAT_REGION_EDGE_EXTENT`, not its `BAND_HIGH_EXTENT`. Until the spear
+ * re-grip the two were the same number: the widest pairing was hoplomachus vs
+ * hoplomachus at `3.1 + 2 x 2.0141936921763492 x 1.1 = 7.531226122787968`, and
+ * the flat region ended exactly there. The re-grip made the retiarius the widest
+ * rig, so the widest *band* edge is now retiarius vs retiarius at `3.1 + 2 x
+ * 1.772876372587171 x 1.1 = 7.000328019691777` -- and the flat region did NOT
+ * follow it down: `ArenaCamera.ts` keeps the edge at 7.531226122787968 through
+ * `FLAT_REGION_EDGE_FLOOR_EXTENT` (the 2026-09-17 kit spec, section 4.2.6:
+ * ending the flat region at that pairing's own band edge gave trace 04 four
+ * direction reversals against the ceiling of 2 below). So the widest band edge
+ * sits 0.53 inside the flat region by the floor, this literal stays where it
+ * was, and every literal derived from it -- the `0.89`/`0.91` dead-zone
+ * straddle below, `0.12 x 7.531226122787968 = 0.9037` -- stays with it. The
+ * `frames the widest pairing's whole band` case at the bottom of this file is
+ * what pins the inequality.
  */
-const BAND_LOW = 4.594210531581619
+const BAND_LOW = 4.3185071329336
 const BAND_HIGH = 7.531226122787968
 
 /**
@@ -81,7 +96,12 @@ const MAX_ZOOM_UNITS_PER_SECOND = 5
  * scale 0.8641 became the Barbarian body at 0.9148, and the farthest rest-pose
  * point is still the transplanted sword's tip, so the radius grew with the
  * scale. `fast` and `technical` were re-read in the same browser pass and came
- * back bit-identical. Written out so the real-bout replay
+ * back bit-identical. The same spec's PR-2 then moved `technical` a third time,
+ * 2.0141936921763492 -> 1.5538668786061813: the spear is gripped 0.8 source
+ * units up the shaft instead of at the butt, so its rest-pose tip sits 1.30
+ * world units ahead of the hand instead of 1.83, and the hoplomachus went from
+ * the widest rig to the narrowest (`heavy` and `fast` re-read bit-identical in
+ * that pass). Written out so the real-bout replay
  * at the bottom of this file frames with the widths the shipping camera
  * actually sees: with a placeholder radius the group extent is wrong by up to
  * 1.5 world units, which is twice the framing dead zone at the band edge and
@@ -94,7 +114,7 @@ const MAX_ZOOM_UNITS_PER_SECOND = 5
 const RIG_EQUIPMENT_RADIUS: Readonly<Record<Archetype, number>> = {
   heavy: 1.679186605264372,
   fast: 1.772876372587171,
-  technical: 2.0141936921763492,
+  technical: 1.5538668786061813,
 }
 
 /** A symmetric pair, `separation` apart, whose axis sits `axisDegrees` off world X -- the exact input the camera's yaw exists to answer. */
@@ -1500,5 +1520,24 @@ describe('framing distance over real bouts', () => {
     }
     // Guards the loop itself: nine bouts of real length, not nine early exits.
     expect(totalTicks).toBeGreaterThan(9000)
+  })
+
+  it("frames the widest pairing's whole band at FLAT_DISTANCE: the flat region covers every band edge", () => {
+    // The fast-suite mirror of the slow harness's band-edge pin
+    // (`tests/legibility.spec.ts`, "pins the widest pairing's band edge to the
+    // camera's own flat region"). The band is "in band" for the floor and inset
+    // measurements only if every pairing's band lies inside the flat region,
+    // and the widest pairing's upper edge is the one that decides it. Since the
+    // spear re-grip that edge (7.000328019691777, retiarius vs retiarius) sits
+    // 0.53 INSIDE the flat region rather than at it, so this is an inequality
+    // pinned through the mapping itself rather than an equality of two
+    // literals: a stale `WIDEST_EQUIPMENT_RADIUS` after a rig grows past the
+    // floor, or a floor lowered without a re-sweep, both turn the widest edge
+    // into an eased distance and fail here, in `npm test`, rather than twelve
+    // minutes into the slow run.
+    const widest = Math.max(...Object.values(RIG_EQUIPMENT_RADIUS))
+    const widestBandHigh = 3.1 + 2.2 * widest
+    expect(widestBandHigh).toBeLessThanOrEqual(BAND_HIGH)
+    expect(extentToDistance(widestBandHigh, MIN_DISTANCE, MAX_DISTANCE)).toBe(FLAT_DISTANCE)
   })
 })

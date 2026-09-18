@@ -61,7 +61,7 @@ const LOOK_DEAD_ZONE_FRACTION = 0.08
  * Load-bearing for the band edge, as of the 2026-08-24 readable-gladiator-types
  * slice, and not only for the extent jitter its own doc comment below
  * describes. `extentToDistance` became piecewise in that slice, which gives it
- * a decision boundary at `BAND_HIGH_EXTENT`, and the classic failure of a
+ * a decision boundary at `FLAT_REGION_EDGE_EXTENT`, and the classic failure of a
  * decision boundary is chatter: a pair that hovers across it flips the decision
  * every few ticks and the camera dollies in and out at the frequency of the
  * fighters' footwork. This dead zone is the only thing that prevents it -- and
@@ -69,7 +69,7 @@ const LOOK_DEAD_ZONE_FRACTION = 0.08
  * the distance, so it does not care that the mapping is flat on one side of the
  * junction and sloped on the other. Measured (`ArenaCamera.test.ts`, "framing
  * distance under motion"): a pair oscillating across the edge at 5 Hz with an
- * amplitude just inside `0.12 x BAND_HIGH_EXTENT` holds the distance bit-for-
+ * amplitude just inside `0.12 x FLAT_REGION_EDGE_EXTENT` holds the distance bit-for-
  * bit constant for 600 ticks; the same drive with this fraction set to zero
  * reverses direction 95 times over those same 600 ticks, tremoring 0.072 world
  * units at 5 Hz. No enter/exit hysteresis was added on top,
@@ -166,31 +166,69 @@ const BAND_HIGH_SEPARATION = 3.1
  * `heavy` from the Barbarian body at rig scale 0.9148 instead of the Knight's
  * 0.8641, so `heavy` moved a third time, 1.5861850532796753 ->
  * 1.679186605264372 -- still below `fast` and `technical`, so this constant did
- * not move with it. This constant tracks the measurement, not a swept tuning
+ * not move with it. The same spec's PR-2 then gripped the hoplomachus' spear
+ * 0.8 source units up the shaft instead of at the butt (1.30 world units of
+ * spear ahead of the hand instead of 1.83), so `technical` fell 2.0141936921763492
+ * -> 1.5538668786061813 and is now the NARROWEST rig; the retiarius (`fast`,
+ * the trident) is the widest, and this constant is his radius -- the value the
+ * 2.0-unit pass had already measured for him, re-read bit-identical in the
+ * same browser pass. This constant tracks the measurement, not a swept tuning
  * value: `FLAT_DISTANCE` and `EASE_WIDTH_EXTENT` below are the swept pair, and
- * stay put.
+ * stay put. Note that the flat region's edge did NOT follow this constant
+ * down: see `FLAT_REGION_EDGE_FLOOR_EXTENT` below.
  */
-const WIDEST_EQUIPMENT_RADIUS = 2.0141936921763492
+const WIDEST_EQUIPMENT_RADIUS = 1.772876372587171
 
 /**
  * The same band edge, expressed in the GROUP EXTENT that `extentToDistance`
  * below actually consumes.
  *
  * Extent adds both fighters' equipment radii with this module's own margin, so
- * the band's edges differ per pairing -- from 4.59-6.79 (murmillo vs murmillo,
- * the narrowest) to 5.33-7.53 (hoplomachus vs hoplomachus, the widest). Both
- * ranges have widened twice: 2.46-4.66 and 3.87-6.07 on the procedural rig,
- * then 4.04-6.24 and 4.89-7.09 under Task 7's skinned models, then 4.39-6.59
- * and 5.33-7.53 under Task 7b's 2.0-unit standing height; the murmillo kit then
- * moved only the narrow end (4.39-6.59 -> 4.59-6.79, the Barbarian-bodied
- * murmillo's radius) and left the widest pairing where it was. The flat region
- * has to cover the band for EVERY pairing, so it ends at the widest one's upper
- * edge, which is what this
- * arithmetic spells out (7.531226122787968). Written as the derivation rather
- * than as the number so that it stays correct if the margin changes, and so it
- * is checkable without a spreadsheet.
+ * the band's edges differ per pairing -- from 4.32-6.52 (hoplomachus vs
+ * hoplomachus, the narrowest since the spear was gripped mid-shaft) to
+ * 4.80-7.00 (retiarius vs retiarius, the widest). Both ranges have widened
+ * twice: 2.46-4.66 and 3.87-6.07 on the procedural rig, then 4.04-6.24 and
+ * 4.89-7.09 under Task 7's skinned models, then 4.39-6.59 and 5.33-7.53 under
+ * Task 7b's 2.0-unit standing height; the murmillo kit then moved only the
+ * narrow end (4.39-6.59 -> 4.59-6.79, the Barbarian-bodied murmillo's radius)
+ * and left the widest pairing where it was; the spear re-grip then moved the
+ * hoplomachus from the widest rig to the narrowest, so the widest pairing is
+ * now retiarius vs retiarius at 4.80-7.00 (7.000328019691777, this arithmetic)
+ * and the narrowest hoplomachus vs hoplomachus at 4.32-6.52. The flat region
+ * has to cover the band for EVERY pairing, so it must end at or beyond the
+ * widest one's upper edge -- which is this value's one job -- but it does not
+ * end AT it any more: see `FLAT_REGION_EDGE_EXTENT` below, which keeps the
+ * edge at the 7.531226122787968 the previous widest pairing validated. Written
+ * as the derivation rather than as the number so that it stays correct if the
+ * margin changes, and so it is checkable without a spreadsheet.
  */
 const BAND_HIGH_EXTENT = BAND_HIGH_SEPARATION + 2 * WIDEST_EQUIPMENT_RADIUS * (1 + EQUIPMENT_MARGIN_FRACTION)
+
+/**
+ * The largest extent the flat region has been validated at: the slow harness's
+ * floor and inset numbers, the five PNG baselines and the reversal ceiling were
+ * all measured with the flat region ending here (Task 7b). Moves UP when a
+ * measured radius pushes `BAND_HIGH_EXTENT` past it (the safe direction: more
+ * of the fight is flat, re-validated by the replay); never down without a
+ * re-sweep of the SWEPT pair.
+ *
+ * Why a floor and not simply `BAND_HIGH_EXTENT`: when the spear re-grip
+ * (`docs/superpowers/specs/2026-09-17-kit-design.md`, PR-2, section 4.2.6)
+ * took `BAND_HIGH_EXTENT` down to 7.0003, a replay of the camera suite with the
+ * flat region ending there gave the retiarius-vs-retiarius pairing 23 band-edge
+ * crossings and 4 direction reversals (trace 04) and `aquila vs drusus` 13 and
+ * 4, against `expectSmoothFraming`'s ceiling of 2 -- the flat region ending
+ * exactly at that pairing's own band edge is the decision-boundary chatter the
+ * 12% extent dead zone only damps. Kept at today's edge the same replay is
+ * identical to before the re-grip: 3 crossings, 0 reversals, worst zoom rate
+ * 4.197 against the 5 bound. A third class of constant, then: MEASURED
+ * (`WIDEST_EQUIPMENT_RADIUS`), SWEPT (`FLAT_DISTANCE`, `EASE_WIDTH_EXTENT`) and
+ * this one, VALIDATED.
+ */
+const FLAT_REGION_EDGE_FLOOR_EXTENT = 7.531226122787968
+
+/** Where the flat region actually ends: the widest pairing's band edge, or the validated floor if that is further out. */
+const FLAT_REGION_EDGE_EXTENT = Math.max(BAND_HIGH_EXTENT, FLAT_REGION_EDGE_FLOOR_EXTENT)
 
 /**
  * The single distance the whole tactical band is framed at.
@@ -255,8 +293,8 @@ export const FLAT_DISTANCE = 8.81
  * close while the pair spreads right out, and they then crop horizontally on
  * the narrow 542 px canvas at 1024x768.
  *
- * At `7.00` the far clamp is reached at extent `BAND_HIGH_EXTENT + 7.00 =
- * 14.53` (`7.53 + 7.00`; was `7.09 + 7.00 = 14.09` under Task 7's skinned-model
+ * At `7.00` the far clamp is reached at extent `FLAT_REGION_EDGE_EXTENT + 7.00
+ * = 14.53` (`7.53 + 7.00`; was `7.09 + 7.00 = 14.09` under Task 7's skinned-model
  * radii, and `6.07 + 7.00 = 13.07` on the procedural rig before them), above the
  * widest extent the nine pairings actually produce (12.83; was 12.36, and 11.37
  * before that) -- so in play the camera still tops out near 16.6 (measured:
@@ -278,8 +316,9 @@ function clamp(value: number, min: number, max: number): number {
  * Group extent (world units, margins already included) to a camera distance,
  * in two regions:
  *
- *   - **flat**, at or below `BAND_HIGH_EXTENT`: every frame of the tactical
- *     band, and every closer-than-band frame too, is shot from exactly
+ *   - **flat**, at or below `FLAT_REGION_EDGE_EXTENT` (the widest pairing's
+ *     `BAND_HIGH_EXTENT`, or the validated floor beyond it): every frame of the
+ *     tactical band, and every closer-than-band frame too, is shot from exactly
  *     `FLAT_DISTANCE`. Below the band there is nothing left to zoom into -- the
  *     two fighters are on top of each other -- and those are the largest
  *     silhouettes on screen, so pulling in further is what would crop them.
@@ -302,8 +341,8 @@ function clamp(value: number, min: number, max: number): number {
  * calls it from outside this module.
  */
 export function extentToDistance(extent: number, minDistance: number, maxDistance: number): number {
-  if (extent <= BAND_HIGH_EXTENT) return clamp(FLAT_DISTANCE, minDistance, maxDistance)
-  const t = Math.min(1, (extent - BAND_HIGH_EXTENT) / EASE_WIDTH_EXTENT)
+  if (extent <= FLAT_REGION_EDGE_EXTENT) return clamp(FLAT_DISTANCE, minDistance, maxDistance)
+  const t = Math.min(1, (extent - FLAT_REGION_EDGE_EXTENT) / EASE_WIDTH_EXTENT)
   const eased = t * t * (3 - 2 * t)
   return clamp(FLAT_DISTANCE + eased * (maxDistance - FLAT_DISTANCE), minDistance, maxDistance)
 }
