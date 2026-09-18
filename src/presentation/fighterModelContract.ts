@@ -48,7 +48,7 @@ export const ATTACK_CLIPS: Readonly<Record<AttackActionId, AttackClip>> = {
   'heavy-cleave': { clip: '1H_Melee_Attack_Chop', contactAt: 0.5 },
   'fast-slash': { clip: '2H_Melee_Attack_Chop', contactAt: 0.45 },
   'fast-burst-lunge': { clip: '2H_Melee_Attack_Stab', contactAt: 0.5 },
-  'technical-thrust': { clip: '1H_Melee_Attack_Stab', contactAt: 0.5 },
+  'technical-thrust': { clip: 'Spear_Thrust', contactAt: 0.5 },
   'technical-driving-thrust': { clip: 'Spear_Drive', contactAt: 0.5 },
   'technical-parry-counter': { clip: '1H_Melee_Attack_Slice_Horizontal', contactAt: 0.45 },
 }

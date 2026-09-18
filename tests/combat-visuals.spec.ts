@@ -699,7 +699,15 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
   await advanceToTick(page, 908, cursor)
   const parryWindup = await combatantState(page, 'home.nerva')
   expect(parryWindup.action).toMatchObject({ type: 'active', definitionId: 'technical-parry', phase: 'windup' })
-  expectClip(await renderedSnapshotAt(page, 1), 'home.nerva', 'technical', DEFENSE_CLIPS['technical-parry'], 't908 parry windup')
+  const atParryWindup = await renderedSnapshotAt(page, 1)
+  expectClip(atParryWindup, 'home.nerva', 'technical', DEFENSE_CLIPS['technical-parry'], 't908 parry windup')
+  // The thrower at the same instant: away.cassius is mid `technical-thrust`
+  // windup (contact 913), so this is the frozen tick that proves the
+  // hoplomachus' thrust selects its own authored clip and plays it inside the
+  // shipped GLB's duration -- before the parry's stagger pre-empts it at 913.
+  const thrustWindup = await combatantState(page, 'away.cassius')
+  expect(thrustWindup.action).toMatchObject({ type: 'active', definitionId: 'technical-thrust', phase: 'windup' })
+  expectClip(atParryWindup, 'away.cassius', 'technical', ATTACK_CLIPS['technical-thrust'].clip, 't908 thrust windup')
 
   // tick 913: the parry connects -- `attack-parried` on the frozen trace,
   // weapon-zone contact flash live.
