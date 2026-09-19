@@ -376,7 +376,14 @@ test('plays the seeded bout 0 to its frozen outcome when every order is left sta
   // must still reproduce the bout `combat-visuals.spec.ts` freezes its key
   // poses and its `combat-outcomes.png` baseline against -- which the
   // retiarius-reach slice reverses: `away.drusus` is now the one defeated, by
-  // `home.brutus`, on tick 1827.
+  // `home.brutus`.
+  //
+  // The 2026-09-05 fighting-room slice keeps that verdict and only stretches
+  // the bout that reaches it, 1827 -> 3480 ticks. Same winner, same finish
+  // reason, 1653 ticks longer: with every separation translated 0.30 outward
+  // and the arena grown to match, the two spend far more of the bout closing
+  // distance and far less of it trading, which is the change the slice was
+  // for. Re-measured against this same seeded run, not scaled.
   await fightBoutZeroUnder(page, 'standard')
   expect(await seriesOrders(page)).toEqual(['standard', 'standard', 'standard'])
   await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3600))
@@ -385,7 +392,7 @@ test('plays the seeded bout 0 to its frozen outcome when every order is left sta
     const battle = window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!
     return { tick: battle.encounter.tick, winnerSide: battle.winnerSide, finishReason: battle.finishReason, hash: window.__GLADIATOR_TEST__.getActiveBattleTraceHash() }
   })
-  expect(standardOutcome).toMatchObject({ tick: 1827, winnerSide: 'home', finishReason: 'defeat' })
+  expect(standardOutcome).toMatchObject({ tick: 3480, winnerSide: 'home', finishReason: 'defeat' })
 
   // ...and the order the player picks genuinely reaches that simulation: the
   // same seeded bout under `press` produces a different trace, so the

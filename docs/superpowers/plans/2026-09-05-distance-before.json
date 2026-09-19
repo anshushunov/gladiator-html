@@ -1,0 +1,212 @@
+{
+  "seeds": 20,
+  "minimumSeparation": 0.9,
+  "bands": [
+    "<1.0",
+    "1.0-1.6",
+    "1.6-2.1",
+    "2.1-2.8",
+    ">2.8"
+  ],
+  "pinnedMargin": 0.15,
+  "reports": [
+    {
+      "label": "brutus (heavy) vs drusus (fast)",
+      "homeArchetype": "heavy",
+      "awayArchetype": "fast",
+      "median": 1.5691885252776845,
+      "bandShares": [
+        0.14073345074070237,
+        0.37879415725681137,
+        0.21949134983942817,
+        0.12791360198901897,
+        0.13306744017403915
+      ],
+      "homeInPreferredShare": 0.32518388065886256,
+      "awayInPreferredShare": 0.06150937532373355,
+      "clinchRuns": 50,
+      "longestClinchSeconds": 6.583333333333333,
+      "pinnedRuns": 33,
+      "longestPinnedSeconds": 4.6,
+      "pinnedShare": 0.16823785351704135,
+      "totalTicks": 38612,
+      "minimumSeparation": 0.9
+    },
+    {
+      "label": "brutus (heavy) vs cassius (technical)",
+      "homeArchetype": "heavy",
+      "awayArchetype": "technical",
+      "median": 1.4955651525739588,
+      "bandShares": [
+        0.0625172543606475,
+        0.5736729828083825,
+        0.24693186096122474,
+        0.043167273183586395,
+        0.07371062868615887
+      ],
+      "homeInPreferredShare": 0.5553017944535074,
+      "awayInPreferredShare": 0.043167273183586395,
+      "clinchRuns": 20,
+      "longestClinchSeconds": 3.3666666666666667,
+      "pinnedRuns": 11,
+      "longestPinnedSeconds": 3.1666666666666665,
+      "pinnedShare": 0.08462793324131007,
+      "totalTicks": 39845,
+      "minimumSeparation": 0.9
+    },
+    {
+      "label": "brutus (heavy) vs magnus (heavy)",
+      "homeArchetype": "heavy",
+      "awayArchetype": "heavy",
+      "median": 1.371391657903925,
+      "bandShares": [
+        0.1309738634379184,
+        0.582862797601723,
+        0.18819488910879562,
+        0.02037371209034286,
+        0.0775947377612201
+      ],
+      "homeInPreferredShare": 0.5420862681180512,
+      "awayInPreferredShare": 0.5420862681180512,
+      "clinchRuns": 30,
+      "longestClinchSeconds": 2.566666666666667,
+      "pinnedRuns": 13,
+      "longestPinnedSeconds": 2.5166666666666666,
+      "pinnedShare": 0.15792537400314338,
+      "totalTicks": 34358,
+      "minimumSeparation": 0.9
+    },
+    {
+      "label": "aquila (fast) vs drusus (fast)",
+      "homeArchetype": "fast",
+      "awayArchetype": "fast",
+      "median": 2.540684581361755,
+      "bandShares": [
+        0.03101301307208829,
+        0.13629791377733189,
+        0.1694650181474815,
+        0.2594352149665083,
+        0.40378884003659005
+      ],
+      "homeInPreferredShare": 0.22139927410074065,
+      "awayInPreferredShare": 0.22139927410074065,
+      "clinchRuns": 7,
+      "longestClinchSeconds": 2,
+      "pinnedRuns": 1,
+      "longestPinnedSeconds": 1.1333333333333333,
+      "pinnedShare": 0.03753430316621913,
+      "totalTicks": 33889,
+      "minimumSeparation": 0.9
+    },
+    {
+      "label": "aquila (fast) vs cassius (technical)",
+      "homeArchetype": "fast",
+      "awayArchetype": "technical",
+      "median": 2.292653240200733,
+      "bandShares": [
+        0.014315942603980692,
+        0.1732129868412352,
+        0.22726972161608147,
+        0.3006678569066984,
+        0.28453349203200423
+      ],
+      "homeInPreferredShare": 0.2177147391390597,
+      "awayInPreferredShare": 0.3006678569066984,
+      "clinchRuns": 2,
+      "longestClinchSeconds": 1.0666666666666667,
+      "pinnedRuns": 0,
+      "longestPinnedSeconds": 0,
+      "pinnedShare": 0.017919724922303776,
+      "totalTicks": 30246,
+      "minimumSeparation": 0.9
+    },
+    {
+      "label": "aquila (fast) vs magnus (heavy)",
+      "homeArchetype": "fast",
+      "awayArchetype": "heavy",
+      "median": 1.5863552734742,
+      "bandShares": [
+        0.14707822187046563,
+        0.3620454645385393,
+        0.2261355142241569,
+        0.1460669216901904,
+        0.11867387767664776
+      ],
+      "homeInPreferredShare": 0.06443740931275557,
+      "awayInPreferredShare": 0.30589631974673526,
+      "clinchRuns": 63,
+      "longestClinchSeconds": 6.35,
+      "pinnedRuns": 44,
+      "longestPinnedSeconds": 4.733333333333333,
+      "pinnedShare": 0.16849140394846765,
+      "totalTicks": 45486,
+      "minimumSeparation": 0.9
+    },
+    {
+      "label": "nerva (technical) vs drusus (fast)",
+      "homeArchetype": "technical",
+      "awayArchetype": "fast",
+      "median": 2.2826423896443933,
+      "bandShares": [
+        0.012892299184294208,
+        0.1927969030830914,
+        0.20696806304437992,
+        0.2859463569749758,
+        0.30139637771325867
+      ],
+      "homeInPreferredShare": 0.2859463569749758,
+      "awayInPreferredShare": 0.195078114198811,
+      "clinchRuns": 3,
+      "longestClinchSeconds": 1.75,
+      "pinnedRuns": 0,
+      "longestPinnedSeconds": 0,
+      "pinnedShare": 0.018733582192727777,
+      "totalTicks": 28932,
+      "minimumSeparation": 0.9
+    },
+    {
+      "label": "nerva (technical) vs cassius (technical)",
+      "homeArchetype": "technical",
+      "awayArchetype": "technical",
+      "median": 1.7192794204851665,
+      "bandShares": [
+        0.0022671452862270923,
+        0.3280433276654701,
+        0.4241765854272939,
+        0.13857925562063103,
+        0.10693368600037786
+      ],
+      "homeInPreferredShare": 0.13857925562063103,
+      "awayInPreferredShare": 0.13857925562063103,
+      "clinchRuns": 0,
+      "longestClinchSeconds": 0,
+      "pinnedRuns": 0,
+      "longestPinnedSeconds": 0,
+      "pinnedShare": 0.0035896467031928964,
+      "totalTicks": 31758,
+      "minimumSeparation": 0.9
+    },
+    {
+      "label": "nerva (technical) vs magnus (heavy)",
+      "homeArchetype": "technical",
+      "awayArchetype": "heavy",
+      "median": 1.4677183696840608,
+      "bandShares": [
+        0.0666650604731846,
+        0.587529513805233,
+        0.22712378933166288,
+        0.04447549751843107,
+        0.07420613887148846
+      ],
+      "homeInPreferredShare": 0.04447549751843107,
+      "awayInPreferredShare": 0.5552691177179203,
+      "clinchRuns": 24,
+      "longestClinchSeconds": 3.2666666666666666,
+      "pinnedRuns": 10,
+      "longestPinnedSeconds": 2.8833333333333333,
+      "pinnedShare": 0.08668626222714788,
+      "totalTicks": 41506,
+      "minimumSeparation": 0.9
+    }
+  ]
+}
