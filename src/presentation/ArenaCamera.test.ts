@@ -69,8 +69,8 @@ const MAX_DISTANCE = 18
  * The `frames the widest pairing's whole band` case at the bottom of this file
  * is what pins the inequality.
  */
-const BAND_LOW = 4.618507132933599
-const BAND_HIGH = 7.531226122787968
+const BAND_LOW = 4.894210531581619
+const BAND_HIGH = 7.694858430625031
 
 /**
  * The fastest the framing distance may travel, in world units per second, on
@@ -128,7 +128,7 @@ const MAX_ZOOM_UNITS_PER_SECOND = 5
 const RIG_EQUIPMENT_RADIUS: Readonly<Record<Archetype, number>> = {
   heavy: 1.679186605264372,
   fast: 1.772876372587171,
-  technical: 1.5538668786061813,
+  technical: 1.952208377556832,
 }
 
 /** A symmetric pair, `separation` apart, whose axis sits `axisDegrees` off world X -- the exact input the camera's yaw exists to answer. */
@@ -483,7 +483,7 @@ describe('ArenaCamera', () => {
       // after the re-grip that edge is held at 7.531226122787968 by
       // `FLAT_REGION_EDGE_FLOOR_EXTENT` rather than tracking the widest band.
       // Same literals as Task 7b, arrived at from the other direction.
-      const insideDeadZone = 0.89
+      const insideDeadZone = 0.91
       const held = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
       settle(held, BAND_HIGH)
       for (let step = 0; step < 600; step += 1) {
@@ -499,7 +499,7 @@ describe('ArenaCamera', () => {
       // 61 / 0.074 under Task 7's, and 59 / 0.0553 before them).
       const moved = new ArenaCamera({ minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE })
       settle(moved, BAND_HIGH)
-      const outsideDeadZone = 0.91
+      const outsideDeadZone = 0.93
       const chattering: number[] = []
       for (let step = 0; step < 600; step += 1) {
         chattering.push(moved.update(targetsWithExtent(BAND_HIGH + outsideDeadZone * Math.sin(step / 2)), 1 / 60).distance)

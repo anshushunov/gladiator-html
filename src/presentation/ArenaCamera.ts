@@ -175,18 +175,31 @@ const BAND_HIGH_SEPARATION = 3.4
  * `heavy` from the Barbarian body at rig scale 0.9148 instead of the Knight's
  * 0.8641, so `heavy` moved a third time, 1.5861850532796753 ->
  * 1.679186605264372 -- still below `fast` and `technical`, so this constant did
- * not move with it. The same spec's PR-2 then gripped the hoplomachus' spear
- * 0.8 source units up the shaft instead of at the butt (1.30 world units of
- * spear ahead of the hand instead of 1.83), so `technical` fell 2.0141936921763492
- * -> 1.5538668786061813 and is now the NARROWEST rig; the retiarius (`fast`,
- * the trident) is the widest, and this constant is his radius -- the value the
- * 2.0-unit pass had already measured for him, re-read bit-identical in the
- * same browser pass. This constant tracks the measurement, not a swept tuning
- * value: `FLAT_DISTANCE` and `EASE_WIDTH_EXTENT` below are the swept pair, and
- * stay put. Note that the flat region's edge did NOT follow this constant
- * down: see `FLAT_REGION_EDGE_FLOOR_EXTENT` below.
+ * not move with it.
+ *
+ * The same spec's PR-2 then moved the hoplomachus' grip along the shaft twice,
+ * and this constant went with it both times:
+ *
+ *   - gripped 0.8 source units from the butt, `technical` fell
+ *     2.0141936921763492 -> 1.5538668786061813, became the NARROWEST rig, and
+ *     the retiarius' 1.772876372587171 took this constant;
+ *   - gripped 0.3 from the butt -- the value the post-fighting-room contact
+ *     medians force on the reach gate, see `build_gladiators.py`'s
+ *     `REACH_WINDOWS` -- 1.756 world units of spear sit ahead of the hand and
+ *     `technical` came back up to 1.952208377556832, the widest again. This is
+ *     his radius once more, re-read in the same browser pass that found `heavy`
+ *     and `fast` bit-identical.
+ *
+ * The retiarius held it for exactly one unmerged branch. The consequence worth
+ * reading twice is at `FLAT_REGION_EDGE_FLOOR_EXTENT` below: that floor exists
+ * because the flat edge must not follow this constant DOWN, and it no longer
+ * binds now that this constant is back above it.
+ *
+ * This constant tracks the measurement, not a swept tuning value:
+ * `FLAT_DISTANCE` and `EASE_WIDTH_EXTENT` below are the swept pair, and stay
+ * put.
  */
-const WIDEST_EQUIPMENT_RADIUS = 1.772876372587171
+const WIDEST_EQUIPMENT_RADIUS = 1.952208377556832
 
 /**
  * The same band edge, expressed in the GROUP EXTENT that `extentToDistance`
@@ -233,6 +246,15 @@ const BAND_HIGH_EXTENT = BAND_HIGH_SEPARATION + 2 * WIDEST_EQUIPMENT_RADIUS * (1
  * 4.197 against the 5 bound. A third class of constant, then: MEASURED
  * (`WIDEST_EQUIPMENT_RADIUS`), SWEPT (`FLAT_DISTANCE`, `EASE_WIDTH_EXTENT`) and
  * this one, VALIDATED.
+ *
+ * IT NO LONGER BINDS, and is kept deliberately. The second grip pass (0.3
+ * instead of 0.8 source units from the butt) put `WIDEST_EQUIPMENT_RADIUS` back
+ * on the hoplomachus at 1.952208377556832, so `BAND_HIGH_EXTENT` is
+ * 7.694858430625031 -- above this floor, and `Math.max` below picks the band
+ * edge. Deleting the floor would pass every test today and silently re-arm the
+ * chatter the moment a future slice narrows the widest rig again, which is
+ * exactly the failure it was written for. The number is a measurement of a real
+ * failure mode, not of today's roster.
  */
 const FLAT_REGION_EDGE_FLOOR_EXTENT = 7.531226122787968
 

@@ -207,33 +207,44 @@ export interface RecordedCameraTrace {
 // radius. Predicted by hand at 16.7666 and measured at 16.7316 -- the measured
 // value is the one frozen.
 //
-// RE-RECORDED A SIXTH TIME by the merge of the spear re-grip with the two
-// slices above. All three openings move this time, not one, because the
-// re-grip changed the MAPPING and not just a radius: `extentToDistance` now
-// starts easing at `FLAT_REGION_EDGE_EXTENT`, and the opening reset shot is a
-// wide frame sitting in the eased region, so every pairing's opening moved
-// whether or not a hoplomachus is in it.
+// RE-RECORDED A SIXTH TIME by the merge of the spear slice with the two above,
+// AND BY THE SECOND GRIP PASS IT FORCED. All three openings move, not one,
+// because the grip changed a RADIUS and the merge changed the SEPARATIONS, and
+// the opening reset shot is a wide frame that reads both.
 //
-//   01 murmillo vs retiarius    3480 ticks (held)   opening 16.7316 -> 17.1260   crossings 1 -> 1
-//   04 retiarius vs retiarius   1632 ticks (held)   opening 16.8736 -> 17.2475   crossings 1 -> 17
-//   07 hoplomachus vs retiarius 1496 ticks (held)   opening 17.2076 -> 16.9520   crossings 3 -> 3
+// The grip pass is the part worth reading. The post-fighting-room contact
+// medians (1.89 / 2.30, `scripts/measure-contact-separation.ts`) put both
+// authored clips out of reach at `grip_behind` 0.8, and 0.3 is the only value
+// that lands both inside `REACH_WINDOWS`. At 0.3 the spear sits 1.756 world
+// units ahead of the hand, so `technical`'s `horizontalEquipmentRadius` went
+// 1.5538668786061813 -> 1.952208377556832 and the hoplomachus is the WIDEST rig
+// again -- undoing, before either ever merged, the branch state in which the
+// retiarius held `WIDEST_EQUIPMENT_RADIUS`. The flat region's edge follows him
+// back out, 7.531226122787968 -> 7.694858430625031, and
+// `FLAT_REGION_EDGE_FLOOR_EXTENT` stops binding (kept anyway; see its comment).
 //
-// `ticks` holds on all three, which is again the check that nothing but the
-// camera moved: the re-grip touches the GLB and the camera constants, not
-// `src/simulation/**`.
+//   01 murmillo vs retiarius    3480 ticks (held)   opening 16.7316 -> 16.9181   crossings 1 -> 1
+//   04 retiarius vs retiarius   1632 ticks (held)   opening 16.8736 -> 17.0511   crossings 1 -> 5
+//   07 hoplomachus vs retiarius 1496 ticks (held)   opening 17.2076 -> 17.2854   crossings 3 -> 5
 //
-// TRACE 04'S CROSSINGS ARE THE FINDING HERE: 1 -> 17. The retiarius pairing now
-// spends the bout brushing the flat region's edge, because the body-width
-// translation lifted its band edge to `3.4 + 2 x 1.772876372587171 x 1.1 =
-// 7.3003` while `FLAT_REGION_EDGE_FLOOR_EXTENT` holds the edge at 7.5312 -- a
-// 0.2309 gap where the re-grip alone left 0.5309. `expectSmoothFraming` passes
-// unmodified over all three traces and the nine standalone pairings, so this is
-// crossings and not chatter: the camera is tracking through the boundary, not
-// reversing on it. But 0.2309 is the thinnest that margin has ever been, and
-// the next slice that moves a separation outward or a radius up is the one to
-// re-read this number before anything else.
+// `ticks` holds on all three, which is again the check that only the camera and
+// the GLB moved; the grip touches neither `src/simulation/**` nor
+// `src/content/**`.
+//
+// Crossings rose on 04 and 07 (1 -> 5, 3 -> 5) and that is the separations, not
+// the grip: the body-width translation lifted every pairing's band while the
+// flat edge is set by the widest pairing alone, so the narrower pairings sit
+// closer under the edge than they used to and brush it more often. Worth
+// stating because an intermediate state of this same merge -- the widest radius
+// still on the retiarius, flat edge held at the floor -- measured trace 04 at
+// SEVENTEEN crossings on a 0.2309 margin. Restoring the hoplomachus as the
+// widest rig took that margin to 0.3946 (7.6949 against the retiarius pairing's
+// 7.3003) and the crossings back to 5. `expectSmoothFraming` passed unmodified
+// in both states, so neither was chatter -- but the difference between 17 and 5
+// is the difference between a camera that lives on the boundary and one that
+// visits it.
 export const RECORDED_TRACES: readonly RecordedCameraTrace[] = [
-  { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 3480, openingDistance: 17.125989106303702, crossings: 1 },
-  { label: '04 retiarius vs retiarius', lineup: ['aquila', 'nerva', 'brutus'], ticks: 1632, openingDistance: 17.247453659337772, crossings: 17 },
-  { label: '07 hoplomachus vs retiarius', lineup: ['nerva', 'brutus', 'aquila'], ticks: 1496, openingDistance: 16.95201567182722, crossings: 3 },
+  { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 3480, openingDistance: 16.91807890444891, crossings: 1 },
+  { label: '04 retiarius vs retiarius', lineup: ['aquila', 'nerva', 'brutus'], ticks: 1632, openingDistance: 17.051123449209516, crossings: 5 },
+  { label: '07 hoplomachus vs retiarius', lineup: ['nerva', 'brutus', 'aquila'], ticks: 1496, openingDistance: 17.285433338894062, crossings: 5 },
 ]

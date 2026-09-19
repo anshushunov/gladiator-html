@@ -101,8 +101,11 @@ AUTHORED_CLIPS = {
 #
 # THESE WINDOWS MIRROR THE SIMULATION CATALOGUE, NOT A PROPERTY OF THE CLIPS.
 # They were read off the shipped simulation's root separation at contact
-# (median 1.47 for `technical-thrust`, 1.78 for `technical-driving-thrust`,
-# nine pairings x 20 seeds), which is set by each action's `contactRange` in
+# (median 1.89 for `technical-thrust`, 2.30 for `technical-driving-thrust`,
+# nine pairings x 20 seeds, by `scripts/measure-contact-separation.ts`; they
+# were 1.47 and 1.78 before the 2026-09-05 fighting-room slice translated every
+# separation outward and raised the spear's own push), which is set by each
+# action's `contactRange` in
 # `src/simulation/combatActions.ts` and by `DUEL_MINIMUM_SEPARATION` in
 # `src/simulation/battle.ts`, so that the tip lands about a quarter unit past
 # the opponent's root at the median contact (where the trident's does). When
@@ -111,8 +114,8 @@ AUTHORED_CLIPS = {
 # drift short again by design while this gate keeps passing. The height window
 # brackets every opponent's `hitCenter` (0.89 Barbarian, 0.889 Rogue).
 REACH_WINDOWS = {
-    'Spear_Thrust': {'forward': (1.70, 1.85), 'height': (0.85, 1.05), 'lateral': 0.20},
-    'Spear_Drive':  {'forward': (2.00, 2.20), 'height': (0.85, 1.05), 'lateral': 0.20},
+    'Spear_Thrust': {'forward': (2.12, 2.27), 'height': (0.85, 1.05), 'lateral': 0.20},
+    'Spear_Drive':  {'forward': (2.52, 2.72), 'height': (0.85, 1.05), 'lateral': 0.20},
 }
 # The pack's own stab clips, logged (not asserted) on the re-gripped spear.
 LOGGED_REACH_CLIPS = ('1H_Melee_Attack_Stab', '2H_Melee_Attack_Stab')
@@ -726,14 +729,35 @@ def build_archetype(archetype, spec):
         _, weapon_tip = build_shaft_weapon('trident', weapon_ref, arm, length=1.6, radius=0.03,
                                            tip_builder=trident_tip)
     if 'spear' in spec['build']:
-        # Gripped 0.8 source units from the butt, not at the butt: a hasta is
-        # held at its balance point, and no thrusting pose can land a
-        # butt-gripped 1.83-unit spear at the thrust's median contact (1.47) --
-        # the hand would have to sit behind the fighter's own root. Total length
-        # unchanged (1.9 shaft + 0.32 head): 1.30 world units ahead of the hand,
-        # 0.73 behind. The pack's stab clips now reach 1.9-2.0 on it, not 2.44-2.49.
+        # Gripped 0.3 source units from the butt, not at the butt: a hasta is
+        # held near its balance point, and a butt grip put the pack's stab clips
+        # 2.4 out where the median contact wants ~2.1. Total length unchanged
+        # (1.9 shaft + 0.32 head): 1.756 world units ahead of the hand, 0.274
+        # behind.
+        #
+        # WHY 0.3 AND NOT SOMETHING ELSE -- it is the only value that puts BOTH
+        # authored clips inside REACH_WINDOWS, and that is a two-sided
+        # constraint, not a preference:
+        #
+        #   grip_behind 0.8 (the 2026-09-17 value, sized against the pre-
+        #     fighting-room medians of 1.47 / 1.78): thrust 1.77, drive 2.09 --
+        #     both far short of the windows below;
+        #   grip_behind 0.2: thrust 2.315, past the window's top. The overshoot
+        #     cannot be keyed out -- the tip sits a fixed distance from the
+        #     shoulder, so pulling it back 0.045 along the forward axis needs an
+        #     11-degree swing off that axis, which spends 0.45 of a +-0.2
+        #     lateral budget. Measured, not reasoned: a counter-rotated
+        #     shoulder/elbow pair moved forward by 0.006 and lateral by 0.058;
+        #   grip_behind 0.39 would centre the THRUST at the 0.25-past rule and
+        #     drop the drive to 2.46, under its window.
+        #
+        # At 0.3 the drive lands 0.244 past the opponent's root at its median --
+        # the trident's own 0.24, i.e. the rule exactly -- and the thrust 0.334
+        # past, longer than ideal but inside its window and no worse than the
+        # 0.298 the previous grip shipped. The drive is the committed action, so
+        # it gets the exact number.
         _, weapon_tip = build_shaft_weapon('spear', weapon_ref, arm, length=1.9, radius=0.026,
-                                           tip_builder=spear_tip, grip_behind=0.8)
+                                           tip_builder=spear_tip, grip_behind=0.3)
     if 'net' in spec['build']:
         shield_centre = world_centre(build_net(arm))
     if 'buckler' in spec['build']:
