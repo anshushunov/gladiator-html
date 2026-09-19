@@ -541,6 +541,14 @@ test('separates body height from full prop bounds in the arena debug snapshot', 
 })
 
 test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger, a shield block, a defense-declined window, and defeat', async ({ page }) => {
+  // Six checkpoints across a whole 1827-tick bout, each a skinned render plus
+  // a snapshot read: 8.0 s alone on this machine, but over the 30 s default
+  // when the slow legibility suite runs concurrently (measured 2026-09-17,
+  // the whole fast project ran 6.2 min instead of ~1.1). The feedback spec's
+  // §12 names this remedy for a fast test that crosses 30 s: triple the
+  // budget, not fewer assertions.
+  test.slow()
+
   await startBoutZeroWith(page, 'brutus')
   const cursor = { current: 0 }
 
@@ -576,6 +584,28 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
   expect(snapshot!.activeEffectIds.some((id) => id.startsWith('body-'))).toBe(true)
+  // The damage number (feedback spec §8.2): equality, not containment, is
+  // legitimate here only because tick 255's lunge is the bout's FIRST
+  // `damage-dealt` (the hp fixture above already pins it as 420 - 49), so the
+  // pool holds exactly this one entry. And the DOM half: the one visible
+  // pooled span reads '49' and sits inside the arena's own box -- the 4 %
+  // screenshot ratio cannot see a 22 px digit, so this is the guard that the
+  // overlay renders at all.
+  //
+  // The amount is 49 and the tick is 255 because the 2026-09-05 fighting-room
+  // slice re-cut this bout; it was 31 at tick 231. The number moved with the
+  // hp assertion directly above it, which is the point of writing them as the
+  // same arithmetic: neither can be re-baselined without the other.
+  expect(snapshot!.activeDamageNumbers).toEqual([{ id: expect.any(String), amount: 49, kind: 'body' }])
+  const visibleNumbers = page.locator('[data-testid="damage-number"]:visible')
+  await expect(visibleNumbers).toHaveCount(1)
+  await expect(visibleNumbers).toHaveText('49')
+  const numberBox = (await visibleNumbers.boundingBox())!
+  const arenaBox = (await page.getByTestId('arena').boundingBox())!
+  expect(numberBox.x).toBeGreaterThanOrEqual(arenaBox.x)
+  expect(numberBox.y).toBeGreaterThanOrEqual(arenaBox.y)
+  expect(numberBox.x + numberBox.width).toBeLessThanOrEqual(arenaBox.x + arenaBox.width)
+  expect(numberBox.y + numberBox.height).toBeLessThanOrEqual(arenaBox.y + arenaBox.height)
   // ...and the animation layer, not merely the transform layer: a staggered
   // fighter must actually be playing the pack's hit reaction.
   expectClip(await renderedSnapshotAt(page, 1), 'home.brutus', 'heavy', BASE_CLIPS.hit, 't256 stagger')
@@ -610,6 +640,55 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   // alone is satisfied by either outcome, so it is not a regression guard for
   // that dedupe -- assert the count.
   expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('shield-'))).toHaveLength(1)
+  // ONE number: the 17 in the `shield` style (blocked chip damage), at age 0.
+  //
+  // This assertion used to carry two, the tick-231 body 31 alongside the chip,
+  // because on the pre-2026-09-05 bout the two exchanges sat 22 ticks apart and
+  // both numbers were live at once. The fighting-room slice pushed them apart:
+  // the body hit is now the tick-255 lunge and this block is at 366, so the
+  // first number is 111 ticks old here and long dead (111 > 54). The shape of
+  // the check is deliberately unchanged -- `toMatchObject` on an array, not
+  // `toHaveLength(1)` -- because the burst semantics it guards against
+  // (feedback spec §8.2) are what would put a second entry back.
+  expect(snapshot!.activeDamageNumbers).toMatchObject([{ amount: 17, kind: 'shield' }])
+
+  // tick 593, the miss checkpoint (feedback spec §8.2): the bout's first
+  // `attack-missed` -- away.drusus at tick 592, reason `geometry` -- with the
+  // sand puff lit.
+  //
+  // RE-LOCATED BY ITS CONDITION after the 2026-09-05 fighting-room slice, the
+  // way the old comment here asked for: the first miss used to be home.brutus's
+  // at 429 and the re-cut bout has none of his before 2482, far past every
+  // checkpoint after this one. 592 is the re-cut bout's first `attack-missed`
+  // by anyone, so "the bout's first miss" is preserved and only whose it is
+  // changed.
+  //
+  // The burst 367..593 carries home.brutus's evades at 428 and 562 as well, and
+  // under `advanceTicks`'s batch semantics every effect in it spawns at age 0
+  // on the burst's last tick. That is THREE puffs into a two-slot pool
+  // (`FLASH_SLOTS_PER_KIND`), so the count below also pins the recycling: two
+  // live, not three, and not one. No `damage-dealt` falls in the burst at all
+  // -- the tick-366 chip is 227 ticks old here, long past both its spark and
+  // its number -- so the frame is puffs and nothing else, which is exactly the
+  // property this checkpoint exists to assert.
+  await advanceToTick(page, 593, cursor)
+  const missEvents = await eventsAtTick(page, 592)
+  expect(missEvents).toContainEqual(expect.objectContaining({ type: 'attack-missed', actorId: 'away.drusus', reason: 'geometry' }))
+  const burstContactEvents = await page.evaluate(() => {
+    const battle = window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!
+    return battle.events.filter((event) => event.tick >= 367 && event.tick <= 593).map((event) => ({ type: event.type, tick: event.tick }))
+  })
+  expect(burstContactEvents.filter((event) => event.type === 'attack-evaded').map((event) => event.tick)).toEqual([428, 562])
+  expect(burstContactEvents.filter((event) => event.type === 'attack-missed')).toEqual([{ type: 'attack-missed', tick: 592 }])
+  expect(burstContactEvents.filter((event) => event.type === 'damage-dealt')).toEqual([])
+  snapshot = await arenaSnapshot(page)
+  expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('miss-'))).toHaveLength(2)
+  expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('body-'))).toHaveLength(0)
+  // The number count equals the batch's `damage-dealt` count -- the actual
+  // guard that a miss and an evade spawn puffs and NO number. Here that count
+  // is zero, which makes the guard stricter than it was, not weaker: any
+  // number on screen now is a bug in the miss/evade path.
+  expect(snapshot!.activeDamageNumbers).toEqual([])
 
   // tick 620: away.drusus's forced disengage (Fast's post-burst-lunge
   // recovery locomotion), stamped at 616 and still held here, four ticks in
@@ -883,6 +962,39 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
  */
 const CAMERA_SETTLE_SECONDS = 4
 
+/** Ticks of per-tick stepping before a capture: longer than the longest effect life (a number, 54 ticks), so nothing from the burst before it is still alive at the capture tick. */
+const EFFECT_WINDOW_TICKS = 60
+
+/**
+ * Reaches `tick` the way a player's frame does, not the way a burst does.
+ *
+ * `advanceTicks(n)` steps the kernel `n` times and renders ONCE, handing every
+ * event of the burst to `ArenaView.sync` as one batch stamped at the burst's
+ * last tick -- so a single `advanceTicks(913)` would draw every effect of the
+ * bout so far at age 0 on the capture tick (six full-opacity numbers, two
+ * sprays and two puffs at `technical-parry`), a frame no player can ever see
+ * and useless as a baseline of "what x1 looks like". So: one burst to
+ * `tick - 60` (everything in it is stamped there and dead by `tick`, since 60
+ * exceeds every effect life: 54 > 25.2 > 13 ticks), then sixty single-tick
+ * calls in the same `page.evaluate`, so every effect from the last sixty ticks
+ * is stamped at its own tick and drawn at its true x1 age. The simulation
+ * state at `tick` is identical either way (the kernel does not know about
+ * batches), `?snapshot` keeps the runtime paused so no camera time passes
+ * during the single ticks, and `captureFrame`'s settle and alpha-1 render are
+ * unchanged -- the capture stays a pure function of the tick count. Feedback
+ * spec §8.3.
+ */
+async function advanceToCaptureTick(page: Page, tick: number): Promise<void> {
+  await page.evaluate(
+    ([target, windowTicks]) => {
+      const burst = Math.max(0, target - windowTicks)
+      window.__GLADIATOR_TEST__.advanceTicks(burst)
+      for (let step = burst; step < target; step += 1) window.__GLADIATOR_TEST__.advanceTicks(1)
+    },
+    [tick, EFFECT_WINDOW_TICKS] as const,
+  )
+}
+
 async function captureFrame(page: Page, name: string): Promise<void> {
   const debugState = await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState())
   expect(debugState.paused).toBe(true)
@@ -900,9 +1012,18 @@ test('key pose: heavy cleave windup', async ({ page }) => {
   // is unchanged only because it was re-checked against the new trace and the
   // condition still holds there: at 420 home.brutus is in `heavy-cleave`
   // `windup` (phase started 394, running to 427), away.drusus has no action of
-  // his own, and the two stand 3.22 units apart -- an uncluttered silhouette,
+  // his own, and the two stand 3.23 units apart -- an uncluttered silhouette,
   // which is the whole point of this capture.
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(420))
+  //
+  // Effects in the window (360, 420]: the t=366 shield block and its 17 of
+  // chip damage. Its spark is long dead (54 > 15.6) and its number is dead
+  // too, but only just -- 54 ticks is 900.0 ms, exactly `DAMAGE_NUMBER_LIFE_MS`,
+  // and `layoutDamageNumber` returns `null` at `t >= 1`. So the frame is clean:
+  // no number, no spark, no spray, no puff. THIS IS THE ONE CAPTURE IN THE SET
+  // SITTING ON AN EFFECT BOUNDARY -- a tick either way and a number appears
+  // over home.brutus. Deterministic, but it is why this comment states the
+  // arithmetic rather than just the verdict.
+  await advanceToCaptureTick(page, 420)
   await captureFrame(page, 'heavy-cleave.png')
 })
 
@@ -917,10 +1038,16 @@ test('key pose: fast burst-lunge windup', async ({ page }) => {
   // the ten in which home.brutus carries no action of his own on ANY tick --
   // every other candidate overlaps a cleave, a shield jab or a guard of his,
   // which is exactly the cluttered frame this capture is meant to avoid. Tick
-  // 246 sits nine ticks into it, with the two 2.4 units apart. The old
+  // 246 sits nine ticks into it, with the two 2.34 units apart. The old
   // tick 890 no longer sits inside any lunge windup; this one is re-located by
   // the condition, not by scaling.
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(246))
+  //
+  // Effects in the window (186, 246]: NONE AT ALL -- not one contact, block,
+  // parry, evade or miss lands in the sixty ticks before this one. It is the
+  // cleanest frame of the four, which is what the fixture wants, and it is the
+  // cheapest to keep true: only a re-cut that puts an exchange into that window
+  // can falsify it.
+  await advanceToCaptureTick(page, 246)
   await captureFrame(page, 'fast-burst.png')
 })
 
@@ -931,8 +1058,16 @@ test('key pose: technical parry contact', async ({ page }) => {
   // `nerva vs cassius` is the parry's own contact tick after the 2026-09-05
   // fighting-room slice (913 before it) -- the same exchange the checkpoint
   // test freezes, so the two stay in step.
+  //
+  // Effects in the window (737, 797]: the parry's own weapon spark at age 0,
+  // and nothing else visible. The bout's FIRST parry sits at t=753, 44 ticks
+  // back, its spark long dead (44 > 15.6) -- the two parries this bout holds
+  // are both inside the window, which is worth knowing when reading the frame:
+  // one spark on screen, not two. No `damage-dealt` lands in the window at all,
+  // so a number here means the helper stopped stepping per tick, never the
+  // pairing.
   await startBoutOneWith(page, ['brutus', 'nerva', 'aquila'])
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(797))
+  await advanceToCaptureTick(page, 797)
   await captureFrame(page, 'technical-parry.png')
 })
 
@@ -949,13 +1084,22 @@ test('combat outcomes: defeat', async ({ page }) => {
   // "combat outcome" a player sees here genuinely includes the between-
   // bouts result panel -- this is the actual, deterministic post-defeat UI,
   // not an unrelated interstitial riding along.
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(3480))
+  //
+  // Effects in the window (3420, 3480]: the killing blow and nothing else --
+  // its body spray at age 0 (scale 0.45, opacity 0.92) and its number, 63, over
+  // away.drusus at age 0, the same 63 the feed's last "deals N" line shows in
+  // this frame. The sixty ticks before it are empty, so this is the one capture
+  // where the whole hit channel is on screen at full strength with nothing else
+  // competing: the frame the feedback slice exists to be judged on.
+  await advanceToCaptureTick(page, 3480)
   await captureFrame(page, 'combat-outcomes.png')
 })
 
 test('a complete safe two-fighter frame', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   await startBoutZeroWith(page, 'brutus')
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))
+  // Bout 0's first contact event is at 231, so the window (0, 60] is empty:
+  // any effect or digit in this frame is a bug.
+  await advanceToCaptureTick(page, 60)
   await captureFrame(page, 'combat-safe-frame.png')
 })

@@ -11,14 +11,17 @@
 // mutates anything under `src/simulation/**`.
 
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { ArenaCamera, FLAT_DISTANCE, measuredExtent, type ArenaCameraState, type HorizontalFramingTarget } from './ArenaCamera'
 import { createSkinnedFighter, type FighterModelSet, type SkinnedFighter } from './SkinnedFighter'
 import { FighterAnimator } from './FighterAnimator'
 import { selectClip, type ClipSelection } from './clipMapping'
 import { FIGHTER_BONE_NAMES, type FighterBoneName } from './fighterModelContract'
+import { classifyDamage, DamageNumberPool, type DamageNumberKind } from './DamageNumbers'
 import type { BattleState } from '../simulation/battle'
 import type { ContactZone } from '../simulation/combatActions'
 import type { CombatantId, EncounterEvent, FighterCombatState } from '../simulation/encounter'
+import type { Archetype } from '../simulation/fighters'
 import { normalizeVec2, TICKS_PER_SECOND, type Vec2 } from '../simulation/movement'
 
 /**
@@ -95,6 +98,13 @@ export interface ArenaDebugSnapshot {
    */
   activeClip: Readonly<Record<CombatantId, { clip: string; time: number }>>
   activeEffectIds: readonly string[]
+  /**
+   * The live damage numbers in spawn order (feedback spec §6.6). Separate
+   * from `activeEffectIds` on purpose: that field means "transient 3D
+   * effects, empty under reduced motion", and a number is neither -- it is
+   * DOM, and it is the reduced-motion hit channel.
+   */
+  activeDamageNumbers: readonly { id: string; amount: number; kind: DamageNumberKind }[]
   trailPointCounts: Readonly<Record<CombatantId, number>>
   camera: ArenaCameraState
   eventCursor: number
@@ -355,18 +365,111 @@ const SETTLE_STEPS_PER_SECOND = 60
 const TRAIL_MAX_POINTS = 6
 const TRAIL_COLOR = 0xf4ead7
 
-/** Contact-flash lifetime, in *presentation* milliseconds -- the encounter's own tick rate scaled to ms, never the wall clock (see `applyFrame`). At x1 this is the same 260 ms it always was; at x2/x4 a flash now lives the same number of ticks instead of the same number of seconds, which is what "expire before the next exchange" (design.md) actually measures. */
-const FLASH_DURATION_MS = 260
-
 /** Presentation milliseconds per simulation tick. */
 const MS_PER_TICK = 1000 / TICKS_PER_SECOND
-const FLASH_SLOTS_PER_ZONE = 2
+
+/**
+ * A pooled contact effect's kind: the three contact zones, each with its own
+ * visual (blood spray, shield ring, weapon spark), plus `miss` -- the sand
+ * puff on the ground where a swing that hit nothing ended
+ * (`2026-09-17-feedback-design` spec §4.3, §5). One pool, four kinds.
+ */
+type FlashKind = ContactZone | 'miss'
+const FLASH_KINDS: readonly FlashKind[] = ['body', 'shield', 'weapon', 'miss']
+const FLASH_SLOTS_PER_KIND = 2
+
+/**
+ * Contact-effect lifetime per kind, in *presentation* milliseconds -- the
+ * encounter's own tick rate scaled to ms, never the wall clock (see
+ * `applyFrame`), so at x2/x4 an effect lives the same number of ticks instead
+ * of the same number of seconds, which is what "expire before the next
+ * exchange" (design.md) actually measures. The ring and the spark keep their
+ * 260 ms; the spray holds 420 ms (25.2 ticks) -- deliberately longer than the
+ * fastest attack's 22-tick repeat, so one attacker landing twice overlaps his
+ * own sprays by ~3 ticks, which the second slot absorbs (feedback spec §4.2).
+ * The puff lives 220 ms (13 ticks); a miss cannot repeat faster than the
+ * fastest attack either, so two slots cover it too (§5.3).
+ */
+const FLASH_DURATION_MS: Readonly<Record<FlashKind, number>> = { body: 420, shield: 260, weapon: 260, miss: 220 }
+/** Peak opacity of the ring and the spark, which fade linearly from the first frame. */
 const FLASH_PEAK_OPACITY = 0.85
-const CONTACT_ZONES: readonly ContactZone[] = ['body', 'shield', 'weapon']
 
 /** design.md: "plus an authored height" -- presentation-only per-zone contact height, distinct from (and never derived from) any rig anchor's own rest-pose height. */
 const CONTACT_ZONE_HEIGHT: Readonly<Record<ContactZone, number>> = { body: 1.05, shield: 1.22, weapon: 1.30 }
-const CONTACT_ZONE_COLOR: Readonly<Record<ContactZone, number>> = { body: 0xe0836b, shield: 0xe8c876, weapon: 0xe7ecf5 }
+/** The puff sits on the floor, just above it so it never z-fights the arena plane (feedback spec §5.2). */
+const MISS_PUFF_HEIGHT = 0.03
+/** Height each effect kind spawns at: the three contact zones' authored heights, and the floor for the puff. */
+const FLASH_HEIGHT: Readonly<Record<FlashKind, number>> = { ...CONTACT_ZONE_HEIGHT, miss: MISS_PUFF_HEIGHT }
+/** Dark arterial red for the spray, HUD gold for the ring, white for the spark, dry sand (lighter than the floor's 0x8a6845) for the puff: the four kinds differ in shape *and* colour. */
+const FLASH_COLOR: Readonly<Record<FlashKind, number>> = { body: 0x8e1b21, shield: 0xe8c876, weapon: 0xe7ecf5, miss: 0xd9c29a }
+
+// Sand puff (feedback spec §5). `attack-missed`/`attack-evaded` carry no
+// contact point, so the puff is placed from state: along the attacker's line
+// to his target, at the horizontal distance his weapon reaches on the strike
+// frame -- never further than the target himself, and never so close it sits
+// under the attacker's own feet.
+/** Peak opacity of the puff, which fades linearly from the first frame. */
+const MISS_PUFF_PEAK_OPACITY = 0.7
+/** How much the puff grows over its life: uniform scale 1 -> 2.4 (0.16 -> 0.38 outer radius, about 12 -> 29 px). */
+const MISS_PUFF_GROWTH = 1.4
+/** Subtracted from the root-to-root distance so the puff lands in front of the target rather than under him. */
+const MISS_REACH_TARGET_MARGIN = 0.25
+/** Floor on the puff's distance from the attacker: closer than this and it reads as his own footfall. */
+const MISS_REACH_MIN = 0.6
+/**
+ * The horizontal distance from the root at which each archetype's
+ * `weaponTip` sits on the strike frame of its attack clips, in world units
+ * (feedback spec §5.2): an authored presentation table, the same discipline
+ * as `CONTACT_ZONE_HEIGHT`, and the ceiling on how far from the attacker a
+ * puff can be placed.
+ *
+ * Measured 2026-09-17 on the shipped `.glb`s, in the browser, at the seed
+ * 20260815 bouts: a throwaway Playwright spec stepped bout 0 of the
+ * `brutus`, `nerva` and `aquila` lineups and bout 1 of the `brutus/aquila/
+ * nerva` lineup one tick at a time, and on every tick that opened an
+ * attack's `contact` phase (the strike frame: `clipMapping.attackTime` puts
+ * the clip at exactly `contactAt` there) rendered at alpha 0 and read
+ * `hypot(weaponTip.world - root.world)` off the rig through a temporary
+ * debug-snapshot field, keeping only ticks whose rendered clip was the
+ * attack's own (an attacker staggered on his own contact tick plays `Hit_A`
+ * instead). Every attack measured the same figure on every sample:
+ *
+ *   heavy-shield-jab 1.466 (n=10), heavy-cleave 0.625 (n=7);
+ *   fast-slash 1.251 (n=22), fast-burst-lunge 2.135 (n=26);
+ *   technical-thrust 2.500 (n=20), technical-driving-thrust 2.065 (n=11),
+ *   technical-parry-counter 2.541 (n=3).
+ *
+ * Per-archetype median across the archetype's attacks, rounded to 0.05:
+ * heavy 1.046 -> 1.05, fast 1.693 -> 1.70, technical 2.500 -> 2.50. The
+ * spec's starting values were { heavy: 1.15, fast: 1.85, technical: 1.75 };
+ * fast and technical were outside its 0.10 tolerance, so the measured
+ * figures are what ships. The heavy figure is low because the cleave's
+ * strike frame is an overhead chop with the tip high rather than far.
+ */
+const MISS_REACH: Readonly<Record<Archetype, number>> = { heavy: 1.05, fast: 1.7, technical: 2.5 }
+
+// Blood spray (feedback spec §4). Seven droplets authored in local space
+// along +Z, the spray axis; `spawn` orients that axis along the blow.
+const SPRAY_DROPLETS: readonly { x: number; y: number; z: number; radius: number }[] = [
+  { x: 0, y: 0, z: 0.06, radius: 0.07 },
+  { x: 0.05, y: 0.03, z: 0.18, radius: 0.055 },
+  { x: -0.06, y: -0.02, z: 0.22, radius: 0.05 },
+  { x: 0.02, y: 0.07, z: 0.31, radius: 0.045 },
+  { x: -0.03, y: -0.06, z: 0.36, radius: 0.045 },
+  { x: 0.08, y: 0.01, z: 0.44, radius: 0.04 },
+  { x: -0.05, y: 0.05, z: 0.52, radius: 0.038 },
+]
+const SPRAY_PEAK_OPACITY = 0.92
+/** Fraction of the spray's life it holds at peak opacity before fading -- the hold is what makes it read as a thing that happened rather than a flicker. */
+const SPRAY_HOLD_FRACTION = 0.45
+/** Scale along the spray axis at age 0; it shoots out to 1.0 in the first ~120 ms. */
+const SPRAY_INITIAL_LENGTH_SCALE = 0.45
+/** World units the spray drops by the end of its life (gravity). */
+const SPRAY_DROP_UNITS = 0.22
+/** Base scale of a spray whose batch carried a `critical-hit` for the same action instance. */
+const SPRAY_CRITICAL_SCALE = 1.4
+/** Spray direction when attacker and victim coincide: world +Z. */
+const SPRAY_FALLBACK_DIRECTION: Readonly<Vec2> = { x: 0, z: 1 }
 
 // ---------------------------------------------------------------------------
 // Small pure helpers
@@ -384,6 +487,43 @@ function lerp(a: number, b: number, t: number): number {
 
 function lerpVec2(a: Readonly<Vec2>, b: Readonly<Vec2>, t: number): Vec2 {
   return { x: lerp(a.x, b.x, t), z: lerp(a.z, b.z, t) }
+}
+
+/**
+ * Everything a projection to canvas pixels needs: the live perspective camera
+ * and the canvas's own CSS size. Shared by the per-frame damage-number
+ * placement and the dev-only pixel measurements below.
+ */
+interface ProjectionContext {
+  camera: THREE.PerspectiveCamera
+  widthPx: number
+  heightPx: number
+}
+
+/** Scratch vectors, module-level so a per-frame placement or a per-tick measurement run allocates nothing. */
+const PROJECTED_POINT = new THREE.Vector3()
+const NUMBER_ANCHOR = new THREE.Vector3()
+
+/**
+ * A world point in canvas pixels, top-left origin, `y` downward. A pure
+ * function of the camera and the canvas size, so it is also the overlay's
+ * coordinate system: `.arena__numbers` is `inset: 0` over a canvas that
+ * fills the same box.
+ *
+ * Points behind the camera would project through the perspective divide with
+ * a negative `w` and come back mirrored. Nothing projected here can be behind
+ * it -- the camera always sits `CAMERA_MIN_DISTANCE..CAMERA_MAX_DISTANCE`
+ * (8.81..18) units back from the look target it is
+ * pointed at, and everything projected is a fighter, or a contact point on
+ * one, inside a `7.7`-radius arena floor -- so this deliberately carries no
+ * guard that would silently substitute a fake number for a real geometry bug.
+ */
+function projectToCanvasPx(point: THREE.Vector3, projection: ProjectionContext): ScreenPointPx {
+  PROJECTED_POINT.copy(point).project(projection.camera)
+  return {
+    x: (PROJECTED_POINT.x * 0.5 + 0.5) * projection.widthPx,
+    y: (0.5 - PROJECTED_POINT.y * 0.5) * projection.heightPx,
+  }
 }
 
 /**
@@ -424,22 +564,41 @@ function deepFreeze<T>(value: T): T {
   return value
 }
 
-function buildContactFlashGeometry(zone: ContactZone): THREE.BufferGeometry {
-  switch (zone) {
+/**
+ * The seven droplets of `SPRAY_DROPLETS`, each a low-poly sphere translated
+ * into place and merged into ONE geometry shared by the spray slots (0.55
+ * units along +Z, 0.16 across -- about 41 px long at the shipped 75 px/unit).
+ * `mergeGeometries` is the real jsm helper, not a hand-rolled copy:
+ * `stateHash.test.ts` mocks only the bare `three` module, so this import
+ * stays real there.
+ */
+function buildBloodSprayGeometry(): THREE.BufferGeometry {
+  const droplets = SPRAY_DROPLETS.map(({ x, y, z, radius }) => new THREE.SphereGeometry(radius, 5, 4).translate(x, y, z))
+  const merged = mergeGeometries(droplets)
+  for (const droplet of droplets) droplet.dispose()
+  if (!merged) throw new Error('blood spray droplets did not merge into one geometry')
+  return merged
+}
+
+function buildContactFlashGeometry(kind: FlashKind): THREE.BufferGeometry {
+  switch (kind) {
     case 'body':
-      return new THREE.SphereGeometry(0.14, 8, 6)
+      return buildBloodSprayGeometry()
     case 'shield':
       return new THREE.RingGeometry(0.09, 0.19, 16)
     case 'weapon':
       return new THREE.OctahedronGeometry(0.13, 0)
+    case 'miss':
+      return new THREE.RingGeometry(0.06, 0.16, 12)
   }
 }
 
 // ---------------------------------------------------------------------------
-// Contact flashes: a small bounded pool (two meshes per zone, round-robin),
+// Contact effects: a small bounded pool (two meshes per kind, round-robin),
 // never a standalone particle system. `body`/`shield`/`weapon` are
 // distinguished by mesh geometry (and color), never by color alone
-// (design.md).
+// (design.md). Each kind has its own life and its own per-frame look
+// (`animateFlash`); the spray additionally has a direction and a base scale.
 // ---------------------------------------------------------------------------
 
 interface FlashSlot {
@@ -447,22 +606,63 @@ interface FlashSlot {
   material: THREE.MeshBasicMaterial
   spawnedAtPresentationMs: number
   id: string
+  /** Uniform base scale set at spawn (1, or `SPRAY_CRITICAL_SCALE` for a critical spray); the spray's axis scale multiplies it. */
+  scaleBase: number
+}
+
+interface FlashSpawnOptions {
+  /** Horizontal direction the spray points along (from the attacker through the victim). Only the `body` kind reads it. */
+  direction?: Readonly<Vec2>
+  /** Base scale of the mesh; defaults to 1. */
+  scaleBase?: number
+}
+
+/**
+ * The per-frame look of one live effect at `t` = age / life, 0..1, by kind
+ * (feedback spec §4.2 for the spray). The ring and the spark fade linearly
+ * from their peak, exactly as before; the spray shoots out along its axis
+ * in the first ~120 ms and holds its length, drops 0.22 units under
+ * gravity by the end, and holds full opacity for the first 45 % of its life
+ * before fading. The puff grows outward on the floor with the same ease-out
+ * the spray shoots with, fading from the first frame (§5.3).
+ */
+function animateFlash(kind: FlashKind, slot: FlashSlot, t: number): void {
+  switch (kind) {
+    case 'body': {
+      const shoot = 1 - (1 - t) * (1 - t)
+      const lengthScale = SPRAY_INITIAL_LENGTH_SCALE + (1 - SPRAY_INITIAL_LENGTH_SCALE) * shoot
+      slot.mesh.scale.set(slot.scaleBase, slot.scaleBase, slot.scaleBase * lengthScale)
+      slot.mesh.position.y = CONTACT_ZONE_HEIGHT.body - SPRAY_DROP_UNITS * t * t
+      slot.material.opacity = t < SPRAY_HOLD_FRACTION ? SPRAY_PEAK_OPACITY : (SPRAY_PEAK_OPACITY * (1 - t)) / (1 - SPRAY_HOLD_FRACTION)
+      break
+    }
+    case 'shield':
+    case 'weapon':
+      slot.material.opacity = FLASH_PEAK_OPACITY * (1 - t)
+      break
+    case 'miss': {
+      const spread = 1 + MISS_PUFF_GROWTH * (1 - (1 - t) * (1 - t))
+      slot.mesh.scale.set(spread, spread, spread)
+      slot.material.opacity = MISS_PUFF_PEAK_OPACITY * (1 - t)
+      break
+    }
+  }
 }
 
 class ContactFlashEffects {
   private readonly geometries: THREE.BufferGeometry[] = []
-  private readonly slotsByZone: Record<ContactZone, FlashSlot[]>
-  private readonly roundRobin: Record<ContactZone, number> = { body: 0, shield: 0, weapon: 0 }
+  private readonly slotsByKind: Record<FlashKind, FlashSlot[]>
+  private readonly roundRobin: Record<FlashKind, number> = { body: 0, shield: 0, weapon: 0, miss: 0 }
   private nextSerial = 0
 
   constructor(scene: THREE.Scene) {
-    this.slotsByZone = { body: [], shield: [], weapon: [] }
-    for (const zone of CONTACT_ZONES) {
-      const geometry = buildContactFlashGeometry(zone)
+    this.slotsByKind = { body: [], shield: [], weapon: [], miss: [] }
+    for (const kind of FLASH_KINDS) {
+      const geometry = buildContactFlashGeometry(kind)
       this.geometries.push(geometry)
-      for (let i = 0; i < FLASH_SLOTS_PER_ZONE; i += 1) {
+      for (let i = 0; i < FLASH_SLOTS_PER_KIND; i += 1) {
         const material = new THREE.MeshBasicMaterial({
-          color: CONTACT_ZONE_COLOR[zone],
+          color: FLASH_COLOR[kind],
           transparent: true,
           opacity: 0,
           side: THREE.DoubleSide,
@@ -471,64 +671,119 @@ class ContactFlashEffects {
         const mesh = new THREE.Mesh(geometry, material)
         mesh.visible = false
         mesh.frustumCulled = false
+        // The puff lies flat on the floor; `spawn` never rotates it (only the spray is turned, by `lookAt`).
+        if (kind === 'miss') mesh.rotation.x = -Math.PI / 2
         scene.add(mesh)
-        this.slotsByZone[zone].push({ mesh, material, spawnedAtPresentationMs: 0, id: '' })
+        this.slotsByKind[kind].push({ mesh, material, spawnedAtPresentationMs: 0, id: '', scaleBase: 1 })
       }
     }
   }
 
-  spawn(zone: ContactZone, point: Readonly<Vec2>, presentationMs: number): void {
-    const slots = this.slotsByZone[zone]
-    const index = this.roundRobin[zone] % slots.length
-    this.roundRobin[zone] += 1
+  /**
+   * Takes the kind's next round-robin slot and shows it at age 0. The spray's
+   * +Z axis is pointed along `options.direction` -- away from the attacker,
+   * through the victim, the way the blow travelled -- with `lookAt` from the
+   * contact point; the ring and the spark are never rotated.
+   */
+  spawn(kind: FlashKind, point: Readonly<Vec2>, presentationMs: number, options: FlashSpawnOptions = {}): void {
+    const slots = this.slotsByKind[kind]
+    const index = this.roundRobin[kind] % slots.length
+    this.roundRobin[kind] += 1
     const slot = slots[index]
-    slot.mesh.position.set(point.x, CONTACT_ZONE_HEIGHT[zone], point.z)
+    const height = FLASH_HEIGHT[kind]
+    slot.mesh.position.set(point.x, height, point.z)
+    if (kind === 'body') {
+      const direction = options.direction ?? SPRAY_FALLBACK_DIRECTION
+      slot.mesh.lookAt(point.x + direction.x, height, point.z + direction.z)
+    }
+    slot.scaleBase = options.scaleBase ?? 1
     slot.mesh.visible = true
-    slot.material.opacity = FLASH_PEAK_OPACITY
     slot.spawnedAtPresentationMs = presentationMs
-    slot.id = `${zone}-${this.nextSerial}`
+    slot.id = `${kind}-${this.nextSerial}`
     this.nextSerial += 1
+    animateFlash(kind, slot, 0)
   }
 
-  /** Fades and, once past `FLASH_DURATION_MS`, hides each active flash -- "expire before the next exchange" (design.md). */
+  /** Animates each active effect by its own kind's life and, once past it, hides it -- "expire before the next exchange" (design.md). */
   update(presentationMs: number): void {
-    for (const zone of CONTACT_ZONES) {
-      for (const slot of this.slotsByZone[zone]) {
+    for (const kind of FLASH_KINDS) {
+      const life = FLASH_DURATION_MS[kind]
+      for (const slot of this.slotsByKind[kind]) {
         if (!slot.mesh.visible) continue
         const age = presentationMs - slot.spawnedAtPresentationMs
-        if (age >= FLASH_DURATION_MS) {
+        if (age >= life) {
           slot.mesh.visible = false
           continue
         }
-        slot.material.opacity = FLASH_PEAK_OPACITY * (1 - age / FLASH_DURATION_MS)
+        animateFlash(kind, slot, clamp01(age / life))
       }
     }
   }
 
-  /** Hides every flash immediately -- used by bout start/rematch (brief resolution #11), never by ordinary fade-out. */
+  /** Hides every effect immediately -- used by bout start/rematch (brief resolution #11), never by ordinary fade-out. */
   clear(): void {
-    for (const zone of CONTACT_ZONES) {
-      for (const slot of this.slotsByZone[zone]) slot.mesh.visible = false
+    for (const kind of FLASH_KINDS) {
+      for (const slot of this.slotsByKind[kind]) slot.mesh.visible = false
     }
   }
 
   activeEffectIds(): string[] {
     const ids: string[] = []
-    for (const zone of CONTACT_ZONES) {
-      for (const slot of this.slotsByZone[zone]) if (slot.mesh.visible) ids.push(slot.id)
+    for (const kind of FLASH_KINDS) {
+      for (const slot of this.slotsByKind[kind]) if (slot.mesh.visible) ids.push(slot.id)
     }
     return ids
   }
 
   dispose(scene: THREE.Scene): void {
-    for (const zone of CONTACT_ZONES) {
-      for (const slot of this.slotsByZone[zone]) {
+    for (const kind of FLASH_KINDS) {
+      for (const slot of this.slotsByKind[kind]) {
         scene.remove(slot.mesh)
         slot.material.dispose()
       }
     }
     for (const geometry of this.geometries) geometry.dispose()
   }
+}
+
+/**
+ * The direction a blow travelled -- from the attacker through the victim --
+ * read off the frame's own state for the event's two combatants (feedback
+ * spec §4.1: presentation re-derives no rule; this is a subtraction of two
+ * simulation positions and nothing more). World +Z when the two coincide.
+ */
+function blowDirection(current: BattleState, actorId: CombatantId, targetId: CombatantId): Vec2 {
+  const actor = current.encounter.combatants[actorId] as FighterCombatState | undefined
+  const target = current.encounter.combatants[targetId] as FighterCombatState | undefined
+  if (!actor || !target) return { ...SPRAY_FALLBACK_DIRECTION }
+  const dx = target.position.x - actor.position.x
+  const dz = target.position.z - actor.position.z
+  const length = Math.hypot(dx, dz)
+  if (length <= 1e-9) return { ...SPRAY_FALLBACK_DIRECTION }
+  return { x: dx / length, z: dz / length }
+}
+
+/**
+ * Where a swing that hit nothing ended (feedback spec §5.2): along the
+ * attacker's line to his target, `clamp(distance - 0.25, 0.6, MISS_REACH[archetype])`
+ * out from his root -- the weapon's own reach on the strike frame, capped so
+ * the puff never lands under the target, floored so it never lands under the
+ * attacker. Read from the frame's state, which is the tick the batch was
+ * flushed on rather than the event's own tick (the accepted approximation of
+ * §5.2: a miss carries no contact point, and presentation keeps no position
+ * history). World +Z from the attacker when the two coincide; the floor
+ * distance ahead of him when the target is missing; the origin when the
+ * attacker himself is (the event always names a live combatant, so neither
+ * fallback is reachable from the kernel).
+ */
+function missPoint(current: BattleState, actorId: CombatantId, targetId: CombatantId): Vec2 {
+  const actor = current.encounter.combatants[actorId] as FighterCombatState | undefined
+  const target = current.encounter.combatants[targetId] as FighterCombatState | undefined
+  if (!actor) return { x: 0, z: 0 }
+  const towardTarget = blowDirection(current, actorId, targetId)
+  const distance = target ? Math.hypot(target.position.x - actor.position.x, target.position.z - actor.position.z) : 0
+  const reach = Math.min(Math.max(distance - MISS_REACH_TARGET_MARGIN, MISS_REACH_MIN), MISS_REACH[actor.definition.archetype])
+  return { x: actor.position.x + towardTarget.x * reach, z: actor.position.z + towardTarget.z * reach }
 }
 
 // ---------------------------------------------------------------------------
@@ -587,6 +842,14 @@ export class ArenaView {
   private readonly perspectiveCamera = new THREE.PerspectiveCamera(CAMERA_FOV_DEGREES, 1, CAMERA_NEAR, CAMERA_FAR)
   private readonly arenaCamera: ArenaCamera
   private readonly flashes: ContactFlashEffects
+  /**
+   * The damage-number pool (feedback spec §6). Entries-only until the
+   * constructor binds it to the overlay, which it does only when the canvas
+   * has a parent -- `stateHash.test.ts` constructs this view in plain Node
+   * with neither a `parentElement` nor a `document`, and on that path no
+   * `document.*` call may be made.
+   */
+  private readonly numbers = new DamageNumberPool()
   private readonly rigs = new Map<CombatantId, FighterRig>()
   private readonly observer: ResizeObserver
 
@@ -661,6 +924,10 @@ export class ArenaView {
     this.scene.fog = new THREE.Fog(0x16131a, 14, 24)
 
     this.flashes = new ContactFlashEffects(this.scene)
+    // The overlay goes directly after the canvas -- before the status heading
+    // `index.html` places after it, so a rising digit paints beneath the
+    // heading's text -- and only when the canvas has a parent (see `numbers`).
+    if (canvas.parentElement) this.numbers.attach(canvas.parentElement, canvas)
     this.buildArena()
     this.applyCameraTransform(this.arenaCamera.state)
 
@@ -671,6 +938,8 @@ export class ArenaView {
     this.canvas.addEventListener('webglcontextlost', this.handleContextLost, false)
 
     if (this.contextLost) {
+      // The same state `handleContextLost` produces: a dead arena keeps no overlay.
+      this.numbers.dispose()
       this.canvas.hidden = true
       this.showFallback()
     }
@@ -689,9 +958,12 @@ export class ArenaView {
           this.applyCameraTransform(this.arenaCamera.update(targets, 1 / SETTLE_STEPS_PER_SECOND))
         }
         this.renderer!.render(this.scene, this.perspectiveCamera)
+        // A direct render outside `applyFrame`: the numbers follow the camera
+        // that was just drawn, at the frame's own tick (no time has passed).
+        this.placeDamageNumbers(this.lastFrame.current.encounter.tick * MS_PER_TICK, this.isReducedMotion())
       }
       this.getDebugSnapshot = (): ArenaDebugSnapshot =>
-        buildArenaDebugSnapshot(this.rigs, this.flashes, this.arenaCamera.state, this.eventCursor, {
+        buildArenaDebugSnapshot(this.rigs, this.flashes, this.numbers, this.arenaCamera.state, this.eventCursor, {
           camera: this.perspectiveCamera,
           // The canvas's CSS size, not the drawing-buffer size: `resize()`
           // hands the renderer exactly these numbers with `updateStyle:
@@ -719,6 +991,7 @@ export class ArenaView {
     if (this.contextLost) return
 
     this.flashes.clear()
+    this.numbers.clear()
 
     for (const rig of this.rigs.values()) this.disposeRig(rig)
     this.rigs.clear()
@@ -756,6 +1029,7 @@ export class ArenaView {
     if (this.contextLost) return // see `startBout`'s matching guard
 
     this.flashes.clear()
+    this.numbers.clear()
     for (const rig of this.rigs.values()) this.disposeRig(rig)
     this.rigs.clear()
   }
@@ -766,6 +1040,7 @@ export class ArenaView {
     for (const rig of this.rigs.values()) this.disposeRig(rig)
     this.rigs.clear()
     this.flashes.dispose(this.scene)
+    this.numbers.dispose()
     if (!this.contextLost) this.renderer?.dispose()
     if (this.fallbackElement) {
       this.fallbackElement.remove()
@@ -866,7 +1141,7 @@ export class ArenaView {
     this.reconcileRigs(current.encounter.combatantIds, current.encounter.combatants)
 
     const reducedMotion = this.isReducedMotion()
-    this.processNewEvents(events, reducedMotion, presentationMs)
+    this.processNewEvents(events, current, reducedMotion, presentationMs)
 
     const framingTargets: HorizontalFramingTarget[] = []
 
@@ -911,10 +1186,30 @@ export class ArenaView {
     // `this.renderer`/`this.contextLost` are always set together (see the
     // field's own doc comment).
     this.renderer!.render(this.scene, this.perspectiveCamera)
+    // After the render, so the camera's matrices are the ones just drawn.
+    this.placeDamageNumbers(presentationMs, reducedMotion)
 
     if (this.activeBoutIndex !== undefined) this.canvas.dataset.activeBoutIndex = String(this.activeBoutIndex)
     this.canvas.dataset.lastEventId = String(this.eventCursor)
     this.canvas.dataset.renderedCombatants = String(this.rigs.size)
+  }
+
+  /**
+   * Ages the damage numbers on the encounter clock and places each live one
+   * over its contact point through the camera just rendered (feedback spec
+   * §6.3): `(worldX, DAMAGE_NUMBER_HEIGHT, worldZ)` projected to canvas
+   * pixels, which are the overlay's own pixels. Runs after every direct
+   * `renderer.render` -- `applyFrame` and the dev-only `settleCameraSeconds`.
+   */
+  private placeDamageNumbers(presentationMs: number, reducedMotion: boolean): void {
+    const projection: ProjectionContext = {
+      camera: this.perspectiveCamera,
+      widthPx: this.canvas.clientWidth,
+      heightPx: this.canvas.clientHeight,
+    }
+    this.numbers.update(presentationMs, reducedMotion, {
+      project: (x, y, z) => projectToCanvasPx(NUMBER_ANCHOR.set(x, y, z), projection),
+    })
   }
 
   /**
@@ -935,9 +1230,21 @@ export class ArenaView {
    * split across two different batches -- they're emitted atomically on the
    * same tick) lets the `damage-dealt` branch skip its flash whenever this
    * same batch already spawned one for the paired `attack-blocked`.
+   *
+   * `criticalInstanceIds` is its sibling for `critical-hit`, which the
+   * kernel likewise emits immediately before its `damage-dealt` on the same
+   * tick: the paired spray gets the larger base scale. `current` is the
+   * frame's state, read only for the two combatants' positions so the spray
+   * can point the way the blow travelled (feedback spec §4.1).
+   *
+   * Every `damage-dealt` also spawns a damage number -- blocked chip damage
+   * included, in its own `shield` style -- and does so under reduced motion
+   * too, because the number is the reduced-motion hit channel (§6.4). Its
+   * kind is read off the same two batch-local sets; nothing is re-derived.
    */
-  private processNewEvents(events: readonly EncounterEvent[], reducedMotion: boolean, presentationMs: number): void {
+  private processNewEvents(events: readonly EncounterEvent[], current: BattleState, reducedMotion: boolean, presentationMs: number): void {
     const blockedInstanceIds = new Set<string>()
+    const criticalInstanceIds = new Set<string>()
 
     for (const event of events) {
       if (event.id <= this.eventCursor) continue
@@ -951,11 +1258,27 @@ export class ArenaView {
         case 'attack-parried':
           if (!reducedMotion) this.flashes.spawn('weapon', event.contactPoint, presentationMs)
           break
-        case 'damage-dealt':
-          if (!reducedMotion && !blockedInstanceIds.has(event.actionInstanceId)) {
-            this.flashes.spawn(event.contactZone, event.contactPoint, presentationMs)
-          }
+        case 'attack-missed':
+        case 'attack-evaded':
+          // Steel through air, from the attacker's side, whatever the reason:
+          // a sand puff where the swing ended (feedback spec §5).
+          if (!reducedMotion) this.flashes.spawn('miss', missPoint(current, event.actorId, event.targetId), presentationMs)
           break
+        case 'critical-hit':
+          criticalInstanceIds.add(event.actionInstanceId)
+          break
+        case 'damage-dealt': {
+          const blocked = blockedInstanceIds.has(event.actionInstanceId)
+          const critical = criticalInstanceIds.has(event.actionInstanceId)
+          if (!reducedMotion && !blocked) {
+            this.flashes.spawn(event.contactZone, event.contactPoint, presentationMs, {
+              direction: blowDirection(current, event.actorId, event.targetId),
+              scaleBase: critical ? SPRAY_CRITICAL_SCALE : 1,
+            })
+          }
+          this.numbers.spawn(event, classifyDamage(event, blocked, critical), presentationMs)
+          break
+        }
         case 'fighter-staggered': {
           const rig = this.rigs.get(event.combatantId)
           if (rig) rig.staggerStartTick = event.tick
@@ -1118,6 +1441,8 @@ export class ArenaView {
     for (const rig of this.rigs.values()) this.disposeRig(rig)
     this.rigs.clear()
     this.flashes.dispose(this.scene)
+    // Removed, not hidden: a dead arena must not keep floating numbers.
+    this.numbers.dispose()
     this.renderer?.dispose()
 
     this.canvas.hidden = true
@@ -1200,39 +1525,8 @@ export class ArenaView {
 // generally do not prune unused members out of an otherwise-live class.
 // ---------------------------------------------------------------------------
 
-/**
- * Everything the pixel measurements below need in order to turn a world
- * point into a canvas pixel: the live perspective camera and the canvas's own
- * CSS size.
- */
-interface ProjectionContext {
-  camera: THREE.PerspectiveCamera
-  widthPx: number
-  heightPx: number
-}
-
-/** Scratch vectors, module-level so a per-tick measurement run allocates nothing. */
-const PROJECTED_POINT = new THREE.Vector3()
+/** Scratch vector, module-level so a per-tick measurement run allocates nothing. `projectToCanvasPx` and `ProjectionContext` live with the shared helpers above. */
 const MEASURED_CORNER = new THREE.Vector3()
-
-/**
- * A world point in canvas pixels, top-left origin, `y` downward.
- *
- * Points behind the camera would project through the perspective divide with
- * a negative `w` and come back mirrored. Nothing measured here can be behind
- * it -- the camera always sits `CAMERA_MIN_DISTANCE..CAMERA_MAX_DISTANCE`
- * (8.81..18) units back from the look target it is
- * pointed at, and everything measured is a fighter inside the sand disc
- * arena floor -- so this deliberately carries no guard that would silently
- * substitute a fake number for a real geometry bug.
- */
-function projectToCanvasPx(point: THREE.Vector3, projection: ProjectionContext): ScreenPointPx {
-  PROJECTED_POINT.copy(point).project(projection.camera)
-  return {
-    x: (PROJECTED_POINT.x * 0.5 + 0.5) * projection.widthPx,
-    y: (0.5 - PROJECTED_POINT.y * 0.5) * projection.heightPx,
-  }
-}
 
 interface MutableBoundsPx {
   minX: number
@@ -1297,6 +1591,7 @@ function accumulateProjectedBounds(
 function buildArenaDebugSnapshot(
   rigs: ReadonlyMap<CombatantId, FighterRig>,
   flashes: ContactFlashEffects,
+  numbers: DamageNumberPool,
   cameraState: ArenaCameraState,
   eventCursor: number,
   projection: ProjectionContext,
@@ -1399,6 +1694,7 @@ function buildArenaDebugSnapshot(
     jointRotations,
     activeClip,
     activeEffectIds: flashes.activeEffectIds(),
+    activeDamageNumbers: numbers.snapshot(),
     trailPointCounts,
     camera: cameraState,
     eventCursor,

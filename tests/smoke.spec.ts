@@ -151,6 +151,7 @@ test('resets rig identity, pose, trails, flashes, camera framing, the audio curs
   expect(Object.keys(boutZeroStart!.rootPositions).sort()).toEqual(['away.drusus', 'home.aquila'])
   expect(boutZeroStart!.rootPositions).toEqual({ 'home.aquila': { x: -4.7, z: 0 }, 'away.drusus': { x: 4.7, z: 0 } })
   expect(boutZeroStart!.activeEffectIds).toEqual([])
+  expect(boutZeroStart!.activeDamageNumbers).toEqual([])
   expect(boutZeroStart!.trailPointCounts).toEqual({ 'home.aquila': 0, 'away.drusus': 0 })
   expect(boutZeroStart!.eventCursor).toBe(-1)
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getAudioEventCursor!())).toBe(-1)
@@ -171,6 +172,7 @@ test('resets rig identity, pose, trails, flashes, camera framing, the audio curs
   expect(Object.keys(boutOneStart!.rootPositions).sort()).toEqual(['away.cassius', 'home.nerva'])
   expect(boutOneStart!.rootPositions).toEqual({ 'home.nerva': { x: -4.7, z: 0 }, 'away.cassius': { x: 4.7, z: 0 } })
   expect(boutOneStart!.activeEffectIds).toEqual([])
+  expect(boutOneStart!.activeDamageNumbers).toEqual([])
   expect(boutOneStart!.trailPointCounts).toEqual({ 'home.nerva': 0, 'away.cassius': 0 })
   expect(boutOneStart!.eventCursor).toBe(-1)
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getAudioEventCursor!())).toBe(-1)
@@ -184,6 +186,7 @@ test('resets rig identity, pose, trails, flashes, camera framing, the audio curs
   expect(Object.keys(boutTwoStart!.rootPositions).sort()).toEqual(['away.magnus', 'home.brutus'])
   expect(boutTwoStart!.rootPositions).toEqual({ 'home.brutus': { x: -4.7, z: 0 }, 'away.magnus': { x: 4.7, z: 0 } })
   expect(boutTwoStart!.activeEffectIds).toEqual([])
+  expect(boutTwoStart!.activeDamageNumbers).toEqual([])
   expect(boutTwoStart!.trailPointCounts).toEqual({ 'home.brutus': 0, 'away.magnus': 0 })
   expect(boutTwoStart!.eventCursor).toBe(-1)
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getAudioEventCursor!())).toBe(-1)
@@ -255,6 +258,7 @@ test('resets rig identity, pose, trails, flashes, the audio cursor, and event cu
   // cursor held going in.
   expect(afterRematch!.rootPositions).toEqual({})
   expect(afterRematch!.activeEffectIds).toEqual([])
+  expect(afterRematch!.activeDamageNumbers).toEqual([])
   expect(afterRematch!.trailPointCounts).toEqual({})
   expect(afterRematch!.eventCursor).toBe(-1)
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getAudioEventCursor!())).toBe(-1)
@@ -283,6 +287,7 @@ test('resets rig identity, pose, trails, flashes, the audio cursor, and event cu
   // else.
   expect(postRematchBoutStart!.rootPositions).toEqual({ 'home.aquila': { x: -4.7, z: 0 }, 'away.drusus': { x: 4.7, z: 0 } })
   expect(postRematchBoutStart!.activeEffectIds).toEqual([])
+  expect(postRematchBoutStart!.activeDamageNumbers).toEqual([])
   expect(postRematchBoutStart!.trailPointCounts).toEqual({ 'home.aquila': 0, 'away.drusus': 0 })
   expect(postRematchBoutStart!.eventCursor).toBe(-1)
   expect(await page.evaluate(() => window.__GLADIATOR_TEST__.getAudioEventCursor!())).toBe(-1)
@@ -369,6 +374,18 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
   // under reduced motion (`ArenaView.ts`'s `processNewEvents`/weapon-trail
   // gating, both keyed off the same `isReducedMotion()` check).
   expect(reducedSnapshot!.activeEffectIds).toEqual([])
+  // The number is the reduced-motion hit channel (feedback spec §6.4): still
+  // spawned, it just does not rise.
+  //
+  // ONE number, not the two this assertion carried before the 2026-09-05
+  // fighting-room slice: it used to read tick 231's body hit (31) and tick
+  // 254's blocked chip (11), and that bout no longer exists. The re-cut bout's
+  // first blow is the tick-255 lunge for 49 the assertions just above are
+  // already written against -- so the number channel now agrees with the hp
+  // arithmetic (420 - 49 = 371) in the same test, which is a stronger check
+  // than the old pair was. It is still proof the burst spawned at all: the
+  // number is live at age 0 after a single `advanceTicks(255)`.
+  expect(reducedSnapshot!.activeDamageNumbers).toMatchObject([{ amount: 49, kind: 'body' }])
 })
 
 test('renders movement-rich encounter combat', async ({ page }) => {
@@ -457,8 +474,9 @@ test('replays no new effects when the same tick pair is re-rendered at a differe
     return {
       eventCursor: before.eventCursor,
       activeEffectIds: before.activeEffectIds,
-      afterAlphaLow: { eventCursor: afterAlphaLow.eventCursor, activeEffectIds: afterAlphaLow.activeEffectIds },
-      afterAlphaHigh: { eventCursor: afterAlphaHigh.eventCursor, activeEffectIds: afterAlphaHigh.activeEffectIds },
+      activeDamageNumbers: before.activeDamageNumbers,
+      afterAlphaLow: { eventCursor: afterAlphaLow.eventCursor, activeEffectIds: afterAlphaLow.activeEffectIds, activeDamageNumbers: afterAlphaLow.activeDamageNumbers },
+      afterAlphaHigh: { eventCursor: afterAlphaHigh.eventCursor, activeEffectIds: afterAlphaHigh.activeEffectIds, activeDamageNumbers: afterAlphaHigh.activeDamageNumbers },
     }
   })
 
@@ -474,6 +492,11 @@ test('replays no new effects when the same tick pair is re-rendered at a differe
   expect(result.afterAlphaLow.activeEffectIds).toEqual(result.activeEffectIds)
   expect(result.afterAlphaHigh.eventCursor).toBe(result.eventCursor)
   expect(result.afterAlphaHigh.activeEffectIds).toEqual(result.activeEffectIds)
+  // The same holds for the damage numbers (the 700-tick burst fills all six
+  // slots; the exact contents do not matter, only that the two replays match).
+  expect(result.activeDamageNumbers.length).toBeGreaterThan(0)
+  expect(result.afterAlphaLow.activeDamageNumbers).toEqual(result.activeDamageNumbers)
+  expect(result.afterAlphaHigh.activeDamageNumbers).toEqual(result.activeDamageNumbers)
 })
 
 test('shows a readable fallback and keeps the series running after WebGL context loss', async ({ page }) => {
@@ -483,12 +506,20 @@ test('shows a readable fallback and keeps the series running after WebGL context
   const tickBefore = await page.evaluate(() => window.__GLADIATOR_TEST__.getActiveSeriesState()?.activeBattle?.encounter.tick)
   expect(tickBefore).toEqual(expect.any(Number))
 
+  // The six pooled damage-number spans exist (hidden: only 60 ticks in, no
+  // hit has landed) BEFORE the loss -- without this the `toHaveCount(0)`
+  // below would be vacuous.
+  await expect(page.locator('[data-testid="damage-number"]')).toHaveCount(6)
+
   await page.evaluate(() => {
     document.querySelector('canvas')!.dispatchEvent(new Event('webglcontextlost'))
   })
 
   await expect(page.locator('.arena__webgl-fallback')).toBeVisible()
   await expect(page.locator('canvas')).toBeHidden()
+  // The overlay was removed, not merely hidden: a dead arena must not keep
+  // floating numbers (feedback spec §6.5).
+  await expect(page.locator('[data-testid="damage-number"]')).toHaveCount(0)
 
   // The series and runtime continue after the presentation failure: ticks
   // still advance, and the fallback stays up rather than crashing the page.
@@ -964,7 +995,7 @@ test('keeps the sound control (and its audio voice/cursor reset) working across 
   await expect(page.getByTestId('toggle-sound')).toBeVisible()
 })
 
-test('audio debug: triggers all nine cues via the dev-only ?audioDebug=1 panel without starting a bout', async ({ page }) => {
+test('audio debug: triggers all ten cues via the dev-only ?audioDebug=1 panel without starting a bout', async ({ page }) => {
   await page.goto('/?audioDebug=1&seed=20260815&snapshot')
   await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => window.__GLADIATOR_TEST__.startNextSeries())
@@ -976,6 +1007,7 @@ test('audio debug: triggers all nine cues via the dev-only ?audioDebug=1 panel w
     'footstep-heavy',
     'weapon-whoosh-light',
     'weapon-whoosh-heavy',
+    'weapon-miss',
     'body-hit',
     'shield-block',
     'weapon-parry',

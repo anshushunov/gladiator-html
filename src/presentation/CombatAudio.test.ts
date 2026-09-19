@@ -12,6 +12,8 @@ import { STYLE_GAIT_CYCLE_DISTANCE } from './gait'
 import type {
   ActionStartedEvent,
   AttackBlockedEvent,
+  AttackEvadedEvent,
+  AttackMissedEvent,
   AttackParriedEvent,
   DamageDealtEvent,
   EncounterEvent,
@@ -139,6 +141,28 @@ function shieldDamageEvent(id: number, actionInstanceId: string): DamageDealtEve
   }
 }
 
+const missEvent: AttackMissedEvent = {
+  id: 6,
+  tick: 14,
+  type: 'attack-missed',
+  actorId: 'a',
+  targetId: 'b',
+  actionInstanceId: 'a:4',
+  actionId: 'fast-slash',
+  reason: 'accuracy',
+}
+
+const evadeEvent: AttackEvadedEvent = {
+  id: 7,
+  tick: 14,
+  type: 'attack-evaded',
+  actorId: 'a',
+  targetId: 'b',
+  actionInstanceId: 'a:5',
+  actionId: 'fast-slash',
+  evadeIntent: 'backstep',
+}
+
 const staggerEvent: FighterStaggeredEvent = {
   id: 3,
   tick: 16,
@@ -209,6 +233,27 @@ describe('CombatAudio cue mapping', () => {
     expect(playedCues(backend)).toEqual(['shield-block'])
   })
 
+  it('maps attack-missed to weapon-miss', async () => {
+    const backend = new FakeAudioBackend()
+    const audio = await enabledAudio(backend)
+    audio.consume(frame([missEvent]))
+    expect(playedCues(backend)).toEqual(['weapon-miss'])
+  })
+
+  it('maps attack-evaded to weapon-miss: from the attacker\'s side it is the same steel through air', async () => {
+    const backend = new FakeAudioBackend()
+    const audio = await enabledAudio(backend)
+    audio.consume(frame([evadeEvent]))
+    expect(playedCues(backend)).toEqual(['weapon-miss'])
+  })
+
+  it('plays the whoosh at windup and then the miss cue after contact for one swing that lands nothing', async () => {
+    const backend = new FakeAudioBackend()
+    const audio = await enabledAudio(backend)
+    audio.consume(frame([actionStartedEvent(1, 'fast-slash'), { ...missEvent, id: 2 }]))
+    expect(playedCues(backend)).toEqual(['weapon-whoosh-light', 'weapon-miss'])
+  })
+
   it('maps fighter-staggered to stagger and fighter-defeated to defeat', async () => {
     const backend = new FakeAudioBackend()
     const audio = await enabledAudio(backend)
@@ -273,7 +318,7 @@ describe('CombatAudio cue mapping', () => {
 // ---------------------------------------------------------------------------
 
 describe('CombatAudio speed policy', () => {
-  it('allows all nine cue kinds at x1 and x2, up to eight simultaneous voices', async () => {
+  it('allows all ten cue kinds at x1 and x2, up to eight simultaneous voices', async () => {
     const backend = new FakeAudioBackend()
     const audio = await enabledAudio(backend)
     const events = Array.from({ length: 10 }, (_, i) => bodyHitEvent(i + 1, `inst:${i}`))
@@ -319,6 +364,13 @@ describe('CombatAudio speed policy', () => {
       { ...defeatEvent, id: 5 },
     ], { speed: 4 }))
     expect(playedCues(backend).sort()).toEqual(['body-hit', 'defeat', 'shield-block', 'stagger', 'weapon-parry'].sort())
+  })
+
+  it('drops weapon-miss at x4 while the body-hit in the same batch still plays: x4 keeps impacts only', async () => {
+    const backend = new FakeAudioBackend()
+    const audio = await enabledAudio(backend)
+    audio.consume(frame([{ ...missEvent, id: 1 }, bodyHitEvent(2)], { speed: 4 }))
+    expect(playedCues(backend)).toEqual(['body-hit'])
   })
 
   it('suppresses footsteps at x4', async () => {
