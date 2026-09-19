@@ -125,10 +125,11 @@ const MIN_ATTENUATION_RATIO = 0.9
  * `EQUIPMENT_MARGIN_FRACTION` (both module-private there) and
  * `scripts/measure-framing.ts`'s copies of them. The duplication is pinned
  * rather than trusted: `pins the widest pairing's band edge to the camera's own
- * flat region` below asserts that the widest pairing's upper edge is exactly
- * the extent at which the shipped `extentToDistance` stops being flat, so a
- * change to either constant on either side breaks that test rather than
- * silently re-defining "in band" underneath the floor.
+ * flat region` below asserts that the widest pairing's upper edge lies inside
+ * the extent at which the shipped `extentToDistance` stops being flat (and
+ * that that extent is the validated floor the camera keeps), so a change to
+ * either constant on either side breaks that test rather than silently
+ * re-defining "in band" underneath the floor.
  */
 const BAND_SEPARATION_LOW = 0.9
 // 3.4 since the 2026-09-05 fighting-room slice: this mirrors
@@ -687,23 +688,48 @@ test('pins the widest pairing\'s band edge to the camera\'s own flat region', as
   const constants = await readRigConstants(page)
 
   // The flat region has to cover the tactical band for EVERY pairing, so it
-  // ends at the widest pairing's upper edge -- hoplomachus vs hoplomachus,
-  // the widest equipment radius twice over. If this identity breaks, "in band"
-  // in this file has stopped meaning "inside the camera's flat region", and
-  // every floor and attenuation number below is being read over the wrong
-  // population.
+  // ends at or beyond the widest pairing's upper edge -- the widest equipment
+  // radius twice over. If this breaks, "in band" in this file has stopped
+  // meaning "inside the camera's flat region", and every floor and attenuation
+  // number below is being read over the wrong population.
   const widest = Math.max(constants.radii.heavy, constants.radii.fast, constants.radii.technical)
   const widestBandHigh = BAND_SEPARATION_HIGH + EQUIPMENT_MARGIN * 2 * widest
+  // Two assertions since the spear re-grip (the 2026-09-17 kit spec, PR-2),
+  // where until then there was one equality. First the coverage itself, as an
+  // inequality: the flat region must reach the widest band edge. This is the
+  // line that catches a stale `WIDEST_EQUIPMENT_RADIUS` when a rig grows --
+  // the mapping would ease out before the widest pairing's band ends.
+  // Half a thousandth of slack, for the same reason the equality below is
+  // three decimals rather than exact.
+  expect(constants.flatRegionEdgeExtent).toBeGreaterThanOrEqual(widestBandHigh - 5e-4)
+  // Second, where the edge actually is: the widest band edge, or the validated
+  // floor if that is further out. Until the re-grip the widest pairing was
+  // hoplomachus vs hoplomachus and the flat region ended exactly at its edge,
+  // `7.531226122787968` (`3.1 + 2 x 2.0141936921763492 x 1.1`). The re-grip
+  // made the hoplomachus the narrowest rig and the retiarius the widest, so
+  // the widest band edge fell to `7.000328019691777` -- and the flat region
+  // did NOT follow it down: a replay with the flat region ending at that
+  // pairing's own band edge chattered (23 crossings, 4 reversals on the
+  // retiarius-vs-retiarius trace against a ceiling of 2; `ArenaCamera.test.ts`
+  // and the spec's section 4.2.6), so `ArenaCamera.ts` keeps the edge at the
+  // extent every number in this file was measured under, through
+  // `FLAT_REGION_EDGE_FLOOR_EXTENT`. The literal here mirrors that floor and
+  // moves only when it does: up, when a measured radius pushes the widest band
+  // edge past it; never down without a re-sweep of `FLAT_DISTANCE` and the
+  // ease width.
+  //
   // Three decimals, not exact equality, and the residual is understood rather
   // than absorbed: `ArenaCamera` states the widest radius as a literal
   // (`WIDEST_EQUIPMENT_RADIUS`, refreshed for Task 7's skinned-model rig to
-  // `1.8127755462598738` and again for Task 7b's 2.0-unit models to
-  // `2.0141936921763492`, which puts the band edge at `7.531226122787968` --
-  // previously the four-decimal `1.3511` against a rig measuring
-  // `1.3511202...`), so any residual against the live measurement here is
-  // rounding, not drift. Measured, and stable: anything larger than half a
-  // thousandth means a real constant moved, not a rounding.
-  expect(constants.flatRegionEdgeExtent).toBeCloseTo(widestBandHigh, 3)
+  // `1.8127755462598738`, again for Task 7b's 2.0-unit models to
+  // `2.0141936921763492`, and for the re-grip to the retiarius'
+  // `1.772876372587171` -- originally the four-decimal `1.3511` against a rig
+  // measuring `1.3511202...`), and the bisection above resolves the edge to
+  // ~1e-7, so any residual against the live measurement here is rounding, not
+  // drift. Measured, and stable: anything larger than half a thousandth means a
+  // real constant moved, not a rounding.
+  const FLAT_REGION_EDGE_FLOOR_EXTENT = 7.531226122787968
+  expect(constants.flatRegionEdgeExtent).toBeCloseTo(Math.max(widestBandHigh, FLAT_REGION_EDGE_FLOOR_EXTENT), 3)
   report(
     `band edge: widest pairing ${widestBandHigh.toFixed(5)}, camera flat region ends at ${constants.flatRegionEdgeExtent.toFixed(5)} ` +
       `(flat distance ${constants.flatDistance})`,

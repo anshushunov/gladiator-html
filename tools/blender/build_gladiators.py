@@ -10,7 +10,7 @@ Contract (checked by src/presentation/fighterModelContract.test.ts):
          hitCenter (child of spine)
   extras.slot on every mesh: body | helmet | armour | weapon | shield | net
   clips  the KEEP_CLIPS set below plus each archetype's authored `clips`
-         (Spear_Drive on technical)
+         (Spear_Thrust and Spear_Drive on technical, gated by REACH_WINDOWS)
 
 The shipped .glb files are generated only by this script -- never hand-edited.
 Re-runnable from a clean state: every archetype starts from an empty scene.
@@ -39,7 +39,86 @@ KEEP_CLIPS = {
     '1H_Melee_Attack_Chop', '1H_Melee_Attack_Stab', '1H_Melee_Attack_Slice_Horizontal',
     '2H_Melee_Attack_Chop', '2H_Melee_Attack_Stab',
 }
-AUTHORED_CLIP = 'Spear_Drive'
+FPS = 24  # the exporter writes frame f at f / FPS seconds, so contactAt = strike / last
+
+# The two clips authored here rather than taken from the pack, both by
+# `author_clip`: guard (the pack's Idle at frame 0, keyed on every pose bone)
+# -> windup -> strike -> hold (= strike, so the mixer's contact+impact window
+# plays a held strike, not the start of the recovery) -> guard. Keys are
+# degrees, XYZ Euler relative to the bind pose, keyed on `rotation_quaternion`;
+# `hips:loc` is the pose bone's `location` in its own frame and source units
+# (x = +X, y = up along the bone, z = forward). Windup and strike are absolute
+# values, not deltas; 'Idle' keeps the guard's value at that frame. How they
+# were found, so they can be re-tuned rather than re-discovered: `upperarm.r`
+# Z swings the arm forward (+90 = straight ahead) and X raises it (+6 deg is
+# about +0.19 of tip height on the thrust); `hand.r` Z -90 keeps the spear
+# along the forearm (in the bind pose it lies across it); a chest yaw of
+# -theta (left shoulder forward, thrust) or +theta (right shoulder forward,
+# drive) pulls the hand back or pushes it forward by about 0.09 at 20 deg,
+# with the arm's Z corrected by the opposite amount so it still points ahead;
+# `upperleg.*` X negative = leg forward, positive = back; `lowerleg.l` X
+# positive = knee bend; each 0.01 of `hips:loc` z moves the tip 0.009 forward.
+AUTHORED_CLIPS = {
+    # A short cock and a straight-arm jab off the left foot. 24 frames = 1.000 s,
+    # strike at 12/24 = contactAt 0.5.
+    'Spear_Thrust': {
+        'frames': {'guard': 1, 'windup': 7, 'strike': 12, 'hold': 16, 'last': 24},
+        'keys': {
+            'chest':      ((0, -12, 0),   (0, -22, 0)),
+            'upperarm.r': ((-45, 0, -10), (0, 0, 112)),
+            'lowerarm.r': ((0, 0, 60),    (0, 0, 0)),
+            'hand.r':     ((0, 0, -50),   (0, 0, -90)),
+            'upperleg.l': ('Idle',        (-22, 0, 0)),
+            'lowerleg.l': ('Idle',        (22, 0, 0)),
+            'upperleg.r': ('Idle',        (14, 0, 0)),
+        },
+    },
+    # A deeper cock, a hip-and-chest turn and a lunge. 30 frames = 1.250 s,
+    # strike at 15/30 = contactAt 0.5.
+    'Spear_Drive': {
+        'frames': {'guard': 1, 'windup': 10, 'strike': 15, 'hold': 20, 'last': 30},
+        'keys': {
+            'chest':      ((-6, -14, 0),  (8, 20, 0)),
+            'hips':       ((0, -8, 0),    (4, 10, 0)),
+            'hips:loc':   ('Idle',        (0, 0, 0.12)),
+            'upperarm.r': ((-30, 0, -30), (10, 0, 65)),
+            'lowerarm.r': ((0, 0, 80),    (0, 0, 0)),
+            'hand.r':     ((0, 0, -70),   (0, 0, -90)),
+            'upperleg.l': ((10, 0, 0),    (-35, 0, 0)),
+            'lowerleg.l': ('Idle',        (40, 0, 0)),
+            'upperleg.r': ((-10, 0, 0),   (25, 0, 0)),
+        },
+    },
+}
+
+# Where the spear tip must be at each authored clip's strike frame, in world
+# units from the fighter's origin (the armature object, which the runtime places
+# at the simulation position -- not the animated `root` bone): forward is the
+# model's -Y here (+Z in three.js), height is Z, lateral is X (+ = the man's
+# left; his sword hand is at -X). Checked by `assert_reach` after the rig is
+# scaled, before export; a re-key that drifts the tip off the man fails the
+# build instead of shipping.
+#
+# THESE WINDOWS MIRROR THE SIMULATION CATALOGUE, NOT A PROPERTY OF THE CLIPS.
+# They were read off the shipped simulation's root separation at contact
+# (median 1.89 for `technical-thrust`, 2.30 for `technical-driving-thrust`,
+# nine pairings x 20 seeds, by `scripts/measure-contact-separation.ts`; they
+# were 1.47 and 1.78 before the 2026-09-05 fighting-room slice translated every
+# separation outward and raised the spear's own push), which is set by each
+# action's `contactRange` in
+# `src/simulation/combatActions.ts` and by `DUEL_MINIMUM_SEPARATION` in
+# `src/simulation/battle.ts`, so that the tip lands about a quarter unit past
+# the opponent's root at the median contact (where the trident's does). When
+# either of those two fields moves, the medians move with it and these windows
+# must be re-measured and re-targeted in the same change -- otherwise the tips
+# drift short again by design while this gate keeps passing. The height window
+# brackets every opponent's `hitCenter` (0.89 Barbarian, 0.889 Rogue).
+REACH_WINDOWS = {
+    'Spear_Thrust': {'forward': (2.12, 2.27), 'height': (0.85, 1.05), 'lateral': 0.20},
+    'Spear_Drive':  {'forward': (2.52, 2.72), 'height': (0.85, 1.05), 'lateral': 0.20},
+}
+# The pack's own stab clips, logged (not asserted) on the re-gripped spear.
+LOGGED_REACH_CLIPS = ('1H_Melee_Attack_Stab', '2H_Melee_Attack_Stab')
 
 # archetype -> source character, optional donor (a second pack file whose named
 # meshes are transplanted onto the source's identical skeleton, mesh -> slot),
@@ -70,7 +149,7 @@ BUILDS = {
         # a second 1024x1024 atlas into the file, the buckler is built here,
         # like the trident/spear/net.
         'weapon_reference': 'Knife', 'shield_reference': None,
-        'build': ['spear', 'buckler'], 'clips': [AUTHORED_CLIP],
+        'build': ['spear', 'buckler'], 'clips': ['Spear_Thrust', 'Spear_Drive'],
     },
 }
 
@@ -259,14 +338,21 @@ def weapon_axis(reference, arm):
     return butt, tip, (tip - butt).normalized()
 
 
-def build_shaft_weapon(name, reference, arm, length, radius, tip_builder, slot='weapon'):
+def build_shaft_weapon(name, reference, arm, length, radius, tip_builder, slot='weapon', grip_behind=None):
     """A cylinder shaft along the reference weapon's long axis, plus a tip.
+
+    The shaft starts at the reference weapon's butt -- or, with `grip_behind`
+    (source units), that far behind the hand along the same line, so the
+    weapon is gripped mid-shaft with the rest of it crossing the fist. `None`
+    keeps the butt grip (the trident is built that way, byte for byte).
 
     Returns the shaft and the world point of the weapon's *sharp end* -- the
     apex of the tip geometry, not the end of the shaft, because that point is
     what `weaponTip` anchors the runtime's reach to.
     """
     butt, _tip, direction = weapon_axis(reference, arm)
+    if grip_behind is not None:
+        butt = bone_head(arm, WEAPON_BONE) - direction * grip_behind
     wood = solid_material(f'{name}_wood', (0.45, 0.3, 0.15, 1))
     iron = solid_material(f'{name}_iron', (0.55, 0.55, 0.6, 1))
     shaft = new_mesh_object(name, bpy.ops.mesh.primitive_cylinder_add, wood, slot,
@@ -456,52 +542,149 @@ def build_greave(arm, bronze):
     return build_sleeve('greave', arm, 'lowerleg.l', bronze, 'armour', radius=0.175, depth=0.24, along=0.01)
 
 
-def author_spear_drive(arm):
-    """The one clip authored here rather than taken from the pack: a lunge with
-    the spear driven forward. Frames at 24 fps; strike at frame 15 of 30 (50%)."""
-    action = bpy.data.actions.new(AUTHORED_CLIP)
+def idle_pose(arm):
+    """Every pose bone's (`rotation_quaternion`, `location`) at frame 0 of the
+    pack's `Idle` -- the guard every authored clip starts and ends in, so the
+    buckler arm and the legs stay where Idle leaves them on the bones a clip
+    does not key, and the switch back to Idle is a pose the mixer already
+    knows. (The old guard was `(0, 0, 0)` on six bones: the pack's T-pose.)
+    On this pack Idle keys `hips.location = (0, -0.0136, 0)`: the pelvis sits
+    1.4 cm below bind in the idle."""
+    restore = evaluate_action(arm, bpy.data.actions['Idle'], 0)
+    pose = {pbone.name: (pbone.rotation_quaternion.copy(), pbone.location.copy())
+            for pbone in arm.pose.bones}
+    restore()
+    hips_rotation, hips_location = pose['hips']
+    log('idle guard: hips location', tuple(round(v, 4) for v in hips_location),
+        'rotation', tuple(round(v, 4) for v in hips_rotation), 'over', len(pose), 'pose bones')
+    return pose
+
+
+def author_clip(arm, name, frames, keys, idle):
+    """One authored clip: `idle` (from `idle_pose`) keyed on every pose bone at
+    `frames['guard']` and `frames['last']`, the `keys` bones overriding it at
+    windup, strike and hold (hold repeats the strike). See AUTHORED_CLIPS for
+    the key format. FPS frames; the exporter writes frame f at f / FPS s."""
+    action = bpy.data.actions.new(name)
     action.use_fake_user = True
     if not arm.animation_data:
         arm.animation_data_create()
     previous, arm.animation_data.action = arm.animation_data.action, action
 
-    def key(frame, bone, rot_deg):
+    def key_rotation(frame, bone, quaternion):
         # Quaternions, not Euler: the pack animates every bone on
         # `rotation_quaternion`, and flipping a bone's `rotation_mode` to 'XYZ'
         # to key Euler makes Blender evaluate the Euler channels *instead*. The
         # pack's own quaternion curves for that bone are then silently ignored,
         # and the bone stops moving in all twelve imported clips as well.
         pbone = arm.pose.bones[bone]
-        pbone.rotation_quaternion = Euler([math.radians(d) for d in rot_deg], 'XYZ').to_quaternion()
+        pbone.rotation_quaternion = quaternion
         pbone.keyframe_insert(data_path='rotation_quaternion', frame=frame)
 
-    # frame: 1 guard, 10 windup (arm back, torso coiled), 15 strike (arm out, torso forward), 30 back to guard
-    for bone, guard, windup, strike in (
-        ('chest',      (0, 0, 0),    (-8, 0, 20),   (18, 0, -12)),
-        ('hips',       (0, 0, 0),    (0, 0, 8),     (6, 0, -6)),
-        ('upperarm.r', (0, 0, 0),    (-25, 0, 35),  (70, 0, -20)),
-        ('lowerarm.r', (0, 0, 0),    (-60, 0, 0),   (-5, 0, 0)),
-        ('upperleg.l', (0, 0, 0),    (10, 0, 0),    (-35, 0, 0)),
-        ('upperleg.r', (0, 0, 0),    (-10, 0, 0),   (25, 0, 0)),
-    ):
-        key(1, bone, guard)
-        key(10, bone, windup)
-        key(15, bone, strike)
-        key(30, bone, guard)
+    def key_location(frame, bone, location):
+        pbone = arm.pose.bones[bone]
+        pbone.location = location
+        pbone.keyframe_insert(data_path='location', frame=frame)
+
+    for frame in (frames['guard'], frames['last']):
+        for bone, (rotation, location) in idle.items():
+            key_rotation(frame, bone, rotation)
+            key_location(frame, bone, location)
+
+    for target, (windup, strike) in keys.items():
+        bone, _, channel = target.partition(':')
+        for frame, value in ((frames['windup'], windup), (frames['strike'], strike), (frames['hold'], strike)):
+            if channel == 'loc':
+                key_location(frame, bone, idle[bone][1] if value == 'Idle' else Vector(value))
+            else:
+                key_rotation(frame, bone, idle[bone][0] if value == 'Idle'
+                             else Euler([math.radians(d) for d in value], 'XYZ').to_quaternion())
 
     slot = arm.animation_data.action_slot
     arm.animation_data.action = previous
     track = arm.animation_data.nla_tracks.new()
-    track.name = AUTHORED_CLIP
-    strip = track.strips.new(AUTHORED_CLIP, 1, action)
-    strip.name = AUTHORED_CLIP
+    track.name = name
+    strip = track.strips.new(name, frames['guard'], action)
+    strip.name = name
     if slot is not None:
         strip.action_slot = slot
     # Leave the pose the pack shipped: the keyframes above moved live bones.
     for pbone in arm.pose.bones:
         pbone.matrix_basis = Matrix.Identity(4)
     sync()
+    log('authored', name, 'frames', frames, 'duration', round(frames['last'] / FPS, 3), 's',
+        'contactAt', round(frames['strike'] / frames['last'], 3))
     return action
+
+
+def evaluate_action(arm, action, frame):
+    """Put the rig in `action`'s pose at `frame` (POSE position, every NLA track
+    muted, the action active) and flush, so matrix_world reads are of that
+    pose. Returns a restore() that puts back the active action, the track mute
+    flags, the pose position, the scene frame and an identity pose."""
+    ad = arm.animation_data
+    previous_action, previous_position = ad.action, arm.data.pose_position
+    previous_frame = bpy.context.scene.frame_current
+    muted = [(track, track.mute) for track in ad.nla_tracks]
+    for track, _ in muted:
+        track.mute = True
+    arm.data.pose_position = 'POSE'
+    ad.action = action
+    if ad.action_slot is None and len(action.slots):
+        ad.action_slot = action.slots[0]
+    bpy.context.scene.frame_set(frame)
+    sync()
+
+    def restore():
+        ad.action = previous_action
+        for track, mute in muted:
+            track.mute = mute
+        for pbone in arm.pose.bones:
+            pbone.matrix_basis = Matrix.Identity(4)
+        arm.data.pose_position = previous_position
+        bpy.context.scene.frame_set(previous_frame)
+        sync()
+    return restore
+
+
+def tip_offset(arm, action, frame):
+    """(forward, height, lateral) of `weaponTip` from the fighter's origin at
+    `frame` of `action`, world units (see REACH_WINDOWS for the axes)."""
+    restore = evaluate_action(arm, action, frame)
+    delta = bpy.data.objects['weaponTip'].matrix_world.translation - arm.matrix_world.translation
+    restore()
+    return -delta.y, delta.z, delta.x
+
+
+def assert_reach(arm, clips):
+    """The gate an authored clip ships through: its tip at the strike frame is
+    inside its REACH_WINDOWS entry, or the build raises. Logs the three numbers
+    either way, plus the pack's own stab clips' peak reach for the record."""
+    for name in clips:
+        forward, height, lateral = tip_offset(arm, bpy.data.actions[name], AUTHORED_CLIPS[name]['frames']['strike'])
+        window = REACH_WINDOWS[name]
+        log('reach', name, 'strike frame', AUTHORED_CLIPS[name]['frames']['strike'],
+            'tip forward', round(forward, 3), 'height', round(height, 3), 'lateral', round(lateral, 3),
+            'window forward', window['forward'], 'height', window['height'], 'lateral +-', window['lateral'])
+        problems = []
+        if not window['forward'][0] <= forward <= window['forward'][1]:
+            problems.append(f'forward {forward:.3f} outside {window["forward"]}')
+        if not window['height'][0] <= height <= window['height'][1]:
+            problems.append(f'height {height:.3f} outside {window["height"]}')
+        if abs(lateral) > window['lateral']:
+            problems.append(f'lateral {lateral:.3f} outside +-{window["lateral"]}')
+        if problems:
+            raise RuntimeError(f'reach {name}: ' + '; '.join(problems) + ' -- re-tune the keys, not contactAt')
+    for name in LOGGED_REACH_CLIPS:
+        action = bpy.data.actions.get(name)
+        if action is None:
+            continue
+        first, last = (int(round(v)) for v in action.frame_range)
+        peak = max(((tip_offset(arm, action, frame), frame) for frame in range(first, last + 1)),
+                   key=lambda item: item[0][0])
+        (forward, height, lateral), frame = peak
+        log('reach', name, 'peak forward', round(forward, 3), 'at frame', f'{frame}/{last}',
+            'height', round(height, 3), 'lateral', round(lateral, 3), '(logged, not asserted)')
 
 
 def build_archetype(archetype, spec):
@@ -546,8 +729,35 @@ def build_archetype(archetype, spec):
         _, weapon_tip = build_shaft_weapon('trident', weapon_ref, arm, length=1.6, radius=0.03,
                                            tip_builder=trident_tip)
     if 'spear' in spec['build']:
+        # Gripped 0.3 source units from the butt, not at the butt: a hasta is
+        # held near its balance point, and a butt grip put the pack's stab clips
+        # 2.4 out where the median contact wants ~2.1. Total length unchanged
+        # (1.9 shaft + 0.32 head): 1.756 world units ahead of the hand, 0.274
+        # behind.
+        #
+        # WHY 0.3 AND NOT SOMETHING ELSE -- it is the only value that puts BOTH
+        # authored clips inside REACH_WINDOWS, and that is a two-sided
+        # constraint, not a preference:
+        #
+        #   grip_behind 0.8 (the 2026-09-17 value, sized against the pre-
+        #     fighting-room medians of 1.47 / 1.78): thrust 1.77, drive 2.09 --
+        #     both far short of the windows below;
+        #   grip_behind 0.2: thrust 2.315, past the window's top. The overshoot
+        #     cannot be keyed out -- the tip sits a fixed distance from the
+        #     shoulder, so pulling it back 0.045 along the forward axis needs an
+        #     11-degree swing off that axis, which spends 0.45 of a +-0.2
+        #     lateral budget. Measured, not reasoned: a counter-rotated
+        #     shoulder/elbow pair moved forward by 0.006 and lateral by 0.058;
+        #   grip_behind 0.39 would centre the THRUST at the 0.25-past rule and
+        #     drop the drive to 2.46, under its window.
+        #
+        # At 0.3 the drive lands 0.244 past the opponent's root at its median --
+        # the trident's own 0.24, i.e. the rule exactly -- and the thrust 0.334
+        # past, longer than ideal but inside its window and no worse than the
+        # 0.298 the previous grip shipped. The drive is the committed action, so
+        # it gets the exact number.
         _, weapon_tip = build_shaft_weapon('spear', weapon_ref, arm, length=1.9, radius=0.026,
-                                           tip_builder=spear_tip)
+                                           tip_builder=spear_tip, grip_behind=0.3)
     if 'net' in spec['build']:
         shield_centre = world_centre(build_net(arm))
     if 'buckler' in spec['build']:
@@ -567,8 +777,10 @@ def build_archetype(archetype, spec):
         'shieldCenter', tuple(round(v, 3) for v in shield_centre),
         'hitCenter', tuple(round(v, 3) for v in bone_tail(arm, 'spine')))
 
-    if AUTHORED_CLIP in spec['clips']:
-        author_spear_drive(arm)
+    if spec['clips']:
+        idle = idle_pose(arm)
+        for name in spec['clips']:
+            author_clip(arm, name, AUTHORED_CLIPS[name]['frames'], AUTHORED_CLIPS[name]['keys'], idle)
 
     prune_clips(arm, spec['clips'])
 
@@ -580,9 +792,16 @@ def build_archetype(archetype, spec):
         'clips', sorted(a.name for a in bpy.data.actions))
 
     # The exporter samples animation off the evaluated pose, so put the rig back
-    # on its animation channels now that every measurement is taken.
+    # on its animation channels now that every bind-pose measurement is taken.
     arm.data.pose_position = 'POSE'
     sync()
+
+    # Measured on the scaled rig, in world units, before anything is written.
+    # Only where something was authored: posing heavy/fast for the log alone
+    # would touch their otherwise untouched export (the bone nodes' static
+    # transforms are written off the pose).
+    if spec['clips']:
+        assert_reach(arm, spec['clips'])
 
     os.makedirs(OUT, exist_ok=True)
     out = os.path.join(OUT, f'{archetype}.glb')

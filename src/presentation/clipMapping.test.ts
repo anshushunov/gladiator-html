@@ -7,6 +7,8 @@ import { STYLE_GAIT_CYCLE_DISTANCE } from './gait'
 const D = new Map<string, number>([
   ['Idle', 1.0], ['Walking_A', 1.0], ['Hit_A', 0.6], ['Death_A', 0.8],
   ['1H_Melee_Attack_Chop', 1.0], ['Block', 1.0], ['Dodge_Backward', 0.4],
+  // The authored spear thrust ships at exactly 1.000 s (24 keyed frames at 24 fps).
+  ['Spear_Thrust', 1.0],
 ])
 
 function state(overrides: Partial<FighterCombatState> = {}): FighterCombatState {
@@ -64,6 +66,28 @@ describe('selectClip', () => {
     // recovery runs the rest out
     expect(selectClip(input({ state: attacking('recovery', 31, 51), tick: 41 })).time).toBeCloseTo(0.825)
     expect(selectClip(input({ state: attacking('recovery', 31, 51), tick: 41 })).weaponTrailActive).toBe(false)
+  })
+
+  it('lands the authored spear thrust\'s strike frame on the technical-thrust contact tick', () => {
+    // `technical-thrust` plays `Spear_Thrust`, authored with its strike at
+    // frame 12 of 24 (contactAt 0.5), not the pack's one-handed stab; the
+    // duration here is the shipped clip's own 1.000 s so the times below are
+    // the ones the runtime samples.
+    const thrusting = (phase: 'windup' | 'contact' | 'impact' | 'recovery', started: number, ends: number) =>
+      state({
+        definition: { id: 'cassius', name: 'Cassius', school: 'Test', archetype: 'technical', maxHp: 100, power: 10, accuracy: 0.8, defenseChance: 0.3, criticalChance: 0.1 },
+        action: { type: 'active', instanceId: 't1', definitionId: 'technical-thrust', phase, phaseStartedTick: started, phaseEndsAtTick: ends, targetId: 'home.nerva' },
+      })
+    const at = (phase: 'windup' | 'contact' | 'impact' | 'recovery', started: number, ends: number, tick: number) =>
+      selectClip(input({ archetype: 'technical', state: thrusting(phase, started, ends), tick }))
+    // windup 0..10 -> clip 0..0.5 s
+    expect(at('windup', 0, 10, 5)).toEqual({ clip: 'Spear_Thrust', time: expect.closeTo(0.25), weaponTrailActive: false })
+    // contact tick -> exactly the strike frame, 0.5 x 1.0 s
+    expect(at('contact', 10, 11, 10)).toEqual({ clip: 'Spear_Thrust', time: expect.closeTo(0.5), weaponTrailActive: true })
+    // impact holds the strike pose through contactAt + 0.15
+    expect(at('impact', 11, 21, 21).time).toBeCloseTo(0.65)
+    // recovery runs the rest out
+    expect(at('recovery', 21, 41, 31).time).toBeCloseTo(0.825)
   })
 
   it('sweeps the defense clip monotonically across windup, contact, impact, then recovery', () => {
