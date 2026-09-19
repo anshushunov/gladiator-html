@@ -235,7 +235,11 @@ describe('contact diagnostics', () => {
     const created = createEncounter({
       seed: 7,
       combatants: [
-        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 }, fighter: { maxHp: 1 } }),
+        // -1.5, not -1.0: the 2026-09-05 translation moved both attacks' contact
+        // ranges out (fast-slash 1.2-2.35, heavy-cleave 1.2-2.1), and at a 1.0
+        // separation neither intent reaches, so the fixture measured a geometry
+        // miss instead of the mid-batch defeat it exists to pin.
+        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1.5, z: 0 }, fighter: { maxHp: 1 } }),
         combatant('v', 'away', { archetype: 'heavy', startPosition: { x: 0, z: 0 } }),
       ],
       arena: freeArena,

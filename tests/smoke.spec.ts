@@ -142,9 +142,14 @@ test('resets rig identity, pose, trails, flashes, camera framing, the audio curs
   const boutZeroStart = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
   // Bout 0: `home.aquila` vs `away.drusus`, at the arena's fixed authored
   // start positions -- see `battle.test.ts`'s "places home/away at the
-  // authored duel start positions".
+  // authored duel start positions". Those positions moved out with the
+  // 2026-09-05 fighting-room slice, +/-4.2 -> +/-4.7, because the duel arena
+  // itself grew (`DUEL_RADIUS` 6.5 -> 7.5) to keep the same room around the
+  // translated fighting distances. Read back from the arena's own debug
+  // snapshot, so this also pins that the presentation layer starts the rigs
+  // where the simulation says they are.
   expect(Object.keys(boutZeroStart!.rootPositions).sort()).toEqual(['away.drusus', 'home.aquila'])
-  expect(boutZeroStart!.rootPositions).toEqual({ 'home.aquila': { x: -4.2, z: 0 }, 'away.drusus': { x: 4.2, z: 0 } })
+  expect(boutZeroStart!.rootPositions).toEqual({ 'home.aquila': { x: -4.7, z: 0 }, 'away.drusus': { x: 4.7, z: 0 } })
   expect(boutZeroStart!.activeEffectIds).toEqual([])
   expect(boutZeroStart!.activeDamageNumbers).toEqual([])
   expect(boutZeroStart!.trailPointCounts).toEqual({ 'home.aquila': 0, 'away.drusus': 0 })
@@ -165,7 +170,7 @@ test('resets rig identity, pose, trails, flashes, camera framing, the audio curs
   // merely repositioned), reset to the same fixed start positions, with
   // trails, flashes, and the event cursor cleared again.
   expect(Object.keys(boutOneStart!.rootPositions).sort()).toEqual(['away.cassius', 'home.nerva'])
-  expect(boutOneStart!.rootPositions).toEqual({ 'home.nerva': { x: -4.2, z: 0 }, 'away.cassius': { x: 4.2, z: 0 } })
+  expect(boutOneStart!.rootPositions).toEqual({ 'home.nerva': { x: -4.7, z: 0 }, 'away.cassius': { x: 4.7, z: 0 } })
   expect(boutOneStart!.activeEffectIds).toEqual([])
   expect(boutOneStart!.activeDamageNumbers).toEqual([])
   expect(boutOneStart!.trailPointCounts).toEqual({ 'home.nerva': 0, 'away.cassius': 0 })
@@ -179,7 +184,7 @@ test('resets rig identity, pose, trails, flashes, camera framing, the audio curs
   const boutTwoStart = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
   // Bout 2: `home.brutus` vs `away.magnus` -- same reset guarantees again.
   expect(Object.keys(boutTwoStart!.rootPositions).sort()).toEqual(['away.magnus', 'home.brutus'])
-  expect(boutTwoStart!.rootPositions).toEqual({ 'home.brutus': { x: -4.2, z: 0 }, 'away.magnus': { x: 4.2, z: 0 } })
+  expect(boutTwoStart!.rootPositions).toEqual({ 'home.brutus': { x: -4.7, z: 0 }, 'away.magnus': { x: 4.7, z: 0 } })
   expect(boutTwoStart!.activeEffectIds).toEqual([])
   expect(boutTwoStart!.activeDamageNumbers).toEqual([])
   expect(boutTwoStart!.trailPointCounts).toEqual({ 'home.brutus': 0, 'away.magnus': 0 })
@@ -276,7 +281,11 @@ test('resets rig identity, pose, trails, flashes, the audio cursor, and event cu
   })
   const postRematchBoutStart = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
   expect(Object.keys(postRematchBoutStart!.rootPositions).sort()).toEqual(['away.drusus', 'home.aquila'])
-  expect(postRematchBoutStart!.rootPositions).toEqual({ 'home.aquila': { x: -4.2, z: 0 }, 'away.drusus': { x: 4.2, z: 0 } })
+  // The same authored start positions the bout-boundary test above asserts,
+  // moved out to +/-4.7 by the 2026-09-05 fighting-room slice's larger duel
+  // arena -- a rematch is not a special case that reads them from anywhere
+  // else.
+  expect(postRematchBoutStart!.rootPositions).toEqual({ 'home.aquila': { x: -4.7, z: 0 }, 'away.drusus': { x: 4.7, z: 0 } })
   expect(postRematchBoutStart!.activeEffectIds).toEqual([])
   expect(postRematchBoutStart!.activeDamageNumbers).toEqual([])
   expect(postRematchBoutStart!.trailPointCounts).toEqual({ 'home.aquila': 0, 'away.drusus': 0 })
@@ -310,11 +319,12 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
     window.__GLADIATOR_TEST__.assign('nerva', 2)
     window.__GLADIATOR_TEST__.confirm()
   })
-  // tick 256: the frozen mutual hit/stagger from `combat-visuals.spec.ts`'s
-  // key-pose fixture -- a real, guaranteed contact-flash trigger.
-  await normalPage.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(255))
+  // tick 256: the frozen hit/stagger from `combat-visuals.spec.ts`'s key-pose
+  // fixture -- a real, guaranteed contact-flash trigger, read one tick after
+  // the contact so the flash it spawned is still live.
+  await normalPage.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(256))
   const normalSnapshot = await normalPage.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
-  const normalEvents = await seenEvents(normalPage, 254)
+  const normalEvents = await seenEvents(normalPage, 255)
   expect(normalSnapshot!.activeEffectIds.length).toBeGreaterThan(0) // sanity: a real flash fired without reduced motion
 
   // Reduced motion: identical seed/lineup/tick count, `prefers-reduced-
@@ -330,9 +340,9 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
     window.__GLADIATOR_TEST__.assign('nerva', 2)
     window.__GLADIATOR_TEST__.confirm()
   })
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(255))
+  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(256))
   const reducedSnapshot = await page.evaluate(() => window.__GLADIATOR_TEST__.getArenaDebugSnapshot!())
-  const reducedEvents = await seenEvents(page, 254)
+  const reducedEvents = await seenEvents(page, 255)
 
   // Anticipation/contact/result preserved: the simulation's own event trace
   // (amounts, remaining HP, stagger durations) is byte-identical regardless
@@ -342,15 +352,22 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
     const battle = window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!
     return { brutus: battle.encounter.combatants['home.brutus'], drusus: battle.encounter.combatants['away.drusus'] }
   })
-  // The checkpoint moved from the simultaneous mutual hit at tick 255 to the
-  // guard block at 254, because after the retiarius-reach slice this bout has
-  // no tick carrying two `damage-dealt` events at all -- the retiarius strikes
-  // from range and withdraws instead of trading at the arena floor. Only the
-  // fighter who was actually struck is staggered, which is why the away-side
-  // stagger assertion is gone rather than re-numbered.
-  expect(reducedCombatants.brutus.hp).toBe(378)
+  // The checkpoint moved once from the simultaneous mutual hit at tick 255 to
+  // the guard block at 254, because after the retiarius-reach slice this bout
+  // has no tick carrying two `damage-dealt` events at all -- the retiarius
+  // strikes from range and withdraws instead of trading at the arena floor.
+  // Only the fighter who was actually struck is staggered, which is why the
+  // away-side stagger assertion is gone rather than re-numbered.
+  //
+  // The 2026-09-05 fighting-room slice moved it again, and back onto a real
+  // body hit: the bout's first blow is now away.drusus's `fast-burst-lunge`
+  // for 49 at tick 255 (`combat-visuals.spec.ts` freezes the same contact),
+  // so this reads a hit and its stagger rather than a shield chip -- exactly
+  // what the test's own name claims. Brutus 420 - 49 = 371; drusus is
+  // untouched at 470 because nothing of brutus's has landed by then.
+  expect(reducedCombatants.brutus.hp).toBe(371)
   expect(reducedCombatants.drusus.hp).toBe(470)
-  expect(reducedCombatants.brutus.staggerUntilTick).toBeGreaterThan(255)
+  expect(reducedCombatants.brutus.staggerUntilTick).toBeGreaterThan(256)
   expect(reducedSnapshot!.jointTransformsFinite).toBe(true)
 
   // Trail/flash removed: the same contact that lit a flash above spawns none
@@ -358,13 +375,17 @@ test('reduced motion removes trails and flashes while a hit, its stagger, and it
   // gating, both keyed off the same `isReducedMotion()` check).
   expect(reducedSnapshot!.activeEffectIds).toEqual([])
   // The number is the reduced-motion hit channel (feedback spec §6.4): still
-  // spawned, it just does not rise. The single `advanceTicks(255)` burst
-  // carries both tick 231's body hit and tick 254's blocked chip damage, so
-  // both are live here at age 0 -- proving the burst spawned both.
-  expect(reducedSnapshot!.activeDamageNumbers).toMatchObject([
-    { amount: 31, kind: 'body' },
-    { amount: 11, kind: 'shield' },
-  ])
+  // spawned, it just does not rise.
+  //
+  // ONE number, not the two this assertion carried before the 2026-09-05
+  // fighting-room slice: it used to read tick 231's body hit (31) and tick
+  // 254's blocked chip (11), and that bout no longer exists. The re-cut bout's
+  // first blow is the tick-255 lunge for 49 the assertions just above are
+  // already written against -- so the number channel now agrees with the hp
+  // arithmetic (420 - 49 = 371) in the same test, which is a stronger check
+  // than the old pair was. It is still proof the burst spawned at all: the
+  // number is live at age 0 after a single `advanceTicks(255)`.
+  expect(reducedSnapshot!.activeDamageNumbers).toMatchObject([{ amount: 49, kind: 'body' }])
 })
 
 test('renders movement-rich encounter combat', async ({ page }) => {
@@ -780,20 +801,34 @@ test('flushes the series-ending bout\'s final event batch to audio instead of dr
 })
 
 test('reports school defeat in the summary heading for a losing lineup', async ({ page }) => {
-  // `nerva/aquila/brutus` keeps the two tests on different orderings. This
-  // test's job is the "School defeat" heading and score rendering, so which
-  // losing lineup it uses is incidental -- but it is chosen from the measured
-  // balance rather than to dodge it. Under the retiarius-reach slice that
-  // lineup goes from 1-2 to 0-3, a clean sweep against the school, and the
-  // all-counter lineup it was originally swapped off now WINS 2-1. See
-  // series.test.ts's golden-scenario block for the full six-lineup table.
+  // A lineup that loses, kept on a different ordering from the winning test
+  // above. This test's job is the "School defeat" heading and score rendering,
+  // so which losing lineup it uses is incidental -- but it is chosen from the
+  // measured balance rather than to dodge it, and it has had to move twice.
+  //
+  // It was `nerva/aquila/brutus`, which the retiarius-reach slice took from
+  // 1-2 to a clean 0-3 sweep against the school. The 2026-09-05 fighting-room
+  // slice re-cuts the whole table again, and `nerva/aquila/brutus` now WINS
+  // 2-1. Measured at this seed, all six orderings of the three fightable
+  // gladiators:
+  //
+  //   brutus/nerva/aquila  3-0     brutus/aquila/nerva  2-1  (all-counter)
+  //   aquila/nerva/brutus  2-1     nerva/brutus/aquila  2-1
+  //   nerva/aquila/brutus  2-1     aquila/brutus/nerva  1-2
+  //
+  // So `aquila/brutus/nerva` is the ONLY ordering that still loses, and 1-2 is
+  // the score it loses by -- there is no 0-3 left in the table to pick. The
+  // heading only asks whether `score.home > score.away` (`SeriesView`'s
+  // `buildSummary`), so a 1-2 exercises it exactly as a 0-3 did, and the score
+  // line now also proves a non-zero home score renders rather than only a
+  // shut-out.
   await page.goto('/?seed=20260815&snapshot')
   await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))
   await page.evaluate(() => {
     window.__GLADIATOR_TEST__.startNextSeries()
-    window.__GLADIATOR_TEST__.assign('nerva', 0)
-    window.__GLADIATOR_TEST__.assign('aquila', 1)
-    window.__GLADIATOR_TEST__.assign('brutus', 2)
+    window.__GLADIATOR_TEST__.assign('aquila', 0)
+    window.__GLADIATOR_TEST__.assign('brutus', 1)
+    window.__GLADIATOR_TEST__.assign('nerva', 2)
     window.__GLADIATOR_TEST__.confirm()
   })
   for (let bout = 0; bout < 3; bout += 1) {
@@ -801,7 +836,7 @@ test('reports school defeat in the summary heading for a losing lineup', async (
     if (bout < 2) await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
   }
   await expect(page.getByRole('heading', { name: 'School defeat' })).toBeFocused()
-  await expect(page.getByTestId('series-score')).toHaveText('0–3')
+  await expect(page.getByTestId('series-score')).toHaveText('1–2')
 })
 
 test('supports keyboard planning and deterministic focus', async ({ page }) => {

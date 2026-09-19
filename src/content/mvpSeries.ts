@@ -73,9 +73,51 @@ import type { FighterDefinition } from '../simulation/fighters'
 // that uniform scaling -- she was raised a second time, alone, because
 // `aquila/magnus` is the roster pairing pinned hardest against the 15% floor
 // by the same fast-vs-heavy wall the whole balance task ran into.
+//
+// ---------------------------------------------------------------------------
+// 2026-09-05: AQUILA'S `power` 20 -> 20.8, AND WHY IT IS AGAIN AQUILA ALONE
+// ---------------------------------------------------------------------------
+//
+// The body-width translation (see `src/content/combatStyles.ts`'s header) and
+// the duel arena that had to grow with it (`battle.ts`) left every one of the
+// nine roster pairings inside its 15..85% band, but cost the golden scenario a
+// criterion the win-rate bands cannot see: design.md asks that a different
+// ordering do STRICTLY BETTER than the all-counter lineup, and after the move
+// the best any of the six lineups managed was 2-1 -- the all-counter lineup's
+// own score. Not a sweep, which the design forbids, but not a witness either.
+//
+// Aquila is the only row with anywhere to go. Four of the five stat rank
+// orders are pinned as properties by `mvpSeries.test.ts`, and against those
+// she is already hard against a neighbour on three of them: lowest `maxHp`
+// (one point below Magnus), lowest `defenseChance`, `accuracy` 0.001 under
+// Brutus, `criticalChance` 0.0015 under Drusus. `power` is the fifth, and it
+// is the rank the design already records as deviated.
+//
+// Weakening Magnus was measured and is the wrong direction: he is the away
+// fighter in all three of his pairings, so weakening him raises `aquila/magnus`
+// (wanted) but also `nerva/magnus`, which sits at 84.5% against an 85% ceiling.
+// Aquila appears only as home, so moving her touches exactly the three pairings
+// that have headroom.
+//
+//   aquila.power   brutus/nerva/aquila   aquila/drusus   aquila/cassius   aquila/magnus
+//        20              2-1                 27.0%           54.5%            19.0%
+//        20.4            2-1                 27.5%           58.5%            19.5%
+//        20.8            3-0                 28.0%           58.5%            19.5%   <- shipped
+//        21.05           3-0                 31.5%           58.5%            19.5%
+//
+// 20.8 is the smallest cell that restores the witness. 21.05 would also do it
+// and is rejected: it takes her past Drusus's 21, so only ONE fighter would
+// out-power her, and `mvpSeries.test.ts` pins that count at two as the exact
+// statement of how far the deviation goes. What 20.8 does cost is the Aquila =
+// Nerva tie at 20, which that test also recorded; the tie was an artefact of
+// the previous calibration rather than an authored intent, and the test now
+// records the ordering that replaced it.
 export const homeRoster = [
   { id: 'brutus', name: 'Brutus', school: 'House of Mars', archetype: 'heavy', maxHp: 420, power: 21.2, accuracy: 0.86, defenseChance: 0.34, criticalChance: 0.10 },
-  { id: 'aquila', name: 'Aquila', school: 'House of Mars', archetype: 'fast', maxHp: 404, power: 20, accuracy: 0.859, defenseChance: 0.334, criticalChance: 0.157 },
+  // `power` 20 -> 20.8 on 2026-09-05, the second time this row has been the
+  // lever and for the same reason as the first. See the "ONE ordinal deviation"
+  // note above and the 2026-09-05 block below it.
+  { id: 'aquila', name: 'Aquila', school: 'House of Mars', archetype: 'fast', maxHp: 404, power: 20.8, accuracy: 0.859, defenseChance: 0.334, criticalChance: 0.157 },
   { id: 'nerva', name: 'Nerva', school: 'House of Mars', archetype: 'technical', maxHp: 418, power: 20, accuracy: 0.902, defenseChance: 0.398, criticalChance: 0.1595 },
 ] as const satisfies readonly FighterDefinition[]
 

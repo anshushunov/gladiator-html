@@ -54,6 +54,15 @@ describe('canonicalHash', () => {
 // state after every single tick rather than every batch -- measured at
 // 4.5-5.3s on this machine, comfortably past Vitest's 5000ms default test
 // timeout on a slower run. An explicit timeout, not a sign this hangs.
+//
+// RE-FROZEN 2026-09-05. All nine digests moved, and moving is the correct
+// outcome rather than a failure to investigate: this snapshot's whole purpose
+// is to make a behaviour change impossible to land silently, and that slice
+// changed behaviour on purpose in four places -- the body-width translation
+// (+0.30 on every separation, `src/content/combatStyles.ts`'s header), the duel
+// arena that had to grow with it (`battle.ts`), the spear's `pushDistance`, and
+// Aquila's `power`. A digest that had NOT moved would have been the alarming
+// result. Nothing but the nine strings below changed in this file.
 it('pins a rolling per-tick hash of all nine pairings', () => {
   const rows = homeRoster.slice(0, 3).flatMap((home) =>
     opponents.map((away) => {
@@ -68,15 +77,15 @@ it('pins a rolling per-tick hash of all nine pairings', () => {
   )
   expect(rows).toMatchInlineSnapshot(`
     [
-      "brutus/drusus:b0fa2d92",
-      "brutus/cassius:692dca14",
-      "brutus/magnus:4403ef70",
-      "aquila/drusus:7e5009f3",
-      "aquila/cassius:6c00dca7",
-      "aquila/magnus:c684dd1d",
-      "nerva/drusus:381da1fd",
-      "nerva/cassius:9182a1c4",
-      "nerva/magnus:a32fab50",
+      "brutus/drusus:9523f707",
+      "brutus/cassius:bd338886",
+      "brutus/magnus:677bc2af",
+      "aquila/drusus:5e49fb48",
+      "aquila/cassius:a6d1a821",
+      "aquila/magnus:9c39643d",
+      "nerva/drusus:c75dfc92",
+      "nerva/cassius:31636c7f",
+      "nerva/magnus:85441ba3",
     ]
   `)
 }, 30_000)

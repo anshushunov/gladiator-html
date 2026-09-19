@@ -58,9 +58,25 @@ export const GOLDEN_SCORE = { home: 4, away: 5 }
  * -- now from `bruised` rather than from `wounded`, because he wins his first
  * bout instead of losing it -- which is what still makes the third challenge
  * a short-handed one.
+ *
+ * RE-BASELINED AGAIN 2026-09-05 (fighting room). Three rungs moved and the
+ * shape did not, which is the whole test: still three charged and two rested
+ * every series, still one rung for a win and two for a loss, still Brutus into
+ * `broken` in series 2 and therefore still a short-handed third challenge. What
+ * changed is who took the harder first series -- Brutus now ends it `wounded`
+ * and Nerva `bruised`, the reverse of before -- and Nerva rests all the way back
+ * to `fresh` in series 2 instead of stopping at `bruised`, which then leaves him
+ * `fresh` going into series 3 rather than `bruised`.
+ *
+ * That is the spear's `pushDistance` showing up two layers away from where it
+ * was authored: Nerva takes less damage in the first series because he is no
+ * longer fought at the murmillo's measure, so he starts the ladder one rung
+ * higher and the rest of his season follows. `GOLDEN_SCORE` and
+ * `GOLDEN_OUTCOMES` are both unchanged, so no bout's WINNER moved -- only how
+ * badly the fighters were used up getting there.
  */
 export const GOLDEN_DELTAS: readonly (readonly string[])[] = [
-  ['brutus:fresh>bruised(fought)', 'aquila:fresh>wounded(fought)', 'nerva:fresh>wounded(fought)', 'vitus:fresh>fresh(rested)', 'sura:fresh>fresh(rested)'],
-  ['brutus:bruised>broken(fought)', 'aquila:wounded>bruised(rested)', 'nerva:wounded>bruised(rested)', 'vitus:fresh>wounded(fought)', 'sura:fresh>bruised(fought)'],
-  ['brutus:broken>wounded(rested)', 'aquila:bruised>broken(fought)', 'nerva:bruised>broken(fought)', 'vitus:wounded>broken(fought)', 'sura:bruised>fresh(rested)'],
+  ['brutus:fresh>wounded(fought)', 'aquila:fresh>wounded(fought)', 'nerva:fresh>bruised(fought)', 'vitus:fresh>fresh(rested)', 'sura:fresh>fresh(rested)'],
+  ['brutus:wounded>broken(fought)', 'aquila:wounded>bruised(rested)', 'nerva:bruised>fresh(rested)', 'vitus:fresh>wounded(fought)', 'sura:fresh>bruised(fought)'],
+  ['brutus:broken>wounded(rested)', 'aquila:bruised>broken(fought)', 'nerva:fresh>wounded(fought)', 'vitus:wounded>broken(fought)', 'sura:bruised>fresh(rested)'],
 ]

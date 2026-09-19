@@ -28,6 +28,8 @@ cp /tmp/shots/tests/__screenshots__/linux/*.png tests/__screenshots__/linux/
 ## Other commands
 
 - `npm run models:build` — rebuild `public/models/*.glb` from `assets/kaykit/` via `tools/blender/build_gladiators.py` (needs Blender 5.2). `tools/inspect-glb.mjs` inspects an already-built `.glb`'s bones/anchors/clips without Blender.
+- `npm run measure:distance` — where the fighters actually STAND, per tick, all nine pairings: median separation, time in each band, time inside each style's own preferred measure, and runs spent pinned at the arena floor. This is the instrument for anything phrased as "they fight too close" or "he never breaks the range"; `contactDiagnostics.ts` cannot answer those, because it samples only the ticks an attack landed. `--json=<path>` writes the raw table. Recording only, asserts nothing.
+- `npm run measure:pairings` — roster win rates at 200 seeds, three watched pairings by default or all nine with `-- --all`. The same seed range `balance.test.ts` uses, in ~20 s instead of ~95 s, so a tuning sweep can have more cells; a candidate that looks good here still has to clear the suite.
 - `npm run benchmark:encounter` / `npm run benchmark:duel-log` — informational timings for the 100-combatant kernel and the duel adapter's event log. Neither asserts a threshold; both exit nonzero only on a structural failure.
 - `npm run review:clips` — records the human-review material (nine `×1` pairing bouts, three with the HUD hidden, one `×2` series, plus each clip's event trace) into the gitignored `docs/reviews/clips/`. Recording only: the gate itself needs two humans who did not implement the combat.
 

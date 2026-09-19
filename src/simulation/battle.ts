@@ -44,11 +44,60 @@ import { derivedUnitValue, foldTraceHash } from './random'
 export { TICKS_PER_SECOND } from './movement'
 export const MAX_BOUT_TICKS = 3600
 
-const DUEL_RADIUS = 6.5
-const DUEL_LATERAL_LIMIT = 2.5
-const DUEL_MINIMUM_SEPARATION = 0.9
-const HOME_START_POSITION: Readonly<Vec2> = { x: -4.2, z: 0 }
-const AWAY_START_POSITION: Readonly<Vec2> = { x: 4.2, z: 0 }
+/**
+ * The duel floor. 7.5 x 3.3 since 2026-09-05, from 6.5 x 2.5, and the start
+ * separation with it (8.4 -> 9.4).
+ *
+ * THE ARENA HAD TO GROW WITH THE FIGHTING DISTANCES, and this is the part of
+ * the body-width translation that was NOT obvious in advance. Moving every
+ * contact range and preferred range outward by 0.30 while leaving the box the
+ * same size does not translate the fight, it COMPRESSES it: the retiarius'
+ * measure is 2.7-3.3 units in a lane 5.0 units wide, so the one archetype whose
+ * whole game is space lost a third of what it had while needing more.
+ *
+ * Measured, roster cohorts at 200 seeds, against the design's 15..85% band:
+ *
+ *   radius / lateral / start   brutus-drusus   aquila-magnus   nerva-magnus
+ *      6.5 / 2.5 / 4.2 (old)       94.5%            5.5%          84.5%
+ *      6.8 / 2.8 / 4.35            84.5%           11.5%          83.5%
+ *      7.1 / 3.1 / 4.5             82.5%           15.0%          86.0%
+ *      7.5 / 3.3 / 4.7 (this)      82.0%           19.0%          84.5%
+ *
+ * The first row is a pure +0.30 translation with the arena left alone, and both
+ * of its outliers are the SAME matchup read from both ends -- heavy beating
+ * fast. The equal-stat style cohort passed at every row, which is what says the
+ * problem was room rather than the styles: at identical stats the triangle was
+ * intact the whole time, and only the roster's own numbers, tuned in the old
+ * frame, were being squeezed.
+ *
+ * 7.5/3.3 rather than 7.1/3.1: the smaller candidate clears `aquila/magnus`
+ * with 0.0 points of margin on a pairing the roster comment already names as
+ * "pinned hardest against the 15% floor", and pushes `nerva/magnus` through the
+ * ceiling instead. All nine pairings sit inside the band at 7.5/3.3, none
+ * closer than 2.5 points to an edge.
+ */
+const DUEL_RADIUS = 7.5
+const DUEL_LATERAL_LIMIT = 3.3
+/**
+ * The closest two roots may legally sit, and the origin of the whole distance
+ * axis every contact range is measured against.
+ *
+ * 1.2 since 2026-09-05, from 0.9. The old value predates the skinned models:
+ * with ~2.0-unit-tall bodies whose heads are about a third of their height,
+ * 0.9 units of ROOT separation is two men standing inside each other's guard,
+ * and no windup in the animation pack can play without passing an arm through
+ * the other body. The playtest reported it as fighters grinding almost stuck
+ * together.
+ *
+ * It did not move alone. `contactRange.min >= arena.minimumSeparation` is a
+ * validation rule, so raising this by itself invalidates every attack authored
+ * at 0.9; the whole catalogue was translated outward by the same 0.30 in the
+ * same commit. See the header of `src/content/combatStyles.ts` for what that
+ * translation does and does not change.
+ */
+const DUEL_MINIMUM_SEPARATION = 1.2
+const HOME_START_POSITION: Readonly<Vec2> = { x: -4.7, z: 0 }
+const AWAY_START_POSITION: Readonly<Vec2> = { x: 4.7, z: 0 }
 
 export type BattleFinishReason = 'defeat' | 'time-limit'
 export type BattlePhase = 'running' | 'finished'

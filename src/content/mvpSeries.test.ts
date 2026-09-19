@@ -18,7 +18,7 @@ describe('MVP series content', () => {
   it('pins the six content rows exactly', () => {
     expect(homeRoster).toEqual([
       { id: 'brutus', name: 'Brutus', school: 'House of Mars', archetype: 'heavy', maxHp: 420, power: 21.2, accuracy: 0.86, defenseChance: 0.34, criticalChance: 0.10 },
-      { id: 'aquila', name: 'Aquila', school: 'House of Mars', archetype: 'fast', maxHp: 404, power: 20, accuracy: 0.859, defenseChance: 0.334, criticalChance: 0.157 },
+      { id: 'aquila', name: 'Aquila', school: 'House of Mars', archetype: 'fast', maxHp: 404, power: 20.8, accuracy: 0.859, defenseChance: 0.334, criticalChance: 0.157 },
       { id: 'nerva', name: 'Nerva', school: 'House of Mars', archetype: 'technical', maxHp: 418, power: 20, accuracy: 0.902, defenseChance: 0.398, criticalChance: 0.1595 },
     ])
     expect(opponents).toEqual([
@@ -45,11 +45,19 @@ describe('MVP series content', () => {
 
   it('records the one deviated rank order: Aquila is no longer lowest on power', () => {
     // Authored: brutus > drusus > nerva > cassius > magnus > aquila.
-    // Aquila moves from strictly lowest to tied THIRD with Nerva. Without it
-    // `aquila/drusus` measures 1.5% and `aquila/magnus` 10.5% against the
-    // cohort's 15..85% band -- see the note in `mvpSeries.ts` for the levers
-    // that were measured and rejected first. Pinned so the deviation stays
-    // exactly this size and does not quietly grow.
+    // Aquila moves from strictly lowest to THIRD. Without it `aquila/drusus`
+    // measures 1.5% and `aquila/magnus` 10.5% against the cohort's 15..85%
+    // band -- see the note in `mvpSeries.ts` for the levers that were measured
+    // and rejected first. Pinned so the deviation stays exactly this size and
+    // does not quietly grow.
+    //
+    // She was TIED third with Nerva at 20 until 2026-09-05, when the body-width
+    // translation cost the golden scenario its "a different ordering does
+    // strictly better" witness and 20.8 was the smallest value that restored
+    // it. The tie is gone; the SIZE of the deviation, which is what this test
+    // exists to bound, is unchanged -- exactly two fighters still out-power
+    // her, and the assertion below still fails the moment a third does or the
+    // second stops.
     //
     // Asserted as RELATIONS rather than as a sorted rank array. A rank array is
     // the natural shape here but cannot express "tied third" without depending
@@ -65,8 +73,8 @@ describe('MVP series content', () => {
     // statement "tied third", and it fails the moment the deviation grows
     // (Aquila passing Drusus) or shrinks (Nerva pulling ahead of her).
     expect(all.filter((f) => f.power > power('aquila'))).toHaveLength(2)
-    expect(power('aquila')).toBe(20)
-    expect(power('aquila')).toBe(power('nerva')) // the tie itself
+    expect(power('aquila')).toBe(20.8)
+    expect(power('aquila')).toBeGreaterThan(power('nerva')) // was a tie at 20 until 2026-09-05
     expect(power('brutus')).toBeGreaterThan(power('drusus')) // authored top two, unchanged
     expect(power('drusus')).toBeGreaterThan(power('aquila'))
 
