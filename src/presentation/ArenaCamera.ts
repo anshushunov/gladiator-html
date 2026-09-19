@@ -147,8 +147,17 @@ const MAX_YAW_RADIANS = (90 * Math.PI) / 180
  */
 const MIN_DEAD_ZONE_REFERENCE = 1e-6
 
-/** design.md: the tactical band's upper edge, in PAIR SEPARATION -- the longest authored attack reach. */
-const BAND_HIGH_SEPARATION = 3.1
+/**
+ * design.md: the tactical band's upper edge, in PAIR SEPARATION -- the longest
+ * authored attack reach, which is `technical-driving-thrust`'s `contactRange.max`.
+ *
+ * 3.4 since the 2026-09-05 body-width translation moved the whole distance axis
+ * outward by 0.30 (see `src/content/combatStyles.ts`'s header); it was 3.1. This
+ * tracks the catalogue rather than being tuned: if the longest reach moves, the
+ * band the camera calls "tactical" has to move with it, or the camera starts
+ * easing out during ordinary spear exchanges.
+ */
+const BAND_HIGH_SEPARATION = 3.4
 
 /**
  * The widest `horizontalEquipmentRadius` in the roster: the hoplomachus'

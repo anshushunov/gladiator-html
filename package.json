@@ -14,6 +14,8 @@
     "test:e2e:update": "playwright test -u",
     "benchmark:encounter": "vite-node scripts/benchmark-encounter.ts",
     "benchmark:duel-log": "vite-node scripts/benchmark-duel-log.ts",
+    "measure:distance": "vite-node scripts/measure-distance.ts",
+    "measure:pairings": "vite-node scripts/measure-pairings.ts",
     "review:clips": "vite-node scripts/record-review-clips.ts",
     "check": "npm run test && npm run build && npm run test:e2e",
     "test:slow": "vitest run --project slow",

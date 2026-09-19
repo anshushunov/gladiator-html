@@ -45,12 +45,12 @@ describe('battle duel adapter', () => {
     const battle = createBattle(baseConfig())
     const home = fighterBySide(battle, 'home')
     const away = fighterBySide(battle, 'away')
-    expect(home.position).toEqual({ x: -4.2, z: 0 })
-    expect(away.position).toEqual({ x: 4.2, z: 0 })
+    expect(home.position).toEqual({ x: -4.7, z: 0 })
+    expect(away.position).toEqual({ x: 4.7, z: 0 })
     expect(battle.encounter.arena).toEqual({
-      radius: 6.5,
-      lateralLimit: 2.5,
-      minimumSeparation: 0.9,
+      radius: 7.5,
+      lateralLimit: 3.3,
+      minimumSeparation: 1.2,
       movementPolicy: 'ordered-pair',
       orderedPair: [battle.descriptor.homeId, battle.descriptor.awayId],
     })
@@ -172,7 +172,10 @@ describe('battle duel adapter', () => {
       seed: 1,
       combatants: [
         combatant(descriptor.homeId, 'home', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
-        combatant(descriptor.awayId, 'away', { archetype: 'fast', startPosition: { x: 1, z: 0 } }),
+        // 1.5, not 1.0: the 2026-09-05 translation moved `fast-slash`'s contact range
+        // to 1.2..2.35, and at 1.0 this scheduled contact would fail on geometry
+        // rather than land, turning the bout into a time-limit finish.
+        combatant(descriptor.awayId, 'away', { archetype: 'fast', startPosition: { x: 1.5, z: 0 } }),
       ],
       arena: freeArena,
       hostility: { mode: 'different-factions' },

@@ -31,6 +31,7 @@ export type CombatCue =
   | 'footstep-heavy'
   | 'weapon-whoosh-light'
   | 'weapon-whoosh-heavy'
+  | 'weapon-miss'
   | 'body-hit'
   | 'shield-block'
   | 'weapon-parry'
@@ -45,6 +46,7 @@ export const ALL_COMBAT_CUES: readonly CombatCue[] = [
   'footstep-heavy',
   'weapon-whoosh-light',
   'weapon-whoosh-heavy',
+  'weapon-miss',
   'body-hit',
   'shield-block',
   'weapon-parry',
@@ -361,6 +363,15 @@ export class CombatAudio {
       case 'attack-parried':
         this.tryPlay('weapon-parry', event.id, input)
         break
+      case 'attack-missed':
+      case 'attack-evaded':
+        // Both fire on the contact tick, after the whoosh that fired on the
+        // first windup tick -- so the ear gets "swing ... nothing" where a hit
+        // gets "swing ... thud". From the attacker's side an evade is the same
+        // steel through air as a miss, so both share the one cue. Not on the
+        // x4 whitelist: x4 keeps impacts only, and a miss is the absence of one.
+        this.tryPlay('weapon-miss', event.id, input)
+        break
       case 'damage-dealt':
         if (event.contactZone === 'body' && !blockedInstanceIds.has(event.actionInstanceId)) {
           this.tryPlay('body-hit', event.id, input)
@@ -409,6 +420,7 @@ const CUE_BASE_FREQUENCY_HZ: Readonly<Record<CombatCue, number>> = {
   'footstep-heavy': 120,
   'weapon-whoosh-light': 1100,
   'weapon-whoosh-heavy': 620,
+  'weapon-miss': 600,
   'body-hit': 130,
   'shield-block': 720,
   'weapon-parry': 1500,
@@ -421,6 +433,7 @@ const CUE_DURATION_MS: Readonly<Record<CombatCue, number>> = {
   'footstep-heavy': 85,
   'weapon-whoosh-light': 130,
   'weapon-whoosh-heavy': 190,
+  'weapon-miss': 170,
   'body-hit': 150,
   'shield-block': 130,
   'weapon-parry': 110,
@@ -428,10 +441,16 @@ const CUE_DURATION_MS: Readonly<Record<CombatCue, number>> = {
   defeat: 520,
 }
 
-/** Percussive cues (footsteps, both whooshes, body hits) synthesize from a
- * short filtered noise burst; the rest are tonal (oscillator-only). */
-const NOISE_BASED_CUES: ReadonlySet<CombatCue> = new Set(['footstep-light', 'footstep-heavy', 'weapon-whoosh-light', 'weapon-whoosh-heavy', 'body-hit'])
+/** Percussive cues (footsteps, both whooshes, the miss swish, body hits)
+ * synthesize from a short filtered noise burst; the rest are tonal
+ * (oscillator-only). */
+const NOISE_BASED_CUES: ReadonlySet<CombatCue> = new Set(['footstep-light', 'footstep-heavy', 'weapon-whoosh-light', 'weapon-whoosh-heavy', 'weapon-miss', 'body-hit'])
 const LOWPASS_CUES: ReadonlySet<CombatCue> = new Set(['footstep-heavy', 'weapon-whoosh-heavy', 'body-hit', 'defeat'])
+/** Noise cues whose filter *moves*: a bandpass swept down from 3x to 0.8x the
+ * base frequency over the cue's life (600 Hz base: 1800 -> 480 Hz over
+ * 170 ms). The whooshes are fixed highpass/lowpass filters, so the miss is a
+ * different *shape* of sound rather than a different pitch of the same one. */
+const SWEPT_BANDPASS_CUES: ReadonlySet<CombatCue> = new Set(['weapon-miss'])
 const DESCENDING_PITCH_CUES: ReadonlySet<CombatCue> = new Set(['stagger', 'defeat'])
 
 const PEAK_GAIN = 0.22
@@ -548,8 +567,15 @@ export class BrowserAudioBackend implements AudioBackend {
       noise.buffer = this.noiseBuffer
       noise.loop = true
       const filter = context.createBiquadFilter()
-      filter.type = LOWPASS_CUES.has(cue) ? 'lowpass' : 'highpass'
-      filter.frequency.setValueAtTime(baseFrequency * 3, now)
+      if (SWEPT_BANDPASS_CUES.has(cue)) {
+        filter.type = 'bandpass'
+        filter.Q.setValueAtTime(1.2, now)
+        filter.frequency.setValueAtTime(baseFrequency * 3, now)
+        filter.frequency.exponentialRampToValueAtTime(Math.max(30, baseFrequency * 0.8), now + durationSeconds)
+      } else {
+        filter.type = LOWPASS_CUES.has(cue) ? 'lowpass' : 'highpass'
+        filter.frequency.setValueAtTime(baseFrequency * 3, now)
+      }
       noise.connect(filter)
       filter.connect(master)
       sources.push(noise)

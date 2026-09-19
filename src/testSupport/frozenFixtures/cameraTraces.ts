@@ -155,8 +155,85 @@ export interface RecordedCameraTrace {
 // 0.460 x 1.1 narrower on the hoplomachus' side; the retiarius' edge is where
 // it was. `expectSmoothFraming` was re-run unmodified over the three traces
 // and the nine standalone pairings and holds.
+// RE-FROZEN 2026-09-05 (fighting room), AND THIS IS THE FIRST TIME `ticks`
+// LEGITIMATELY MOVES. Every previous entry above turns on the rule that an
+// unchanged bout length is what separates a re-recording from a re-baseline of
+// something that actually broke -- and that rule holds precisely because those
+// slices touched only the camera's framing inputs. This one changes
+// `src/simulation/**` and `src/content/**` on purpose: the body-width
+// translation (+0.30 on every separation), the duel arena that grew with it
+// (6.5 x 2.5 -> 7.5 x 3.3, start +/-4.2 -> +/-4.7), the spear's `pushDistance`,
+// and Aquila's `power`. Different bouts, therefore different lengths.
+//
+//   01 murmillo vs retiarius    1827 -> 3480 ticks   opening 15.4353 -> 16.5843   crossings 1 -> 1
+//   04 retiarius vs retiarius   1705 -> 1632 ticks   opening 15.7947 -> 16.8736   crossings 3 -> 1
+//   07 hoplomachus vs retiarius 1261 -> 1496 ticks   opening 16.2333 -> 17.2076   crossings 1 -> 3
+//
+// Opening distance rose in all three because the fighters now start 9.4 units
+// apart instead of 8.4. Trace 01 is the one to look at twice: 3480 ticks is
+// close to the 3600 cap, and it is a real tail rather than a stall -- the bout
+// still ends by defeat, and `balance.test.ts` measures this pairing at a 2132
+// median with a p95 under 3200 and no timeouts across 200 seeds.
+//
+// Everything `expectSmoothFraming` asserts was re-checked unmodified and
+// passes: 0 direction reversals in traces 01 and 04 and 2 in trace 07 (against
+// a ceiling of 2, the worst previously measured anywhere), peak zoom rates
+// 3.09 / 4.68 / 3.27 against the limit of 5, clamped and unclamped series
+// byte-identical, and every distance inside 8.81..18.
+//
+// RE-RECORDED A FIFTH TIME by the MERGE of the two slices above, which is the
+// only entry here produced by neither slice alone. They move different factors
+// and both factors are inputs to the opening shot, so neither side's numbers
+// survive: the fighting-room slice moved the bouts (`ticks`, and the 9.4-unit
+// start that lifts every opening distance) and the murmillo kit moved the
+// murmillo's `horizontalEquipmentRadius` (1.5861850532796753 ->
+// 1.679186605264372), which widens the reset shot's group extent in the one
+// trace that fields a murmillo.
+//
+// `ticks` is taken from the fighting-room recording UNCHANGED, and that is the
+// check that this is a merge and not a behaviour change: the kit touches
+// `src/simulation/**` and `src/content/**` not at all, so a bout length that
+// moved here would mean something else did.
+//
+//   01 murmillo vs retiarius    3480 ticks (held)   opening 16.5843 -> 16.7316   crossings 1 -> 1
+//   04 retiarius vs retiarius   1632 ticks (held)   opening 16.8736 (unchanged)  crossings 1 -> 1
+//   07 hoplomachus vs retiarius 1496 ticks (held)   opening 17.2076 (unchanged)  crossings 3 -> 3
+//
+// Traces 04 and 07 field no murmillo, so their inputs are byte-identical to the
+// fighting-room recording and were predicted not to move; they did not. Trace
+// 01's rise is +0.1473, NOT the +0.1810 the kit-only recording showed for the
+// same radius change: the reset shot frames a pair that now starts a unit
+// further apart, and the framing distance is not linear in one fighter's
+// radius. Predicted by hand at 16.7666 and measured at 16.7316 -- the measured
+// value is the one frozen.
+//
+// RE-RECORDED A SIXTH TIME by the merge of the spear re-grip with the two
+// slices above. All three openings move this time, not one, because the
+// re-grip changed the MAPPING and not just a radius: `extentToDistance` now
+// starts easing at `FLAT_REGION_EDGE_EXTENT`, and the opening reset shot is a
+// wide frame sitting in the eased region, so every pairing's opening moved
+// whether or not a hoplomachus is in it.
+//
+//   01 murmillo vs retiarius    3480 ticks (held)   opening 16.7316 -> 17.1260   crossings 1 -> 1
+//   04 retiarius vs retiarius   1632 ticks (held)   opening 16.8736 -> 17.2475   crossings 1 -> 17
+//   07 hoplomachus vs retiarius 1496 ticks (held)   opening 17.2076 -> 16.9520   crossings 3 -> 3
+//
+// `ticks` holds on all three, which is again the check that nothing but the
+// camera moved: the re-grip touches the GLB and the camera constants, not
+// `src/simulation/**`.
+//
+// TRACE 04'S CROSSINGS ARE THE FINDING HERE: 1 -> 17. The retiarius pairing now
+// spends the bout brushing the flat region's edge, because the body-width
+// translation lifted its band edge to `3.4 + 2 x 1.772876372587171 x 1.1 =
+// 7.3003` while `FLAT_REGION_EDGE_FLOOR_EXTENT` holds the edge at 7.5312 -- a
+// 0.2309 gap where the re-grip alone left 0.5309. `expectSmoothFraming` passes
+// unmodified over all three traces and the nine standalone pairings, so this is
+// crossings and not chatter: the camera is tracking through the boundary, not
+// reversing on it. But 0.2309 is the thinnest that margin has ever been, and
+// the next slice that moves a separation outward or a radius up is the one to
+// re-read this number before anything else.
 export const RECORDED_TRACES: readonly RecordedCameraTrace[] = [
-  { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 1827, openingDistance: 15.616315888413556, crossings: 1 },
-  { label: '04 retiarius vs retiarius', lineup: ['aquila', 'nerva', 'brutus'], ticks: 1705, openingDistance: 15.794692273631078, crossings: 3 },
-  { label: '07 hoplomachus vs retiarius', lineup: ['nerva', 'brutus', 'aquila'], ticks: 1261, openingDistance: 15.371555768623248, crossings: 1 },
+  { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 3480, openingDistance: 17.125989106303702, crossings: 1 },
+  { label: '04 retiarius vs retiarius', lineup: ['aquila', 'nerva', 'brutus'], ticks: 1632, openingDistance: 17.247453659337772, crossings: 17 },
+  { label: '07 hoplomachus vs retiarius', lineup: ['nerva', 'brutus', 'aquila'], ticks: 1496, openingDistance: 16.95201567182722, crossings: 3 },
 ]

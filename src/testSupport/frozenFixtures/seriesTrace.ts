@@ -61,11 +61,12 @@ export const ALL_COUNTERS_SCORE = '2-1'
  * test file. THIS set is the stronger, re-baselinable statement of which
  * profiles they are.
  *
- * There are now FOUR. The amended floor stays where it is -- moving it is not
- * this slice's to do -- but the criterion Task 13 had to relax is satisfied
- * again, and that is worth recording rather than leaving to be noticed.
+ * There are THREE, down from four on 2026-09-05: the body-width translation
+ * and the arena that grew with it removed the `0-3` profile, so no lineup now
+ * loses every bout. The amended floor of two still holds with a profile to
+ * spare, and the criterion Task 13 had to relax is still satisfied.
  */
-export const LINEUP_SCORE_SET: readonly string[] = ['0-3', '1-2', '2-1', '3-0']
+export const LINEUP_SCORE_SET: readonly string[] = ['1-2', '2-1', '3-0']
 
 /**
  * CLASS: determinism. The short-handed series' final scores, in the order

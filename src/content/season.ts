@@ -87,9 +87,54 @@ export { homeRoster, opponents } from './mvpSeries'
 // and 87.5 is already outside the band. The bench cannot be tuned "relative to"
 // the veteran on paper; it has to be measured.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 2026-09-05 RE-CALIBRATION (fighting room). BOTH BENCH ROWS MOVED AGAIN.
+//
+// The fighting-room slice -- the body-width translation, the duel arena that
+// grew with it, the spear's push, and Aquila's `power` 20 -> 20.8 -- left both
+// bench members strict downgrades again, which is criterion 2 above failing in
+// exactly the way the original calibration existed to fix. Measured before the
+// re-calibration, fresh against the three unscaled opponents:
+//
+//              Drusus  Cassius  Magnus   mean
+//   brutus      82.0     39.0    78.5    66.5
+//   vitus       77.5     36.0    78.5    64.0     beats Brutus on 0 of 3
+//   aquila      28.0     58.5    19.5    35.3
+//   sura        25.0     53.0    15.5    31.2     beats Aquila on 0 of 3
+//
+// Vitus: `power` 23.6 -> 24.4 and `defenseChance` 0.30 -> 0.28. Measures
+// 77.0 / 38.0 / 81.5, mean 65.5 against Brutus's 66.5. Power alone also passes
+// (24.4 with defence left at 0.30 gives mean 66.3) and is rejected for having
+// 0.2 points of margin on the mean where this has 1.0; the defence cut is the
+// axis that buys the separation, because it moves the Heavy matchup opposite to
+// the other two.
+//
+//   HIS STORY CHANGED, and it is worth saying so rather than leaving the note
+//   above to contradict the numbers. He used to win the FAST opponent -- the
+//   counter triangle's own arrow. He now wins the HEAVY mirror, by 3.0 points,
+//   and loses Drusus by 5.0. That reads at least as well: two heavies in a
+//   slugfest is decided by who hits harder, and hitting harder while being
+//   clumsier and softer is precisely what his row says.
+//
+// Sura: `maxHp` 396 -> 442 and `power` 19 -> 18.2. Measures 28.5 / 56.0 / 18.5,
+// mean 34.3 against Aquila's 35.3.
+//
+//   HER MARGIN IS THIN AND SHOULD BE TREATED AS SUCH. She clears the criterion
+//   on Drusus by 0.5 points, which at 200 seeds is a single bout. The window is
+//   genuinely narrow rather than under-searched: she is uniformly close to
+//   Aquila on all three matchups, so every candidate either loses all three or
+//   wins all three within a few points of stats. Measured on this build,
+//   `maxHp` 425 alone gives 28.5 / 58.5 / 18.0 (mean margin 0.3), 432 gives
+//   30.0 / 59.5 / 18.0 and wins two, 435 with `power` 18.6 wins two, and 450
+//   with `defenseChance` 0.58 wins all three. The defence lever that carried
+//   the original calibration no longer separates her: paired with the power cut
+//   needed to hold the mean, 0.56-0.58 drops every matchup at once. If this
+//   test flakes, it is this row, and it wants a real re-search rather than a
+//   nudge.
+// ---------------------------------------------------------------------------
 const benchSpecialists = [
-  { id: 'vitus', name: 'Vitus', school: 'House of Mars', archetype: 'heavy', maxHp: 372, power: 23.6, accuracy: 0.875, defenseChance: 0.30, criticalChance: 0.09 },
-  { id: 'sura', name: 'Sura', school: 'House of Mars', archetype: 'fast', maxHp: 396, power: 19, accuracy: 0.880, defenseChance: 0.52, criticalChance: 0.142 },
+  { id: 'vitus', name: 'Vitus', school: 'House of Mars', archetype: 'heavy', maxHp: 372, power: 24.4, accuracy: 0.875, defenseChance: 0.28, criticalChance: 0.09 },
+  { id: 'sura', name: 'Sura', school: 'House of Mars', archetype: 'fast', maxHp: 442, power: 18.2, accuracy: 0.880, defenseChance: 0.52, criticalChance: 0.142 },
 ] as const satisfies readonly FighterDefinition[]
 
 export const SEASON_ROSTER = [...homeRoster, ...benchSpecialists] as const satisfies readonly FighterDefinition[]

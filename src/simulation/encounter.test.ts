@@ -24,7 +24,7 @@ import {
   type EncounterState,
 } from './encounter'
 import type { Archetype } from './fighters'
-import type { Vec2 } from './movement'
+import type { CombatArenaDefinition, Vec2 } from './movement'
 import { derivedUnitValue } from './random'
 
 function baseConfig(overrides: Partial<EncounterConfig> = {}): EncounterConfig {
@@ -43,6 +43,16 @@ function baseConfig(overrides: Partial<EncounterConfig> = {}): EncounterConfig {
  * report) two-combatant duel fixture matching the design's duel-adapter
  * shape: `home.brutus` (heavy) vs. `away.drusus` (fast), an ordered-pair
  * arena sized like `duelArena` but with `orderedPair` naming these two ids.
+ *
+ * `minimumSeparation` is overridden to the duel adapter's own 1.20
+ * (`battle.ts`'s `DUEL_MINIMUM_SEPARATION`) rather than inherited from the
+ * shared `duelArena`, which still carries the pre-2026-09-05 0.90. That 0.90
+ * is not merely stale here: after the body-width translation the closest
+ * attack floor in the catalogue is 1.20, so an arena that lets two fighters
+ * stand at 0.90 opens a 0.30-wide band in which NEITHER of them has a legal
+ * attack -- the absorbing state the translation exists to close. Measured on
+ * this fixture, the 0.90 floor pushed seed 3's first `damage-dealt` from tick
+ * 120 out to tick 198, past the 150-tick window the trace tests fold.
  */
 function duelEncounterConfig(overrides: Partial<EncounterConfig> & { seed: number }): EncounterConfig {
   return {
@@ -50,7 +60,7 @@ function duelEncounterConfig(overrides: Partial<EncounterConfig> & { seed: numbe
       combatant('home.brutus', 'home', { archetype: 'heavy', startPosition: { x: -2.2, z: 0 } }),
       combatant('away.drusus', 'away', { archetype: 'fast', startPosition: { x: 2.2, z: 0 } }),
     ],
-    arena: { ...duelArena, orderedPair: ['home.brutus', 'away.drusus'] },
+    arena: { ...duelArena, minimumSeparation: 1.2, orderedPair: ['home.brutus', 'away.drusus'] },
     hostility: { mode: 'different-factions' },
     combatStyles: COMBAT_STYLES,
     ...overrides,
@@ -662,9 +672,12 @@ describe('advanceEncounterTick: actor-local action instance IDs', () => {
   it('pins a:0 and b:0 (both present) for a fast-vs-fast duel, each id actor-prefixed with strictly increasing per-actor serials', () => {
     const created = createEncounter({
       seed: 4,
+      // +-1.65 rather than +-1.5: the 2026-09-05 body-width translation moved
+      // Fast's `preferredRange` out by 0.30, so a separation of 3.30 now sits
+      // where 3.00 did -- at the top of the band both fighters open from.
       combatants: [
-        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1.5, z: 0 } }),
-        combatant('b', 'away', { archetype: 'fast', startPosition: { x: 1.5, z: 0 } }),
+        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1.65, z: 0 } }),
+        combatant('b', 'away', { archetype: 'fast', startPosition: { x: 1.65, z: 0 } }),
       ],
       arena: duelArena,
       hostility: { mode: 'different-factions' },
@@ -760,11 +773,11 @@ function patchCombatant(state: EncounterState, id: string, overrides: Partial<Fi
   return { ...state, combatants: { ...state.combatants, [id]: { ...state.combatants[id], ...overrides } } }
 }
 
-function movementConstraintFixture(): EncounterState {
+function movementConstraintFixture(arena: CombatArenaDefinition = freeArena): EncounterState {
   const created = createEncounter({
     seed: 1,
     combatants: [combatant('self', 'home', { archetype: 'heavy', startPosition: { x: 0, z: 0 } }), combatant('other', 'away', { archetype: 'heavy', startPosition: { x: 15, z: 0 } })],
-    arena: freeArena,
+    arena,
     hostility: { mode: 'different-factions' },
     combatStyles: COMBAT_STYLES,
   })
@@ -802,12 +815,21 @@ describe('advanceEncounterTick: movement constraints by action phase (design.md,
 
   it('windup: stops the root-travel step early at arena.minimumSeparation instead of pushing the target back', () => {
     // heavy-cleave's per-tick step is 0.45/34 ~= 0.01324, which would carry
-    // `self` from x=0 to x=0.01324 -- past the target's x=0.905 minus
-    // freeArena's minimumSeparation (0.9), i.e. past 0.005 of headroom.
+    // `self` from x=0 to x=0.01324 -- past the target's x=1.205 minus this
+    // arena's minimumSeparation (1.2), i.e. past 0.005 of headroom.
     // The capped step must land self at exactly minimumSeparation from the
     // (unmoved) target, not let the symmetric separation solver shove the
     // target backwards to fix an overshoot.
-    const base = patchCombatant(movementConstraintFixture(), 'other', { position: { x: 0.905, z: 0 }, nextDecisionTick: 999_999 })
+    //
+    // The arena floor is 1.20, not `freeArena`'s 0.90, because of the
+    // 2026-09-05 body-width translation. The mover clamps at
+    // `max(arena.minimumSeparation, contactRange.min)` and validation requires
+    // `contactRange.min >= arena.minimumSeparation`, so the ARENA half of that
+    // floor is only ever observable when the two coincide. They did at 0.90
+    // before the translation (heavy-cleave's own floor was 0.90 too); they
+    // coincide again at 1.20, the shipped duel arena's separation.
+    const closeQuartersArena: CombatArenaDefinition = { ...freeArena, minimumSeparation: 1.2 }
+    const base = patchCombatant(movementConstraintFixture(closeQuartersArena), 'other', { position: { x: 1.205, z: 0 }, nextDecisionTick: 999_999 })
     const withSelf = patchCombatant(base, 'self', {
       position: { x: 0, z: 0 },
       facing: { x: 1, z: 0 },
@@ -829,7 +851,7 @@ describe('advanceEncounterTick: movement constraints by action phase (design.md,
 
     const { state } = advanceEncounterTick(withTick)
 
-    expect(distanceBetween(state.combatants.self.position, state.combatants.other.position)).toBeCloseTo(freeArena.minimumSeparation, 9)
+    expect(distanceBetween(state.combatants.self.position, state.combatants.other.position)).toBeCloseTo(closeQuartersArena.minimumSeparation, 9)
     expect(state.combatants.other.position).toEqual(otherBefore) // the target never moves to accommodate the attacker's approach.
   })
 
@@ -842,9 +864,15 @@ describe('advanceEncounterTick: movement constraints by action phase (design.md,
   // `max(contactRange.min, d - rootTravel)` and so believed contact landed in
   // range. The mover and the decision seam have to agree, or the policy is
   // scoring a contact the mover will not produce.
+  //
+  // The two start distances moved with the 2026-09-05 translation (1.3 -> 1.6,
+  // 1.8 -> 2.1): they are separations, and the two `contactRange.min` values
+  // they have to sit just above moved out by 0.30 with everything else. The
+  // two `expect`s directly below re-derive that placement from the catalog, so
+  // a mis-translated literal fails loudly rather than silently testing nothing.
   it.each([
-    ['technical-thrust', 1.3] as const,
-    ['technical-driving-thrust', 1.8] as const,
+    ['technical-thrust', 1.6] as const,
+    ['technical-driving-thrust', 2.1] as const,
   ])('windup: %s started at %s never walks inside its own contactRange.min', (definitionId, startDistance) => {
     const definition = COMBAT_STYLES.attacks[definitionId]
     // Chosen so the unclamped travel would carry the actor below contactRange.min:
@@ -1023,7 +1051,7 @@ describe('advanceEncounterTick: isDecisionReady is stagger-aware', () => {
 
     const { state: next, events } = advanceEncounterTick(withTick)
 
-    // Heavy at distance 15 (well outside its 1.2-1.7 preferred range) would
+    // Heavy at distance 15 (well outside its 1.5-2.0 preferred range) would
     // ordinarily select advance/pressure with a strongly positive weight --
     // if a real decision had run, locomotionIntent would very likely have
     // changed away from 'hold-range'. Staggered, it must not run at all.
@@ -1514,7 +1542,19 @@ interface ContactFixtureOptions {
   targetOverrides?: Partial<FighterCombatState>
 }
 
-/** Builds a two-combatant state whose `actor:0` action is in `windup`, ending exactly at `CONTACT_TICK` -- so advancing one tick from `CONTACT_TICK - 1` transitions it to `contact` and resolves it. */
+/**
+ * Builds a two-combatant state whose `actor:0` action is in `windup`, ending
+ * exactly at `CONTACT_TICK` -- so advancing one tick from `CONTACT_TICK - 1`
+ * transitions it to `contact` and resolves it.
+ *
+ * Every caller below that wants its attack to LAND places the pair one full
+ * 2026-09-05 body-width translation further apart than it used to: the
+ * separations moved out by 0.30 with the `contactRange`s they have to sit
+ * inside (fast-slash 0.90-2.05 -> 1.20-2.35, so the canonical "just inside"
+ * separation is 1.30 rather than 1.00; heavy's actor sits at -1.30 rather than
+ * -1.00). Callers that want a geometry MISS are left where they were -- a
+ * separation of 5 is outside every band in both frames.
+ */
 function contactFixture(options: ContactFixtureOptions): EncounterState {
   const created = createEncounter({
     seed: 1,
@@ -1594,9 +1634,9 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
     const state = contactFixture({
       actorArchetype: 'fast',
       targetArchetype: 'fast',
-      actionId: 'fast-slash', // minimumFacingDot 0.4226, contactRange 0.9-1.35
+      actionId: 'fast-slash', // minimumFacingDot 0.4226, contactRange 1.2-2.35
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 0, z: 1.0 }, // in range, but directly to the side
+      targetPosition: { x: 0, z: 1.3 }, // in range (2026-09-05 translation: 1.0 -> 1.3), but directly to the side
       actorFacing: { x: 1, z: 0 }, // dot(facing, towardTarget) = 0 < 0.4226
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -1616,7 +1656,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.9,
       criticalRoll: 0.9,
@@ -1635,7 +1675,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -1655,7 +1695,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 5, z: 0 }, // outside contactRange 0.9-1.35: the dash succeeded
+      targetPosition: { x: 5, z: 0 }, // outside contactRange 1.2-2.35: the dash succeeded
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -1685,7 +1725,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 }, // still inside contactRange: the dash failed
+      targetPosition: { x: 1.3, z: 0 }, // still inside contactRange: the dash failed
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1, // passes: clamp(0.8+0.06)=0.86
       criticalRoll: 0.9,
@@ -1705,7 +1745,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.9, // fails
       criticalRoll: 0.9,
@@ -1724,7 +1764,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       actorArchetype: 'heavy',
       targetArchetype: 'heavy',
       actionId: 'heavy-cleave', // power20 * 1.75 * 1.00(neutral) = 35; push 0.70; staggerTicks 24
-      actorPosition: { x: -1, z: 0 },
+      actorPosition: { x: -1.3, z: 0 },
       targetPosition: { x: 0, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1, // clamp(0.8-0.06)=0.74; passes
@@ -1752,7 +1792,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       actorArchetype: 'heavy',
       targetArchetype: 'heavy',
       actionId: 'heavy-cleave',
-      actorPosition: { x: -1, z: 0 },
+      actorPosition: { x: -1.3, z: 0 },
       targetPosition: { x: 0, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
@@ -1775,7 +1815,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       actorArchetype: 'heavy',
       targetArchetype: 'heavy',
       actionId: 'heavy-cleave',
-      actorPosition: { x: -1, z: 0 },
+      actorPosition: { x: -1.3, z: 0 },
       targetPosition: { x: 0, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
@@ -1797,7 +1837,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
     const state = contactFixture({
       actorArchetype: 'technical',
       targetArchetype: 'technical',
-      actionId: 'technical-thrust', // parryable, contactRange 1.2-2.8, minimumFacingDot 0.9397 (~20°)
+      actionId: 'technical-thrust', // parryable, contactRange 1.5-3.1, minimumFacingDot 0.9397 (~20°)
       actorPosition: { x: -2, z: 0 },
       targetPosition: { x: 0, z: 0 },
       actorFacing: { x: 1, z: 0 },
@@ -1824,7 +1864,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.05, // < criticalChance 0.1
@@ -1856,7 +1896,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.01, // would win if the target were open
@@ -1875,7 +1915,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.5, // >= criticalChance 0.1
@@ -1894,7 +1934,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.05,
@@ -1929,7 +1969,7 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -1965,9 +2005,12 @@ describe('advanceEncounterTick: contact resolution -- snapshot discipline and to
     const created = createEncounter({
       seed: 1,
       combatants: [
-        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
+        // Both separations carry the 2026-09-05 translation: a-b 1.00 -> 1.30
+        // (inside fast-slash's 1.20-2.35) and b-c 1.20 -> 1.50 (inside
+        // heavy-cleave's 1.20-2.10), each landing where it did in the old frame.
+        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1.3, z: 0 } }),
         combatant('b', 'fast-side', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
-        combatant('c', 'away', { archetype: 'heavy', startPosition: { x: 1.2, z: 0 }, fighter: { maxHp: 500 } }),
+        combatant('c', 'away', { archetype: 'heavy', startPosition: { x: 1.5, z: 0 }, fighter: { maxHp: 500 } }),
       ],
       arena: freeArena,
       hostility: { mode: 'free-for-all' },
@@ -2032,8 +2075,8 @@ describe('advanceEncounterTick: contact resolution -- snapshot discipline and to
     const created = createEncounter({
       seed: 1,
       combatants: [
-        combatant('a1', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
-        combatant('a2', 'home', { archetype: 'heavy', startPosition: { x: 0, z: -1 } }),
+        combatant('a1', 'home', { archetype: 'fast', startPosition: { x: -1.3, z: 0 } }),
+        combatant('a2', 'home', { archetype: 'heavy', startPosition: { x: 0, z: -1.3 } }),
         combatant('v', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 }, fighter: { maxHp: 1 } }),
       ],
       arena: freeArena,
@@ -2089,8 +2132,8 @@ describe('advanceEncounterTick: contact resolution -- snapshot discipline and to
     const created = createEncounter({
       seed: 9,
       combatants: [
-        combatant('a1', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
-        combatant('a2', 'home', { archetype: 'fast', startPosition: { x: -1, z: 10 } }),
+        combatant('a1', 'home', { archetype: 'fast', startPosition: { x: -1.3, z: 0 } }),
+        combatant('a2', 'home', { archetype: 'fast', startPosition: { x: -1.3, z: 10 } }),
         combatant('t1', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
         combatant('t2', 'away', { archetype: 'fast', startPosition: { x: 0, z: 10 } }),
       ],
@@ -2144,9 +2187,9 @@ describe('advanceEncounterTick: contact resolution -- snapshot discipline and to
     const created = createEncounter({
       seed: 9,
       combatants: [
-        combatant('a1', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
-        combatant('a2', 'home', { archetype: 'fast', startPosition: { x: -1, z: 10 } }),
-        combatant('a3', 'home', { archetype: 'fast', startPosition: { x: -1, z: 20 } }),
+        combatant('a1', 'home', { archetype: 'fast', startPosition: { x: -1.3, z: 0 } }),
+        combatant('a2', 'home', { archetype: 'fast', startPosition: { x: -1.3, z: 10 } }),
+        combatant('a3', 'home', { archetype: 'fast', startPosition: { x: -1.3, z: 20 } }),
         combatant('t1', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
         combatant('t2', 'away', { archetype: 'fast', startPosition: { x: 0, z: 10 } }),
         combatant('t3', 'away', { archetype: 'fast', startPosition: { x: 0, z: 20 } }),
@@ -2228,7 +2271,7 @@ describe('advanceEncounterTick: shield jab is unparryable (defense-in-depth at r
       actorArchetype: 'heavy',
       targetArchetype: 'technical',
       actionId: 'heavy-shield-jab', // tags: unparryable
-      actorPosition: { x: -1, z: 0 },
+      actorPosition: { x: -1.3, z: 0 },
       targetPosition: { x: 0, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1, // clamp(0.8+0.08)=0.88
@@ -2264,8 +2307,8 @@ describe('advanceEncounterTick: accumulated push (phase 10)', () => {
     const created = createEncounter({
       seed: 1,
       combatants: [
-        combatant('a1', 'home', { archetype: 'fast', startPosition: { x: -1.0, z: 0 } }),
-        combatant('a2', 'home', { archetype: 'fast', startPosition: { x: 0, z: -1.0 } }),
+        combatant('a1', 'home', { archetype: 'fast', startPosition: { x: -1.3, z: 0 } }),
+        combatant('a2', 'home', { archetype: 'fast', startPosition: { x: 0, z: -1.3 } }),
         combatant('v', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 }, fighter: { maxHp: 500 } }),
       ],
       arena: freeArena,
@@ -2342,7 +2385,7 @@ describe('advanceEncounterTick: motion diagnostics -- velocity/travelledDistance
     const created = createEncounter({
       seed: 1,
       combatants: [
-        combatant('attacker', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
+        combatant('attacker', 'home', { archetype: 'fast', startPosition: { x: -1.3, z: 0 } }),
         combatant('v', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 } }),
       ],
       arena: freeArena,
@@ -2400,7 +2443,7 @@ describe('advanceEncounterTick: motion diagnostics -- velocity/travelledDistance
       targetArchetype: 'fast',
       actionId: 'fast-slash', // round(20*0.75*1.00)=15, enough to defeat a 1-hp target
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9, // no crit: an ordinary hit is enough to prove the regression
@@ -2558,7 +2601,7 @@ describe('advanceEncounterTick: Fast evade windup dash (carried forward from Tas
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -2592,7 +2635,7 @@ describe("advanceEncounterTick: Technical's forced parry-counter start (carried 
     return { ...state, tick: 9 }
   }
 
-  it('starts the forced counter (bypassing weighted selection) when the target remains within 2.3 units', () => {
+  it('starts the forced counter (bypassing weighted selection) when the target remains within 2.6 units', () => {
     const state = forcedCounterFixture({ x: 2.0, z: 0 })
     const decisionStreamBefore = state.randomByCombatant.self.decision
 
@@ -2605,7 +2648,7 @@ describe("advanceEncounterTick: Technical's forced parry-counter start (carried 
   })
 
   it('clears the forced counter and falls back to ordinary weighted selection when the target is out of range', () => {
-    const state = forcedCounterFixture({ x: 10, z: 0 }) // outside 2.3 units
+    const state = forcedCounterFixture({ x: 10, z: 0 }) // outside 2.6 units
     const decisionStreamBefore = state.randomByCombatant.self.decision
 
     const { state: next } = advanceEncounterTick(state)
@@ -2618,13 +2661,13 @@ describe("advanceEncounterTick: Technical's forced parry-counter start (carried 
   it('allowed counter miss: a started counter can still miss by geometry once ordinary movement drifts the target out of contactRange', () => {
     // The start check does not guarantee contact -- this directly exercises
     // the generic geometry-miss path with technical-parry-counter's own
-    // contactRange (0.9-2.3), simulating movement drift during its windup.
+    // contactRange (1.2-2.6), simulating movement drift during its windup.
     const state = contactFixture({
       actorArchetype: 'technical',
       targetArchetype: 'technical',
       actionId: 'technical-parry-counter',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 3.0, z: 0 }, // outside 0.9-2.3
+      targetPosition: { x: 3.3, z: 0 }, // outside 1.2-2.6 (2026-09-05 translation: 3.0 -> 3.3, the same clearance past the max)
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -2641,9 +2684,9 @@ describe("advanceEncounterTick: forced parry-counter timing is pinned to the par
     const state = contactFixture({
       actorArchetype: 'technical',
       targetArchetype: 'technical',
-      actionId: 'technical-thrust', // parryable, contactRange 1.2-2.8
-      actorPosition: { x: -2, z: 0 },
-      targetPosition: { x: 0, z: 0 }, // distance 2: within technical-thrust's range AND within the counter's 2.3-unit gate
+      actionId: 'technical-thrust', // parryable, contactRange 1.5-3.1
+      actorPosition: { x: -2.3, z: 0 },
+      targetPosition: { x: 0, z: 0 }, // distance 2.3 (2026-09-05 translation of 2.0): within technical-thrust's range AND within the counter's 2.6-unit gate
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -2679,8 +2722,8 @@ describe("advanceEncounterTick: forced parry-counter timing is pinned to the par
       actorArchetype: 'technical',
       targetArchetype: 'technical',
       actionId: 'technical-thrust',
-      actorPosition: { x: -2.5, z: 0 },
-      targetPosition: { x: 0, z: 0 }, // distance 2.5: within technical-thrust's range (1.2-2.8) but past the counter's 2.3-unit gate
+      actorPosition: { x: -2.8, z: 0 },
+      targetPosition: { x: 0, z: 0 }, // distance 2.8 (2026-09-05 translation of 2.5): within technical-thrust's range (1.5-3.1) but past the counter's 2.6-unit gate
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -2691,7 +2734,7 @@ describe("advanceEncounterTick: forced parry-counter timing is pinned to the par
     expect(events.some((event) => event.type === 'attack-parried')).toBe(true)
     expect(afterParry.combatants.target.forcedActionId).toBe('technical-parry-counter')
 
-    const { state: afterGateCheck } = advanceEncounterTick(afterParry) // tick CONTACT_TICK + 1: gate fails (2.5 > 2.3)
+    const { state: afterGateCheck } = advanceEncounterTick(afterParry) // tick CONTACT_TICK + 1: gate fails (2.8 > 2.6)
     expect(afterGateCheck.combatants.target.forcedActionId).toBeUndefined()
     // Left completely alone by the gate-fail branch: phase 1 already advanced it to `impact` on its own, ordinary schedule.
     expect(afterGateCheck.combatants.target.action).toMatchObject({
@@ -2715,7 +2758,7 @@ describe('advanceEncounterTick: defeated combatants leave targeting/collision th
     const created = createEncounter({
       seed: 1,
       combatants: [
-        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
+        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1.3, z: 0 } }),
         combatant('v', 'away', { archetype: 'fast', startPosition: { x: 0, z: 0 }, fighter: { maxHp: 1 } }),
         combatant('s', 'third', { archetype: 'fast', startPosition: { x: 0, z: 3 } }), // within 16-unit acquisition radius of v
       ],
@@ -2780,7 +2823,7 @@ describe('advanceEncounterTick: local anti-stall clocks (Task 10 Step 2) -- last
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -2799,7 +2842,7 @@ describe('advanceEncounterTick: local anti-stall clocks (Task 10 Step 2) -- last
       actorArchetype: 'heavy',
       targetArchetype: 'heavy',
       actionId: 'heavy-cleave',
-      actorPosition: { x: -1, z: 0 },
+      actorPosition: { x: -1.3, z: 0 },
       targetPosition: { x: 0, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
@@ -2881,7 +2924,7 @@ describe('advanceEncounterTick: local anti-stall clocks (Task 10 Step 2) -- last
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.9, // fails: clamp(0.8+0.06)=0.86
       criticalRoll: 0.9,
@@ -2901,7 +2944,7 @@ describe('advanceEncounterTick: local anti-stall clocks (Task 10 Step 2) -- last
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -2922,7 +2965,7 @@ describe('advanceEncounterTick: phase 12 completion (no-hostile-pairs) -- Task 1
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9, // ordinary (non-crit) hit: round(20*0.75*1.00)=15, lethal against hp 1
@@ -2947,7 +2990,7 @@ describe('advanceEncounterTick: phase 12 completion (no-hostile-pairs) -- Task 1
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -2966,7 +3009,7 @@ describe('advanceEncounterTick: phase 12 completion (no-hostile-pairs) -- Task 1
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -3014,7 +3057,7 @@ describe('advanceEncounterTick: stagger phase matrix (Task 10 Step 1) -- every a
       targetArchetype: 'fast',
       actionId: 'fast-slash',
       actorPosition: { x: 0, z: 0 },
-      targetPosition: { x: 1.0, z: 0 },
+      targetPosition: { x: 1.3, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1,
       criticalRoll: 0.9,
@@ -3178,9 +3221,9 @@ describe('advanceEncounterTick: stagger phase matrix (Task 10 Step 1) -- every a
     const created = createEncounter({
       seed: 1,
       combatants: [
-        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
+        combatant('a', 'home', { archetype: 'fast', startPosition: { x: -1.3, z: 0 } }),
         combatant('b', 'fast-side', { archetype: 'fast', startPosition: { x: 0, z: 0 }, fighter: { maxHp: 1 } }),
-        combatant('c', 'away', { archetype: 'heavy', startPosition: { x: 1.2, z: 0 }, fighter: { maxHp: 500 } }),
+        combatant('c', 'away', { archetype: 'heavy', startPosition: { x: 1.5, z: 0 }, fighter: { maxHp: 500 } }),
       ],
       arena: freeArena,
       hostility: { mode: 'free-for-all' },
@@ -3245,10 +3288,10 @@ describe('advanceEncounterTick: stagger phase matrix (Task 10 Step 1) -- every a
     const created = createEncounter({
       seed: 1,
       combatants: [
-        combatant('killer', 'faction-a', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
+        combatant('killer', 'faction-a', { archetype: 'fast', startPosition: { x: -1.3, z: 0 } }),
         combatant('victim', 'faction-b', { archetype: 'fast', startPosition: { x: 0, z: 0 }, fighter: { maxHp: 1 } }),
         combatant('p1', 'faction-c', { archetype: 'heavy', startPosition: { x: 0, z: 10 } }),
-        combatant('p2', 'faction-d', { archetype: 'heavy', startPosition: { x: 1.0, z: 10 } }),
+        combatant('p2', 'faction-d', { archetype: 'heavy', startPosition: { x: 1.3, z: 10 } }),
       ],
       arena: freeArena,
       hostility: { mode: 'free-for-all' },
@@ -3308,8 +3351,12 @@ describe('advanceEncounterTick: stagger phase matrix (Task 10 Step 1) -- every a
       seed: 1,
       combatants: [
         combatant('p', 'home', { archetype: 'technical', startPosition: { x: 0, z: 0 } }),
-        combatant('a1', 'away', { archetype: 'fast', startPosition: { x: -1, z: 0 } }),
-        combatant('a2', 'away', { archetype: 'technical', startPosition: { x: 0, z: 1.5 } }),
+        // 2026-09-05 translation: a1 sits 1.30 from p (fast-slash 1.20-2.35)
+        // and a2 1.80 (technical-thrust 1.50-3.10), each the old 1.00/1.50
+        // moved out by 0.30 -- both still land, and the priority order that
+        // makes this test a test (40 before 25) is untouched.
+        combatant('a1', 'away', { archetype: 'fast', startPosition: { x: -1.3, z: 0 } }),
+        combatant('a2', 'away', { archetype: 'technical', startPosition: { x: 0, z: 1.8 } }),
       ],
       arena: freeArena,
       hostility: { mode: 'different-factions' },
@@ -3498,7 +3545,11 @@ describe('Task 10 Step 4: informational pacing probe -- Brutus vs. Drusus, 20 se
         { id: 'brutus', factionId: 'home', fighter: homeRoster[0], startPosition: { x: -2.2, z: 0 } },
         { id: 'drusus', factionId: 'away', fighter: opponents[0], startPosition: { x: 2.2, z: 0 } },
       ],
-      arena: { ...duelArena, orderedPair: ['brutus', 'drusus'] },
+      // The duel adapter's own separation floor (1.20), for the same reason
+      // `duelEncounterConfig` overrides it: the shared `duelArena`'s 0.90
+      // predates the 2026-09-05 translation and would let this probe measure a
+      // band no attack in the catalogue can reach into.
+      arena: { ...duelArena, minimumSeparation: 1.2, orderedPair: ['brutus', 'drusus'] },
       hostility: { mode: 'different-factions' },
       combatStyles: COMBAT_STYLES,
     }

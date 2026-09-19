@@ -59,10 +59,16 @@ async function startBoutZeroWith(page: Page, homeFighterId: 'brutus' | 'aquila' 
  * healthy: the 200-seed acceptance cohort records 1109 parries converting at
  * 95.8%. It simply no longer happens in that one bout.
  *
- * `brutus/nerva/aquila` bout 1 is `nerva vs cassius`, which contains three
- * parries, each with its forced counter and the counter's damage -- the same
- * condition the checkpoints were chosen for, found by querying the new trace
- * for it rather than by nudging the old ticks.
+ * `brutus/nerva/aquila` bout 1 is `nerva vs cassius`, which contains the
+ * parries -- the same condition the checkpoints were chosen for, found by
+ * querying the new trace for it rather than by nudging the old ticks.
+ *
+ * The 2026-09-05 fighting-room slice re-cut that bout too: Nerva now parries
+ * twice (ticks 743 and 787, down from three times), and only the SECOND of the
+ * two forces the counter and lands its damage. The checkpoints below therefore
+ * all hang off the 787 parry -- the one exchange in the bout that still shows
+ * the whole parry -> forced counter -> counter damage chain the test is named
+ * for. Found the same way as before, by querying the trace for that condition.
  */
 async function startBoutOneWith(page: Page, lineup: readonly ['brutus' | 'aquila' | 'nerva', 'brutus' | 'aquila' | 'nerva', 'brutus' | 'aquila' | 'nerva']): Promise<void> {
   await page.goto('/?seed=20260815&snapshot')
@@ -74,9 +80,13 @@ async function startBoutOneWith(page: Page, lineup: readonly ['brutus' | 'aquila
     window.__GLADIATOR_TEST__.assign(slots[2], 2)
     window.__GLADIATOR_TEST__.confirm()
   }, lineup)
-  // Bout 0 (`brutus vs drusus`) runs 1827 ticks; a generous margin, then the
-  // explicit hand-off the season surface exposes.
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(1900))
+  // Bout 0 (`brutus vs drusus`) runs 3480 ticks after the 2026-09-05
+  // fighting-room slice, nearly double the 1827 the old `advanceTicks(1900)`
+  // margin was sized against -- so that burst left bout 0 still running and
+  // `startNextBout()` simply refused, silently leaving every checkpoint below
+  // measuring the WRONG BOUT. `MAX_BOUT_TICKS` is the one margin that cannot
+  // go stale again: no bout can outlast the cap the simulation itself enforces.
+  await page.evaluate((ticks) => window.__GLADIATOR_TEST__.advanceTicks(ticks), MAX_BOUT_TICKS)
   await page.evaluate(() => window.__GLADIATOR_TEST__.startNextBout())
 }
 
@@ -322,7 +332,13 @@ test("keeps each rig's rendered root yaw locked to its simulation facing, never 
   // -- reused here rather than arbitrary numbers so this test's ticks are
   // independently known to land mid-combat, not just at the bout's opening
   // approach where both fighters might coincidentally already face +Z.
-  const ticks = [40, 231, 254, 930, 1242, 1658]
+  //
+  // Re-taken from the Step 2 fixtures as the 2026-09-05 fighting-room slice
+  // re-cut them (231/254/930/1242/1658 -> 255/366/620/1364/2555): this test
+  // passed unchanged either way, because the property it asserts holds on
+  // every tick, but numbers that no longer name any Step 2 checkpoint would
+  // make the justification above false while still reading as true.
+  const ticks = [40, 255, 366, 620, 1364, 2555]
 
   for (const tick of ticks) {
     await advanceToTick(page, tick, cursor)
@@ -378,6 +394,14 @@ test("keeps each rig's rendered root yaw locked to its simulation facing, never 
 // bout: `nerva vs drusus` stopped containing a parry at all, so the pairing
 // that demonstrates the mechanic had to be found by searching for it. See
 // each test's own comment for the measurement.
+//
+// EVERY TICK BELOW MOVED AGAIN with the 2026-09-05 fighting-room slice, and
+// none of them moved by a constant: bout A runs 3480 ticks where it ran 1827,
+// bout B 1780. Both bouts still contain every category the brief lists, but at
+// its own new tick, so each checkpoint was re-located by querying the trace for
+// the CONDITION it is named for -- a `heavy-guard` windup, an `attack-blocked`,
+// a pair of overlapping committed windups -- and never by scaling the old
+// number. Each one's own comment records what was found there.
 //
 // `getArenaDebugSnapshot()` is the dev-only numeric surface this task's
 // owned files can read without modifying `ArenaView.ts`/`main.ts`: it proves
@@ -517,58 +541,96 @@ test('separates body height from full prop bounds in the arena debug snapshot', 
 })
 
 test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger, a shield block, a defense-declined window, and defeat', async ({ page }) => {
+  // Six checkpoints across a whole 1827-tick bout, each a skinned render plus
+  // a snapshot read: 8.0 s alone on this machine, but over the 30 s default
+  // when the slow legibility suite runs concurrently (measured 2026-09-17,
+  // the whole fast project ran 6.2 min instead of ~1.1). The feedback spec's
+  // §12 names this remedy for a fast test that crosses 30 s: triple the
+  // budget, not fewer assertions.
+  test.slow()
+
   await startBoutZeroWith(page, 'brutus')
   const cursor = { current: 0 }
 
 
-  // tick 232: a real body hit and its resulting stagger, with the contact
-  // flash lit -- away.drusus's `fast-slash` lands 31 at tick 231.
+  // tick 256: a real body hit and its resulting stagger, with the contact
+  // flash lit -- away.drusus's `fast-burst-lunge` lands 49 at tick 255, the
+  // bout's first blow of any kind.
   //
   // A FINDING, recorded rather than papered over. This checkpoint used to
   // freeze a SIMULTANEOUS mutual hit: two `damage-dealt` and two
   // `fighter-staggered` events on the same tick. There is no such tick left
-  // in this bout -- not one tick in 1827 carries two `damage-dealt` events at
+  // in this bout -- not one tick in 3480 carries two `damage-dealt` events at
   // all. That is not a regression, it is the slice's own thesis showing up in
   // the trace: a simultaneous mutual exchange is what two fighters produce
-  // when they are locked at the arena's 0.90 minimum separation, and the
-  // retiarius no longer fights there. He strikes from 1.89 and withdraws, so
-  // the blows alternate instead of landing together.
+  // when they are locked at the arena's minimum separation, and the retiarius
+  // no longer fights there. He strikes from range and withdraws, so the blows
+  // alternate instead of landing together. The 2026-09-05 fighting-room slice
+  // moved the floor out another 0.30 and the same reading still holds.
   //
-  // What the checkpoint is FOR -- that a real hit, its stagger, and the body
-  // flash are all reachable and rendered -- is unchanged and still asserted.
-  // The simultaneity is what is gone, and it is gone on purpose.
-  await advanceToTick(page, 232, cursor)
+  // The blow itself changed hands with that slice: the old `fast-slash` for 31
+  // at tick 231 is gone, and drusus opens with a `fast-burst-lunge` for 49 at
+  // 255 instead. What the checkpoint is FOR -- that a real hit, its stagger,
+  // and the body flash are all reachable and rendered -- is unchanged and
+  // still asserted.
+  await advanceToTick(page, 256, cursor)
   let snapshot = await arenaSnapshot(page)
-  const contactEvents = await eventsAtTick(page, 231)
+  const contactEvents = await eventsAtTick(page, 255)
   expect(contactEvents.filter((event) => event.type === 'damage-dealt')).toHaveLength(1)
   expect(contactEvents.filter((event) => event.type === 'fighter-staggered')).toHaveLength(1)
   const brutusAfterHit = await combatantState(page, 'home.brutus')
-  expect(brutusAfterHit.hp).toBe(389) // 420 - 31 (fast-slash body hit)
-  expect(brutusAfterHit.staggerUntilTick).toBeGreaterThan(232)
+  expect(brutusAfterHit.hp).toBe(371) // 420 - 49 (fast-burst-lunge body hit)
+  expect(brutusAfterHit.staggerUntilTick).toBeGreaterThan(256)
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
   expect(snapshot!.activeEffectIds.some((id) => id.startsWith('body-'))).toBe(true)
+  // The damage number (feedback spec §8.2): equality, not containment, is
+  // legitimate here only because tick 255's lunge is the bout's FIRST
+  // `damage-dealt` (the hp fixture above already pins it as 420 - 49), so the
+  // pool holds exactly this one entry. And the DOM half: the one visible
+  // pooled span reads '49' and sits inside the arena's own box -- the 4 %
+  // screenshot ratio cannot see a 22 px digit, so this is the guard that the
+  // overlay renders at all.
+  //
+  // The amount is 49 and the tick is 255 because the 2026-09-05 fighting-room
+  // slice re-cut this bout; it was 31 at tick 231. The number moved with the
+  // hp assertion directly above it, which is the point of writing them as the
+  // same arithmetic: neither can be re-baselined without the other.
+  expect(snapshot!.activeDamageNumbers).toEqual([{ id: expect.any(String), amount: 49, kind: 'body' }])
+  const visibleNumbers = page.locator('[data-testid="damage-number"]:visible')
+  await expect(visibleNumbers).toHaveCount(1)
+  await expect(visibleNumbers).toHaveText('49')
+  const numberBox = (await visibleNumbers.boundingBox())!
+  const arenaBox = (await page.getByTestId('arena').boundingBox())!
+  expect(numberBox.x).toBeGreaterThanOrEqual(arenaBox.x)
+  expect(numberBox.y).toBeGreaterThanOrEqual(arenaBox.y)
+  expect(numberBox.x + numberBox.width).toBeLessThanOrEqual(arenaBox.x + arenaBox.width)
+  expect(numberBox.y + numberBox.height).toBeLessThanOrEqual(arenaBox.y + arenaBox.height)
   // ...and the animation layer, not merely the transform layer: a staggered
   // fighter must actually be playing the pack's hit reaction.
-  expectClip(await renderedSnapshotAt(page, 1), 'home.brutus', 'heavy', BASE_CLIPS.hit, 't232 stagger')
+  expectClip(await renderedSnapshotAt(page, 1), 'home.brutus', 'heavy', BASE_CLIPS.hit, 't256 stagger')
 
-  // tick 250: home.brutus mid `heavy-guard` windup, reacting to away.drusus's
-  // `fast-slash` (the guard's windup runs 246..253).
-  await advanceToTick(page, 250, cursor)
+  // tick 362: home.brutus mid `heavy-guard` windup, reacting to away.drusus's
+  // second `fast-burst-lunge` (the guard's windup runs 358..365). The bout's
+  // first of only three `heavy-guard` windups, found by querying the trace for
+  // the phase rather than by nudging the old tick 250 forward.
+  await advanceToTick(page, 362, cursor)
   const guardWindup = await combatantState(page, 'home.brutus')
   expect(guardWindup.action).toMatchObject({ type: 'active', definitionId: 'heavy-guard', phase: 'windup' })
-  expectClip(await renderedSnapshotAt(page, 1), 'home.brutus', 'heavy', DEFENSE_CLIPS['heavy-guard'], 't250 guard windup')
+  expectClip(await renderedSnapshotAt(page, 1), 'home.brutus', 'heavy', DEFENSE_CLIPS['heavy-guard'], 't362 guard windup')
 
-  // tick 254: the guard actually blocks -- `attack-blocked` + a shield-zone
+  // tick 366: the guard actually blocks -- `attack-blocked` + a shield-zone
   // `damage-dealt` (reduced chip damage, not the full hit), and the shield
-  // contact flash is live.
-  await advanceToTick(page, 254, cursor)
-  const blockEvents = await eventsAtTick(page, 254)
+  // contact flash is live. The blocked attack is the lunge rather than the old
+  // `fast-slash`, so the chip is 17 rather than 11 -- the same reduction rule
+  // applied to a heavier blow, not a changed rule.
+  await advanceToTick(page, 366, cursor)
+  const blockEvents = await eventsAtTick(page, 366)
   expect(blockEvents.some((event) => event.type === 'attack-blocked')).toBe(true)
   const shieldDamage = blockEvents.find((event) => event.type === 'damage-dealt')
-  expect(shieldDamage).toMatchObject({ contactZone: 'shield', amount: 11 })
+  expect(shieldDamage).toMatchObject({ contactZone: 'shield', amount: 17 })
   const brutusAfterBlock = await combatantState(page, 'home.brutus')
-  expect(brutusAfterBlock.hp).toBe(378) // 389 - 11 (shield chip damage, not a full hit)
+  expect(brutusAfterBlock.hp).toBe(354) // 371 - 17 (shield chip damage, not a full hit)
   snapshot = await arenaSnapshot(page)
   // Exactly one shield flash, not merely "one or more": a guard-blocked hit
   // emits both `attack-blocked` and a paired `damage-dealt` for the same
@@ -578,24 +640,81 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   // alone is satisfied by either outcome, so it is not a regression guard for
   // that dedupe -- assert the count.
   expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('shield-'))).toHaveLength(1)
+  // ONE number: the 17 in the `shield` style (blocked chip damage), at age 0.
+  //
+  // This assertion used to carry two, the tick-231 body 31 alongside the chip,
+  // because on the pre-2026-09-05 bout the two exchanges sat 22 ticks apart and
+  // both numbers were live at once. The fighting-room slice pushed them apart:
+  // the body hit is now the tick-255 lunge and this block is at 366, so the
+  // first number is 111 ticks old here and long dead (111 > 54). The shape of
+  // the check is deliberately unchanged -- `toMatchObject` on an array, not
+  // `toHaveLength(1)` -- because the burst semantics it guards against
+  // (feedback spec §8.2) are what would put a second entry back.
+  expect(snapshot!.activeDamageNumbers).toMatchObject([{ amount: 17, kind: 'shield' }])
 
-  // tick 930: away.drusus's forced disengage (Fast's post-burst-lunge
-  // recovery locomotion), stamped at 926 and still held here, four ticks in
+  // tick 593, the miss checkpoint (feedback spec §8.2): the bout's first
+  // `attack-missed` -- away.drusus at tick 592, reason `geometry` -- with the
+  // sand puff lit.
+  //
+  // RE-LOCATED BY ITS CONDITION after the 2026-09-05 fighting-room slice, the
+  // way the old comment here asked for: the first miss used to be home.brutus's
+  // at 429 and the re-cut bout has none of his before 2482, far past every
+  // checkpoint after this one. 592 is the re-cut bout's first `attack-missed`
+  // by anyone, so "the bout's first miss" is preserved and only whose it is
+  // changed.
+  //
+  // The burst 367..593 carries home.brutus's evades at 428 and 562 as well, and
+  // under `advanceTicks`'s batch semantics every effect in it spawns at age 0
+  // on the burst's last tick. That is THREE puffs into a two-slot pool
+  // (`FLASH_SLOTS_PER_KIND`), so the count below also pins the recycling: two
+  // live, not three, and not one. No `damage-dealt` falls in the burst at all
+  // -- the tick-366 chip is 227 ticks old here, long past both its spark and
+  // its number -- so the frame is puffs and nothing else, which is exactly the
+  // property this checkpoint exists to assert.
+  await advanceToTick(page, 593, cursor)
+  const missEvents = await eventsAtTick(page, 592)
+  expect(missEvents).toContainEqual(expect.objectContaining({ type: 'attack-missed', actorId: 'away.drusus', reason: 'geometry' }))
+  const burstContactEvents = await page.evaluate(() => {
+    const battle = window.__GLADIATOR_TEST__.getActiveSeriesState()!.activeBattle!
+    return battle.events.filter((event) => event.tick >= 367 && event.tick <= 593).map((event) => ({ type: event.type, tick: event.tick }))
+  })
+  expect(burstContactEvents.filter((event) => event.type === 'attack-evaded').map((event) => event.tick)).toEqual([428, 562])
+  expect(burstContactEvents.filter((event) => event.type === 'attack-missed')).toEqual([{ type: 'attack-missed', tick: 592 }])
+  expect(burstContactEvents.filter((event) => event.type === 'damage-dealt')).toEqual([])
+  snapshot = await arenaSnapshot(page)
+  expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('miss-'))).toHaveLength(2)
+  expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('body-'))).toHaveLength(0)
+  // The number count equals the batch's `damage-dealt` count -- the actual
+  // guard that a miss and an evade spawn puffs and NO number. Here that count
+  // is zero, which makes the guard stricter than it was, not weaker: any
+  // number on screen now is a bug in the miss/evade path.
+  expect(snapshot!.activeDamageNumbers).toEqual([])
+
+  // tick 620: away.drusus's forced disengage (Fast's post-burst-lunge
+  // recovery locomotion), stamped at 616 and still held here, four ticks in
   // -- it stays until drusus has opened the range back out to
-  // `FAST_FORCED_DISENGAGE_END_RANGE` (now 3.35 units) or the tick cap (now
-  // 37) elapses. Before `hasFastForcedDisengageEnded`'s range test was fixed
-  // this was a single-tick blip, which is why the assertion names the stamp
-  // too: an intent that merely happens to read `'disengage'` on one frame is
-  // not the mechanic.
-  await advanceToTick(page, 930, cursor)
+  // `FAST_FORCED_DISENGAGE_END_RANGE` (3.65 units since the 2026-09-05
+  // fighting-room slice translated every separation outward by 0.30) or the
+  // tick cap (37) elapses. Before `hasFastForcedDisengageEnded`'s range test
+  // was fixed this was a single-tick blip, which is why the assertion names
+  // the stamp too: an intent that merely happens to read `'disengage'` on one
+  // frame is not the mechanic.
+  //
+  // The bout now holds ten of these episodes rather than the handful the old
+  // tick 930 was picked from, and every one runs the full 37-tick cap
+  // (616..652 here), so this is still the mechanic held rather than a blip.
+  await advanceToTick(page, 620, cursor)
   const disengaging = await combatantState(page, 'away.drusus')
   expect(disengaging.locomotionIntent).toBe('disengage')
-  expect(disengaging.forcedDisengageStartTick).toBe(926)
+  expect(disengaging.forcedDisengageStartTick).toBe(616)
 
-  // tick 1242: a `defense-declined` window -- away.drusus declined to defend
+  // tick 1364: a `defense-declined` window -- away.drusus declined to defend
   // against home.brutus (instance `home.brutus:11`, the SAME instance the old
-  // freeze named, at event tick 1239), and the eventual damage has not landed
-  // yet.
+  // freeze named, at event tick 1361), and the eventual damage has not landed
+  // yet (it lands at 1368). The instance id survived the 2026-09-05
+  // fighting-room slice unchanged and only its tick moved, 1239 -> 1361, which
+  // is why this checkpoint could be re-pinned by following the instance rather
+  // than by picking a new decline.
   //
   // The skinned rig plays authored clips, and the clip table has no entry for
   // "declined a defense" -- a decline is a decision, not an action with its
@@ -605,23 +724,27 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   // still worth pinning is that this window is reachable at this frozen tick
   // and renders without a NaN: the surrounding state assertions isolate it
   // from a stagger or a defeat, so the frame really is the decline's own.
-  await advanceToTick(page, 1242, cursor)
-  const declineEvents = await eventsAtTick(page, 1239)
+  await advanceToTick(page, 1364, cursor)
+  const declineEvents = await eventsAtTick(page, 1361)
   expect(declineEvents).toContainEqual(expect.objectContaining({ type: 'defense-declined', defenderId: 'away.drusus', incomingActionId: 'home.brutus:11' }))
   const drususBeforeDamage = await combatantState(page, 'away.drusus')
-  expect(drususBeforeDamage.hp).toBe(287) // unchanged -- the decline's own damage has not landed yet
-  expect(drususBeforeDamage.staggerUntilTick).toBeLessThanOrEqual(1242) // not staggered
+  expect(drususBeforeDamage.hp).toBe(312) // unchanged -- the decline's own damage has not landed yet
+  expect(drususBeforeDamage.staggerUntilTick).toBeLessThanOrEqual(1364) // not staggered
   expect(drususBeforeDamage.status).toBe('active') // not defeated
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
 
-  // tick 1658: both fighters mid-windup on their signature committed attacks
-  // -- home.brutus's `heavy-cleave` (started 1654) and away.drusus's
-  // `fast-burst-lunge` (started 1644). RE-LOCATED by querying the new trace
-  // for that exact condition rather than by moving the old number: the two
-  // committed windups overlap for eight ticks, 1654..1661, and nowhere else
-  // in the bout.
-  await advanceToTick(page, 1658, cursor)
+  // tick 2555: both fighters mid-windup on their signature committed attacks
+  // -- home.brutus's `heavy-cleave` (started 2530) and away.drusus's
+  // `fast-burst-lunge` (started 2551). RE-LOCATED by querying the new trace
+  // for that exact condition rather than by moving the old number: after the
+  // 2026-09-05 fighting-room slice the two committed windups overlap in
+  // exactly three windows -- 1897..1902, 2551..2563 and 3227..3244 -- and
+  // nowhere else in the bout. The middle window is taken because it is the
+  // one both fighters enter at full commitment mid-bout, and it is thirteen
+  // ticks wide -- deep enough that the one-tick-later check below is still
+  // comfortably inside the same pair of windups rather than on its edge.
+  await advanceToTick(page, 2555, cursor)
   const brutusCleaveWindup = await combatantState(page, 'home.brutus')
   const drususBurstWindup = await combatantState(page, 'away.drusus')
   expect(brutusCleaveWindup.action).toMatchObject({ type: 'active', definitionId: 'heavy-cleave', phase: 'windup' })
@@ -634,16 +757,16 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   // Both signature attacks reach the rig as their own authored clip, one per
   // archetype, at the same frozen tick.
   const atCleaveWindup = await renderedSnapshotAt(page, 1)
-  expectClip(atCleaveWindup, 'home.brutus', 'heavy', ATTACK_CLIPS['heavy-cleave'].clip, 't1658 cleave windup')
-  expectClip(atCleaveWindup, 'away.drusus', 'fast', ATTACK_CLIPS['fast-burst-lunge'].clip, 't1658 burst windup')
+  expectClip(atCleaveWindup, 'home.brutus', 'heavy', ATTACK_CLIPS['heavy-cleave'].clip, 't2555 cleave windup')
+  expectClip(atCleaveWindup, 'away.drusus', 'fast', ATTACK_CLIPS['fast-burst-lunge'].clip, 't2555 burst windup')
 
-  // tick 1659: still the same windup, one tick later -- so the same clip, at a
+  // tick 2556: still the same windup, one tick later -- so the same clip, at a
   // later clip time, and therefore a DIFFERENT skeleton. This is the assertion
   // that the mixer is actually sampling: `activeClip` proves the right clip
   // was selected and handed over, but an animator that never advanced the
   // pose would satisfy that and every finiteness check in this file while the
   // bout played as a row of statues.
-  await advanceToTick(page, 1659, cursor)
+  await advanceToTick(page, 2556, cursor)
   const oneTickLater = await renderedSnapshotAt(page, 1)
   expect(oneTickLater.activeClip['home.brutus'].clip).toBe(atCleaveWindup.activeClip['home.brutus'].clip)
   expect(oneTickLater.activeClip['home.brutus'].time).toBeGreaterThan(atCleaveWindup.activeClip['home.brutus'].time)
@@ -653,19 +776,22 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   })
   expect(movedBones.length, 'at least one bone must move between two ticks of the same cleave windup').toBeGreaterThan(0)
 
-  // tick 1827: away.drusus's defeat -- the bout's decisive `fighter-defeated`.
-  // The bout CHANGES HANDS with this slice: the murmillo used to be the one
-  // who fell here, at tick 2106. Same checkpoint, same condition, opposite
-  // fighter, and that reversal is the counter triangle returning to its band.
-  await advanceToTick(page, 1827, cursor)
-  const defeatEvents = await eventsAtTick(page, 1827)
+  // tick 3480: away.drusus's defeat -- the bout's decisive `fighter-defeated`.
+  // The retiarius-reach slice made the retiarius the one who falls here (the
+  // murmillo used to, at tick 2106); the 2026-09-05 fighting-room slice keeps
+  // that verdict and only stretches the bout that reaches it, 1827 -> 3480.
+  // Same checkpoint, same condition, same fighter, 1653 ticks later -- which
+  // is itself the slice's thesis, since fighters who have to close distance
+  // before every exchange take longer to settle it.
+  await advanceToTick(page, 3480, cursor)
+  const defeatEvents = await eventsAtTick(page, 3480)
   expect(defeatEvents).toContainEqual(expect.objectContaining({ type: 'fighter-defeated', defeatedId: 'away.drusus', sourceId: 'home.brutus' }))
   const drususDefeated = await combatantState(page, 'away.drusus')
   expect(drususDefeated.status).toBe('defeated')
   expect(drususDefeated.hp).toBe(0)
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
-  expectClip(await renderedSnapshotAt(page, 1), 'away.drusus', 'fast', BASE_CLIPS.death, 't1827 defeat')
+  expectClip(await renderedSnapshotAt(page, 1), 'away.drusus', 'fast', BASE_CLIPS.death, 't3480 defeat')
 })
 
 test('freezes technical measure/parry/counter', async ({ page }) => {
@@ -680,39 +806,56 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
   //   measuring stance   860 -> 900     parry windup     951 -> 908
   //   parry contact      958 -> 913     counter windup   961 -> 916
   //   counter damage     967 -> 922
+  //
+  // The 2026-09-05 fighting-room slice moved the same five checkpoints once
+  // more, and again the sequence maps one-to-one -- same bout, same pairing,
+  // same chain, all of it earlier because Nerva's converting parry is now his
+  // second (tick 787) rather than his third:
+  //
+  //   measuring stance   900 -> 650     parry windup     908 -> 792
+  //   parry contact      913 -> 797     counter windup   916 -> 800
+  //   counter damage     922 -> 806
+  //
+  // Each offset inside the chain is preserved rather than re-derived (five
+  // ticks into the parry windup, two into the counter windup), so what these
+  // freeze is the same moment of the same exchange, not merely a tick that
+  // satisfies the assertion.
   await startBoutOneWith(page, ['brutus', 'nerva', 'aquila'])
   const cursor = { current: 0 }
 
-  // tick 900: home.nerva settles into `hold-range` -- Technical's "measuring"
-  // stance between exchanges (the first such tick is 873), with no action of
-  // its own running.
-  await advanceToTick(page, 900, cursor)
+  // tick 650: home.nerva settles into `hold-range` -- Technical's "measuring"
+  // stance between exchanges (the bout's only such window is 623..689, so this
+  // sits well inside it), with no action of its own running.
+  await advanceToTick(page, 650, cursor)
   const measuring = await combatantState(page, 'home.nerva')
   expect(measuring.locomotionIntent).toBe('hold-range')
   expect(measuring.action.type).not.toBe('active')
   let snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
 
-  // tick 908: home.nerva mid `technical-parry` windup, reacting to
-  // away.cassius's `technical-thrust` (the parry started 903 and both reach
-  // contact at 913).
-  await advanceToTick(page, 908, cursor)
+  // tick 792: home.nerva mid `technical-parry` windup, reacting to
+  // away.cassius's `technical-thrust` (the parry started 787 and both reach
+  // contact at 797). This is the second of Nerva's two parries in the bout and
+  // the only one that forces a counter -- the first, starting at 743, lands
+  // its `attack-parried` and then simply runs out its own recovery, so the
+  // counter half of the chain below could not have been hung off it.
+  await advanceToTick(page, 792, cursor)
   const parryWindup = await combatantState(page, 'home.nerva')
   expect(parryWindup.action).toMatchObject({ type: 'active', definitionId: 'technical-parry', phase: 'windup' })
   const atParryWindup = await renderedSnapshotAt(page, 1)
-  expectClip(atParryWindup, 'home.nerva', 'technical', DEFENSE_CLIPS['technical-parry'], 't908 parry windup')
+  expectClip(atParryWindup, 'home.nerva', 'technical', DEFENSE_CLIPS['technical-parry'], 't792 parry windup')
   // The thrower at the same instant: away.cassius is mid `technical-thrust`
-  // windup (contact 913), so this is the frozen tick that proves the
+  // windup (contact 797), so this is the frozen tick that proves the
   // hoplomachus' thrust selects its own authored clip and plays it inside the
-  // shipped GLB's duration -- before the parry's stagger pre-empts it at 913.
+  // shipped GLB's duration -- before the parry's stagger pre-empts it at 797.
   const thrustWindup = await combatantState(page, 'away.cassius')
   expect(thrustWindup.action).toMatchObject({ type: 'active', definitionId: 'technical-thrust', phase: 'windup' })
-  expectClip(atParryWindup, 'away.cassius', 'technical', ATTACK_CLIPS['technical-thrust'].clip, 't908 thrust windup')
+  expectClip(atParryWindup, 'away.cassius', 'technical', ATTACK_CLIPS['technical-thrust'].clip, 't792 thrust windup')
 
-  // tick 913: the parry connects -- `attack-parried` on the frozen trace,
+  // tick 797: the parry connects -- `attack-parried` on the frozen trace,
   // weapon-zone contact flash live.
-  await advanceToTick(page, 913, cursor)
-  const parryEvents = await eventsAtTick(page, 913)
+  await advanceToTick(page, 797, cursor)
+  const parryEvents = await eventsAtTick(page, 797)
   expect(parryEvents.some((event) => event.type === 'attack-parried')).toBe(true)
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.activeEffectIds.some((id) => id.startsWith('weapon-'))).toBe(true)
@@ -726,22 +869,22 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
   // an attack whose own strike frame is pre-empted by the hit reaction it just
   // earned is the correct thing to draw.
   const atParryContact = await renderedSnapshotAt(page, 0)
-  expectClip(atParryContact, 'home.nerva', 'technical', DEFENSE_CLIPS['technical-parry'], 't913 parry contact')
+  expectClip(atParryContact, 'home.nerva', 'technical', DEFENSE_CLIPS['technical-parry'], 't797 parry contact')
   const cassiusAtParry = await combatantState(page, 'away.cassius')
   expect(cassiusAtParry.action).toMatchObject({ type: 'active', definitionId: 'technical-thrust', phase: 'contact' })
-  expect(cassiusAtParry.staggerUntilTick).toBeGreaterThan(913)
-  expectClip(atParryContact, 'away.cassius', 'technical', BASE_CLIPS.hit, 't913 staggered thrower')
+  expect(cassiusAtParry.staggerUntilTick).toBeGreaterThan(797)
+  expectClip(atParryContact, 'away.cassius', 'technical', BASE_CLIPS.hit, 't797 staggered thrower')
 
-  // tick 916: the forced `technical-parry-counter` windup immediately follows
-  // the parry (started tick 914, the very next tick).
-  await advanceToTick(page, 916, cursor)
+  // tick 800: the forced `technical-parry-counter` windup immediately follows
+  // the parry (started tick 798, the very next tick).
+  await advanceToTick(page, 800, cursor)
   const counterWindup = await combatantState(page, 'home.nerva')
   expect(counterWindup.action).toMatchObject({ type: 'active', definitionId: 'technical-parry-counter', phase: 'windup' })
-  expectClip(await renderedSnapshotAt(page, 1), 'home.nerva', 'technical', ATTACK_CLIPS['technical-parry-counter'].clip, 't916 counter windup')
+  expectClip(await renderedSnapshotAt(page, 1), 'home.nerva', 'technical', ATTACK_CLIPS['technical-parry-counter'].clip, 't800 counter windup')
 
-  // tick 922: the counter connects -- `damage-dealt` against away.cassius.
-  await advanceToTick(page, 922, cursor)
-  const counterEvents = await eventsAtTick(page, 922)
+  // tick 806: the counter connects -- `damage-dealt` against away.cassius.
+  await advanceToTick(page, 806, cursor)
+  const counterEvents = await eventsAtTick(page, 806)
   expect(counterEvents).toContainEqual(expect.objectContaining({ type: 'damage-dealt', actorId: 'home.nerva', actionId: 'technical-parry-counter' }))
   snapshot = await arenaSnapshot(page)
   expect(snapshot!.jointTransformsFinite).toBe(true)
@@ -765,13 +908,13 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
     type: 'active',
     definitionId: 'technical-parry-counter',
     phase: 'contact',
-    phaseStartedTick: 922,
+    phaseStartedTick: 806,
   })
   const counter = ATTACK_CLIPS['technical-parry-counter']
-  const counterDuration = expectClip(atCounterContact, 'home.nerva', 'technical', counter.clip, 't922 counter contact')
+  const counterDuration = expectClip(atCounterContact, 'home.nerva', 'technical', counter.clip, 't806 counter contact')
   expect(
     atCounterContact.activeClip['home.nerva'].time,
-    `t922: ${counter.clip} should sit on its strike frame (${counter.contactAt} x ${counterDuration} s)`,
+    `t806: ${counter.clip} should sit on its strike frame (${counter.contactAt} x ${counterDuration} s)`,
   ).toBeCloseTo(counter.contactAt * counterDuration, 3)
 })
 
@@ -827,6 +970,39 @@ test('freezes technical measure/parry/counter', async ({ page }) => {
  */
 const CAMERA_SETTLE_SECONDS = 4
 
+/** Ticks of per-tick stepping before a capture: longer than the longest effect life (a number, 54 ticks), so nothing from the burst before it is still alive at the capture tick. */
+const EFFECT_WINDOW_TICKS = 60
+
+/**
+ * Reaches `tick` the way a player's frame does, not the way a burst does.
+ *
+ * `advanceTicks(n)` steps the kernel `n` times and renders ONCE, handing every
+ * event of the burst to `ArenaView.sync` as one batch stamped at the burst's
+ * last tick -- so a single `advanceTicks(913)` would draw every effect of the
+ * bout so far at age 0 on the capture tick (six full-opacity numbers, two
+ * sprays and two puffs at `technical-parry`), a frame no player can ever see
+ * and useless as a baseline of "what x1 looks like". So: one burst to
+ * `tick - 60` (everything in it is stamped there and dead by `tick`, since 60
+ * exceeds every effect life: 54 > 25.2 > 13 ticks), then sixty single-tick
+ * calls in the same `page.evaluate`, so every effect from the last sixty ticks
+ * is stamped at its own tick and drawn at its true x1 age. The simulation
+ * state at `tick` is identical either way (the kernel does not know about
+ * batches), `?snapshot` keeps the runtime paused so no camera time passes
+ * during the single ticks, and `captureFrame`'s settle and alpha-1 render are
+ * unchanged -- the capture stays a pure function of the tick count. Feedback
+ * spec §8.3.
+ */
+async function advanceToCaptureTick(page: Page, tick: number): Promise<void> {
+  await page.evaluate(
+    ([target, windowTicks]) => {
+      const burst = Math.max(0, target - windowTicks)
+      window.__GLADIATOR_TEST__.advanceTicks(burst)
+      for (let step = burst; step < target; step += 1) window.__GLADIATOR_TEST__.advanceTicks(1)
+    },
+    [tick, EFFECT_WINDOW_TICKS] as const,
+  )
+}
+
 async function captureFrame(page: Page, name: string): Promise<void> {
   const debugState = await page.evaluate(() => window.__GLADIATOR_TEST__.getRenderDebugState())
   expect(debugState.paused).toBe(true)
@@ -838,55 +1014,100 @@ async function captureFrame(page: Page, name: string): Promise<void> {
 test('key pose: heavy cleave windup', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   await startBoutZeroWith(page, 'brutus')
-  // Tick 420 sits inside the `heavy-cleave` windup that starts at 395 -- the
-  // second of eight in the bout, and the first that is not pre-empted by a
-  // `heavy-guard` reaction (at the old tick 253 home.brutus is now mid-GUARD,
-  // not mid-cleave, which is why this pose is re-located by its condition and
-  // not by its number).
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(420))
+  // Tick 420 sits inside the `heavy-cleave` windup that starts at 394 -- now
+  // the FIRST of thirteen in the bout rather than the second of eight, because
+  // the 2026-09-05 fighting-room slice re-cut everything before it. The number
+  // is unchanged only because it was re-checked against the new trace and the
+  // condition still holds there: at 420 home.brutus is in `heavy-cleave`
+  // `windup` (phase started 394, running to 427), away.drusus has no action of
+  // his own, and the two stand 3.23 units apart -- an uncluttered silhouette,
+  // which is the whole point of this capture.
+  //
+  // Effects in the window (360, 420]: the t=366 shield block and its 17 of
+  // chip damage. Its spark is long dead (54 > 15.6) and its number is dead
+  // too, but only just -- 54 ticks is 900.0 ms, exactly `DAMAGE_NUMBER_LIFE_MS`,
+  // and `layoutDamageNumber` returns `null` at `t >= 1`. So the frame is clean:
+  // no number, no spark, no spray, no puff. THIS IS THE ONE CAPTURE IN THE SET
+  // SITTING ON AN EFFECT BOUNDARY -- a tick either way and a number appears
+  // over home.brutus. Deterministic, but it is why this comment states the
+  // arithmetic rather than just the verdict.
+  await advanceToCaptureTick(page, 420)
   await captureFrame(page, 'heavy-cleave.png')
 })
 
 test('key pose: fast burst-lunge windup', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   await startBoutZeroWith(page, 'brutus')
-  // away.drusus's `fast-burst-lunge` windup starting tick 884 (recovered and
-  // re-spaced since the previous exchange, a `fast-slash` back at 826, rather
-  // than an instance where both fighters are still crowded from the prior
-  // clash) -- from the same bout Step 2 freezes above, picked for a clearer,
-  // less cluttered silhouette. The old tick 817 no longer sits inside any
-  // lunge windup at all; this one is re-located by the condition.
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(890))
+  // away.drusus's `fast-burst-lunge` windup starting tick 237 -- from the same
+  // bout Step 2 freezes above, picked on the same rule as before: a lunge the
+  // retiarius enters from open ground rather than one thrown while the two are
+  // still crowded from the prior clash. After the 2026-09-05 fighting-room
+  // slice the bout holds ten lunge windups, and 237..254 is the only one of
+  // the ten in which home.brutus carries no action of his own on ANY tick --
+  // every other candidate overlaps a cleave, a shield jab or a guard of his,
+  // which is exactly the cluttered frame this capture is meant to avoid. Tick
+  // 246 sits nine ticks into it, with the two 2.34 units apart. The old
+  // tick 890 no longer sits inside any lunge windup; this one is re-located by
+  // the condition, not by scaling.
+  //
+  // Effects in the window (186, 246]: NONE AT ALL -- not one contact, block,
+  // parry, evade or miss lands in the sixty ticks before this one. It is the
+  // cleanest frame of the four, which is what the fixture wants, and it is the
+  // cheapest to keep true: only a re-cut that puts an exchange into that window
+  // can falsify it.
+  await advanceToCaptureTick(page, 246)
   await captureFrame(page, 'fast-burst.png')
 })
 
 test('key pose: technical parry contact', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   // Same re-pointing as the checkpoint test above: the parry this pose exists
-  // to show no longer happens in `nerva vs drusus`. Tick 913 of
-  // `nerva vs cassius` is the parry's own contact tick.
+  // to show no longer happens in `nerva vs drusus`. Tick 797 of
+  // `nerva vs cassius` is the parry's own contact tick after the 2026-09-05
+  // fighting-room slice (913 before it) -- the same exchange the checkpoint
+  // test freezes, so the two stay in step.
+  //
+  // Effects in the window (737, 797]: the parry's own weapon spark at age 0,
+  // and nothing else visible. The bout's FIRST parry sits at t=753, 44 ticks
+  // back, its spark long dead (44 > 15.6) -- the two parries this bout holds
+  // are both inside the window, which is worth knowing when reading the frame:
+  // one spark on screen, not two. No `damage-dealt` lands in the window at all,
+  // so a number here means the helper stopped stepping per tick, never the
+  // pairing.
   await startBoutOneWith(page, ['brutus', 'nerva', 'aquila'])
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(913))
+  await advanceToCaptureTick(page, 797)
   await captureFrame(page, 'technical-parry.png')
 })
 
 test('combat outcomes: defeat', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   await startBoutZeroWith(page, 'brutus')
-  // The killing blow (tick 1827) is atomic, and it now falls the other way:
-  // away.drusus is the one defeated, by a `heavy-cleave`. By this exact tick the series
+  // The killing blow (tick 3480 since the 2026-09-05 fighting-room slice
+  // stretched this bout from 1827) is atomic, and it falls the way the
+  // retiarius-reach slice put it: away.drusus is the one defeated, by a
+  // `heavy-cleave` -- the same `fighter-defeated` the checkpoint test above
+  // asserts at the same tick. By this exact tick the series
   // has already transitioned to `between-bouts` (`advanceSeriesTicks`
   // processes the finish the same tick the battle finishes), so the real
   // "combat outcome" a player sees here genuinely includes the between-
   // bouts result panel -- this is the actual, deterministic post-defeat UI,
   // not an unrelated interstitial riding along.
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(1827))
+  //
+  // Effects in the window (3420, 3480]: the killing blow and nothing else --
+  // its body spray at age 0 (scale 0.45, opacity 0.92) and its number, 63, over
+  // away.drusus at age 0, the same 63 the feed's last "deals N" line shows in
+  // this frame. The sixty ticks before it are empty, so this is the one capture
+  // where the whole hit channel is on screen at full strength with nothing else
+  // competing: the frame the feedback slice exists to be judged on.
+  await advanceToCaptureTick(page, 3480)
   await captureFrame(page, 'combat-outcomes.png')
 })
 
 test('a complete safe two-fighter frame', async ({ page }) => {
   await page.setViewportSize(VIEWPORT)
   await startBoutZeroWith(page, 'brutus')
-  await page.evaluate(() => window.__GLADIATOR_TEST__.advanceTicks(60))
+  // Bout 0's first contact event is at 231, so the window (0, 60] is empty:
+  // any effect or digit in this frame is a bug.
+  await advanceToCaptureTick(page, 60)
   await captureFrame(page, 'combat-safe-frame.png')
 })

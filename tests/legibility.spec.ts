@@ -132,7 +132,10 @@ const MIN_ATTENUATION_RATIO = 0.9
  * re-defining "in band" underneath the floor.
  */
 const BAND_SEPARATION_LOW = 0.9
-const BAND_SEPARATION_HIGH = 3.1
+// 3.4 since the 2026-09-05 fighting-room slice: this mirrors
+// `ArenaCamera.ts`'s `BAND_HIGH_SEPARATION`, which tracks the longest authored
+// attack reach, and that moved with the rest of the distance axis.
+const BAND_SEPARATION_HIGH = 3.4
 const EQUIPMENT_MARGIN = 1.1
 
 /**

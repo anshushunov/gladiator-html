@@ -388,8 +388,8 @@ describe('the disengage seam against a real bout', () => {
   // above, because that one only asks that episodes with SOME external ground
   // have it positive, and held-tick pushes supply that on their own.
   //
-  // What makes this test bite is the fixture, not the assertion. At
-  // `BASELINE_TEST_SEED + 2` the mirror produces exactly one episode whose
+  // What makes this test bite is the fixture, not the assertion. At the seed
+  // below the mirror produces exactly one episode whose
   // external ground comes ENTIRELY from its stamp tick: one `fast-slash` lands
   // on the tick the field is stamped (`pushDistance` 0.18) and not one lands on
   // any of the 37 held ticks that follow. So the held-only sum is 0, the
@@ -404,7 +404,13 @@ describe('the disengage seam against a real bout', () => {
   // only this clean single-source-of-ground instance of it is.
   it('counts the stamp tick’s own push, which no held sample could supply', () => {
     const samples: DisengageSample[] = []
-    runBout({ record: (sample) => samples.push(sample) }, BASELINE_TEST_SEED + 2)
+    // Re-pinned 2026-09-05 from BASELINE_TEST_SEED + 2, which no longer
+    // produces a single-source-of-ground episode once every separation moved
+    // out by 0.30 and the duel arena grew with it. This is the re-pin the
+    // comment above asks for: 20260823 is the first of six seeds in the first
+    // 150 that still satisfy all four properties this test asserts
+    // (20260823, 20260829, 20260830, 20260831, 20260838, 20260844).
+    runBout({ record: (sample) => samples.push(sample) }, 20260823)
 
     const pushedStamps = samples.filter(
       (sample): sample is Extract<DisengageSample, { kind: 'stamped' }> =>
@@ -436,8 +442,15 @@ describe('the disengage seam against a real bout', () => {
     expect(episode!.externalGround).toBeGreaterThan(heldOnlyGround)
   }, 30_000)
 
+  // Re-pinned 2026-09-05 from 20260836, which no longer produces a censored
+  // episode after the body-width translation moved every contact range out by
+  // 0.30 and the duel arena grew with it. This is the re-pin the comment above
+  // asks for, not a widened test:
+  // 20260819 is the first of six seeds in the first 150 that still yield
+  // exactly one censored episode with all four asserted properties
+  // (20260819, 20260830, 20260849, 20260853, 20260864, 20260875).
   it('keeps a real bout’s still-open episode instead of dropping it', () => {
-    const { episodes } = collectEpisodes(20260836)
+    const { episodes } = collectEpisodes(20260819)
     const censored = episodes.filter((episode) => episode.reason === 'censored')
 
     expect(censored).toHaveLength(1)
@@ -558,10 +571,24 @@ describe('the disengage seam outside the duel', () => {
     return rolling
   }
 
+  /**
+   * A seed whose free-for-all actually contains the targetless case.
+   *
+   * It used to be `BASELINE_TEST_SEED`, which was one of the 109-in-300 that
+   * carried it on the pre-translation content. The phenomenon has ~36%
+   * incidence, so which seeds show it is a property of the content and moves
+   * whenever the content does -- exactly the point the comment above makes
+   * about not writing seed lists down as if they were stable. Re-swept on this
+   * build: 20260819 is the first of 20260819, 20260826, 20260834, 20260836,
+   * 20260837, 20260838 that carries a targetless sample, a `no-target`
+   * unmeasurable episode, and at least one good episode alongside them.
+   */
+  const TARGETLESS_FFA_SEED = 20260819
+
   it('is inert in a multi-combatant encounter, including on the ticks where a fighter has no target', () => {
     const samples: DisengageSample[] = []
 
-    expect(runFfa(BASELINE_TEST_SEED, { record: (sample) => samples.push(sample) })).toBe(runFfa(BASELINE_TEST_SEED))
+    expect(runFfa(TARGETLESS_FFA_SEED, { record: (sample) => samples.push(sample) })).toBe(runFfa(TARGETLESS_FFA_SEED))
 
     // The case the kernel used to raise on. It has to be present, or this test
     // proves only that two ordinary runs agree.
@@ -570,7 +597,7 @@ describe('the disengage seam outside the duel', () => {
 
   it('sets a real targetless episode aside without losing the measurable ones around it', () => {
     const samples: DisengageSample[] = []
-    runFfa(BASELINE_TEST_SEED, { record: (sample) => samples.push(sample) })
+    runFfa(TARGETLESS_FFA_SEED, { record: (sample) => samples.push(sample) })
     const { episodes, unmeasurable } = assembleDisengageEpisodes(samples)
 
     expect(unmeasurable.some((episode) => episode.cause === 'no-target')).toBe(true)
