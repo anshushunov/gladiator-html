@@ -83,7 +83,7 @@ laminated look needs gaps under a pixel at the shipped framing.
 
 | Element | Shape as drawn | `STYLE_SPECS` field | Confidence | Source |
 |---|---|---|---|---|
-| Thrusting **spear** (*hasta*) | Long wooden shaft with a bronze conical head, held out along the hand→tip line | `weaponKind: 'spear'`, `weaponLength`, `weaponWidth`, `weaponThickness`, `weaponForwardBias` | **attested** | `Junkelmann-2000`, `Zliten` |
+| Thrusting **spear** (*hasta*) | Long wooden shaft with a bronze conical head, held out along the hand→tip line. **Grip note (2026-09-17):** the shaft crosses the fist — it is gripped 0.8 source units from the butt (`grip_behind=0.8` in `build_shaft_weapon`), 1.30 world units ahead of the hand and 0.73 behind, at the same overall length. A *hasta* is held near its balance point, and the mid-shaft grip is what lets the two authored thrust clips (`Spear_Thrust`, `Spear_Drive`) put the head on the man at the contact tick: butt-gripped, no pose reached the thrust's median contact distance. The trident keeps the butt grip. See `docs/superpowers/specs/2026-09-17-kit-design.md` §4.2.1 | `weaponKind: 'spear'`, `weaponLength`, `weaponWidth`, `weaponThickness`, `weaponForwardBias` (procedural rig; in `technical.glb` the mesh is `spear` + `spear_head`, slot `weapon`, `weaponTip` at the head) | **attested** *(the spear; the grip point is a reach choice, see §6)* | `Junkelmann-2000`, `Zliten` |
 | Small round **parma** | Flat bronze disc, markedly smaller than the murmillo's scutum | `shieldKind: 'parma'`, `shieldWidth`, `shieldHeight`, `shieldThickness`, `shieldForwardOffset` | **attested** | `Junkelmann-2000`, `Pompeii-arms`, `Zliten` |
 | Broad-**brimmed helmet** | Bronze dome plus a wide flaring brim, no crest block | `helmetKind: 'brimmed'` | **attested** | `Pompeii-arms`, `Junkelmann-2000` |
 | Two high padded **greaves** | Box greaves on both legs, growing from the ankle to near the knee | `greaves: 'two-high'` | **attested** — the tall pair is this type's most distinctive leg signature | `Pompeii-arms`, `Junkelmann-2000`, `Zliten` |
@@ -175,9 +175,13 @@ Listed here so they are not mistaken for historical claims:
 - **The spear and trident shafts are drawn far thicker than a real shaft.** A
   historically-scaled shaft (~3 cm) lands at roughly two pixels at the shipped
   framing and disappears. `weaponWidth` is authored for a visible line.
-- **Weapon length is hand-to-tip only.** The builder draws no butt behind the
-  grip, so a polearm's drawn length is the part in front of the fist, not the
-  weapon's real overall length.
+- **Weapon length is hand-to-tip only** — except the hoplomachus' spear since
+  2026-09-17. The builder draws no butt behind the grip, so a polearm's drawn
+  length is the part in front of the fist, not the weapon's real overall
+  length; the trident is still drawn that way. The spear alone is gripped
+  mid-shaft (§2's grip note), with 0.73 world units of shaft behind the fist —
+  a reach decision so that the thrust clips land, not a claim about where a
+  *hasta* was held.
 - **The galerus and the greaves are sized and placed by the builder**, from
   `BodyProportions`, not by an authored dimension; `STYLE_SPECS` can only turn
   them on or off.

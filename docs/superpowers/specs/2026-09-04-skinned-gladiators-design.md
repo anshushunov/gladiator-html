@@ -117,7 +117,11 @@ a manica of two rigid sleeves on `upperarm.r` / `lowerarm.r` and one greave on
 `ArenaView` counts as worn). `fast` and `technical` are as tabled. The
 references in step 2–3 (`WEAPON_REFERENCE` / `SHIELD_REFERENCE` per source
 file) became per-archetype entries in `BUILDS` in the same change, closing
-the §10 "phantom `SHIELD_REFERENCE`" item.
+the §10 "phantom `SHIELD_REFERENCE`" item. Step 7 is superseded by the same
+document's §4.2: the spear is gripped mid-shaft, and `author_clip` authors
+two clips from one table — `Spear_Thrust` (24 frames, 1.000 s, for
+`technical-thrust`) and a re-keyed `Spear_Drive` (30 frames, 1.250 s) — both
+gated by a reach assertion at the strike frame.
 
 The three characters already differ in build and texture, which is what the
 2026-08-23 legibility playtest asked for; house colours stay in the HUD.
@@ -285,7 +289,11 @@ ticks into seconds. Rules, first match wins:
 | `technical-parry`           | `Block_Attack`                     | —         |
 
 `contactAt` values are authored guesses to be tuned by eye during
-implementation; they live in one table and nowhere else.
+implementation; they live in one table and nowhere else. **Superseded for
+`technical-thrust`, 2026-09-17:** it plays the authored `Spear_Thrust`
+(1.000 s, `contactAt` 0.5) instead of the pack's `1H_Melee_Attack_Stab`,
+which stays in `KEEP_CLIPS` unused — see §10's first item and the 2026-09-17
+kit spec §4.2.7.
 
 `STYLE_GAIT_CYCLE_DISTANCE` moves from `poses/combatPoses.ts` into `gait.ts`,
 which itself moves up to `src/presentation/gait.ts`; nothing else in `poses/`
@@ -423,6 +431,13 @@ Named here rather than fixed in this slice, each with what it would take.
   re-keying the strike frame in `author_spear_drive`, measured against
   `weaponTip`'s world position at `contactAt`, not a change to
   `ATTACK_CLIPS`'s `contactAt`.
+  **Closed 2026-09-17** by `docs/superpowers/specs/2026-09-17-kit-design.md`
+  §4.2: the spear is gripped mid-shaft (`grip_behind=0.8`), `author_clip`
+  re-keys `Spear_Drive` and authors `Spear_Thrust` for `technical-thrust`
+  (§4.1's table row is superseded), and `assert_reach` in the build script is
+  the measurement this item asked for — the tip at each strike frame must fall
+  inside `REACH_WINDOWS` or the build raises (measured 2.089 / 1.768 world
+  units forward). `contactAt` stayed 0.5 for both.
 - **`FLAT_DISTANCE ≈ 9.30` re-sweep, to retire the pairing-05 deviation.**
   §2.2's safe-area ruling records the number and why it cannot be taken on
   faith: the existing 46,647-tick recording is of the procedural rig, so the
@@ -439,7 +454,10 @@ Named here rather than fixed in this slice, each with what it would take.
   for the two archetypes whose offhand prop is built from primitives (the
   entry is read and the mesh kept alive only to be deleted). `weapon_axis` has
   no sanity assertion that the tip it picks is farther from the spine than the
-  butt. `tools/inspect-glb.mjs` cannot fail — it prints `MISSING` and exits 0,
+  butt. *(Both closed 2026-09-17: per-archetype references in `BUILDS`, and
+  `weapon_axis` raises when the tip is not farther from `spine`'s head than
+  the butt — the 2026-09-17 kit spec §4.2.1 and §4.3. The two items below
+  are still open, on purpose.)* `tools/inspect-glb.mjs` cannot fail — it prints `MISSING` and exits 0,
   so it is unusable in a gate; an `--assert` flag with a non-zero exit would
   fix that. A failure part-way through `main()` leaves `public/models` holding
   a mix of new and previous-run files (exiting 1 does not undo the `.glb`s
