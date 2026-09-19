@@ -62,9 +62,11 @@ const STANDING_HEIGHT_TOLERANCE = 0.01
  * joint, which is exactly the glTF statement "at bind time a skinned vertex is
  * already where the accessor says it is", and which is why the node's own
  * transform is specified to be ignored for skinned meshes. Multiplying by the
- * `Rig` scale would therefore double-count it and give 1.728 (heavy) / 1.830
- * (fast, technical) -- three different numbers for three rigs the script
- * builds to one height, which is the tell that the multiply is wrong.
+ * `Rig` scale would therefore double-count it and give 1.830 (heavy, fast) /
+ * 1.829 (technical) -- and 1.728 for the murmillo while he was the Knight body
+ * at scale 0.8641 -- numbers short of 2.0 that differ with the source body for
+ * rigs the script builds to one height, which is the tell that the multiply
+ * is wrong.
  * `SkinnedMesh` cancels the same factor at draw time through
  * `AttachedBindMode`, and a browser probe of the loaded rigs confirmed the
  * drawn standing height is 2.000 for all three.

@@ -131,8 +131,9 @@ export interface ArenaDebugSnapshot {
    *   knocked-down death pose moves nothing here.
    * - `matrixWorld` is NOT the transform the drawn mesh is under either. The
    *   shipped `.glb`s put the six body meshes under a `Rig` node carrying the
-   *   armature scale the build script applied (0.8641 heavy, 0.9148 fast,
-   *   0.9145 technical), and the bind-pose vertex data is already in final
+   *   armature scale the build script applied (0.9148 heavy and fast -- both
+   *   the Barbarian body -- 0.9145 technical; the values the build log
+   *   prints), and the bind-pose vertex data is already in final
    *   world units (spanning exactly 2.0 in y, feet at y=0 -- asserted by
    *   `fighterModelContract.test.ts`). At draw time that double count cancels:
    *   `SkinnedMesh` defaults to `AttachedBindMode`, which re-derives
@@ -140,12 +141,13 @@ export interface ArenaDebugSnapshot {
    *   shader's `matrixWorld * bindMatrixInverse` is the identity and the man
    *   is drawn 2.0 units tall. A measurement that multiplies the box by
    *   `matrixWorld` and stops there does NOT cancel it, so the box this field
-   *   projects is the standing body scaled by that `Rig` factor -- about 1.73
-   *   world units for the murmillo and 1.83 for the other two.
+   *   projects is the standing body scaled by that `Rig` factor -- about 1.83
+   *   world units for all three (1.73 for the murmillo while he was the
+   *   Knight body at 0.8641, before 2026-09-17).
    *
    * Rigidly bone-parented props -- the spear, trident, net, both shields, the
-   * helmet -- are ordinary `Mesh`es under a `Bone`, so those do track the
-   * drawn pose exactly.
+   * helmet, the murmillo's manica and greave -- are ordinary `Mesh`es under a
+   * `Bone`, so those do track the drawn pose exactly.
    *
    * Left as is deliberately (see spec §7), because for the 130 px floor this
    * is conservative twice over: a pose-independent height cannot be inflated
@@ -251,7 +253,12 @@ export interface ScreenPointPx {
 /**
  * Which mesh slots (`userData.slot`, written into each `.glb` by the build
  * script as `extras.slot` -- see `fighterModelContract.MESH_SLOTS`) count
- * toward `ArenaDebugSnapshot.bodyHeightPx`: the man and what he wears.
+ * toward `ArenaDebugSnapshot.bodyHeightPx`: the man and what he wears --
+ * the skinned body, the helmet, and `armour` (worn kit that is neither: the
+ * murmillo's manica and greave, rigid pieces parented to a limb bone). Worn
+ * armour can never be tagged `body`: the contract test reads the `body`
+ * slot's POSITION accessors for the 2.0 / feet-at-0 assertion, and a rigid
+ * cylinder's accessor is in its own local frame.
  *
  * The three *held* slots (`HELD_EQUIPMENT_SLOTS` below) are absent on
  * purpose, and so is anything a later kit adds: an unrecognised slot counts
@@ -263,13 +270,14 @@ export interface ScreenPointPx {
  *
  * Exported for that test only; nothing else outside this module reads it.
  */
-export const BODY_SILHOUETTE_SLOTS: ReadonlySet<string> = new Set(['body', 'helmet'])
+export const BODY_SILHOUETTE_SLOTS: ReadonlySet<string> = new Set(['body', 'helmet', 'armour'])
 
 /**
  * The complement of `BODY_SILHOUETTE_SLOTS` over the slots the models really
- * emit: what a fighter *holds* rather than wears. These are what
- * `fullBoundsPx` adds on top of the body silhouette, and the reason
- * `bodyHeightPx` exists as a separate number at all.
+ * emit: what a fighter *holds* rather than wears (worn armour is on the other
+ * side of the partition). These are what `fullBoundsPx` adds on top of the
+ * body silhouette, and the reason `bodyHeightPx` exists as a separate number
+ * at all.
  */
 export const HELD_EQUIPMENT_SLOTS: ReadonlySet<string> = new Set(['weapon', 'shield', 'net'])
 
