@@ -170,7 +170,12 @@ const BAND_HIGH_SEPARATION = 3.4
  * 1.8), so every archetype's radius has moved twice: `technical` 1.3511 ->
  * 1.8127755462598738 -> 2.0141936921763492 (still the widest), `heavy` ->
  * 1.4275666701603713 -> 1.5861850532796753, `fast` -> 1.5955894278773255 ->
- * 1.772876372587171. This constant tracks the measurement, not a swept tuning
+ * 1.772876372587171. The murmillo kit
+ * (`docs/superpowers/specs/2026-09-17-kit-design.md`, PR-1) then rebuilt
+ * `heavy` from the Barbarian body at rig scale 0.9148 instead of the Knight's
+ * 0.8641, so `heavy` moved a third time, 1.5861850532796753 ->
+ * 1.679186605264372 -- still below `fast` and `technical`, so this constant did
+ * not move with it. This constant tracks the measurement, not a swept tuning
  * value: `FLAT_DISTANCE` and `EASE_WIDTH_EXTENT` below are the swept pair, and
  * stay put.
  */
@@ -181,12 +186,15 @@ const WIDEST_EQUIPMENT_RADIUS = 2.0141936921763492
  * below actually consumes.
  *
  * Extent adds both fighters' equipment radii with this module's own margin, so
- * the band's edges differ per pairing -- from 4.39-6.59 (murmillo vs murmillo,
+ * the band's edges differ per pairing -- from 4.59-6.79 (murmillo vs murmillo,
  * the narrowest) to 5.33-7.53 (hoplomachus vs hoplomachus, the widest). Both
  * ranges have widened twice: 2.46-4.66 and 3.87-6.07 on the procedural rig,
- * then 4.04-6.24 and 4.89-7.09 under Task 7's skinned models, then these under
- * Task 7b's 2.0-unit standing height. The flat region has to cover the band for
- * EVERY pairing, so it ends at the widest one's upper edge, which is what this
+ * then 4.04-6.24 and 4.89-7.09 under Task 7's skinned models, then 4.39-6.59
+ * and 5.33-7.53 under Task 7b's 2.0-unit standing height; the murmillo kit then
+ * moved only the narrow end (4.39-6.59 -> 4.59-6.79, the Barbarian-bodied
+ * murmillo's radius) and left the widest pairing where it was. The flat region
+ * has to cover the band for EVERY pairing, so it ends at the widest one's upper
+ * edge, which is what this
  * arithmetic spells out (7.531226122787968). Written as the derivation rather
  * than as the number so that it stays correct if the margin changes, and so it
  * is checkable without a spreadsheet.

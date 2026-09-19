@@ -100,6 +100,29 @@ export interface RecordedCameraTrace {
 // often. Every `expectSmoothFraming` bound was re-checked unmodified after the
 // move and passes with the same margin as before (0 direction reversals in all
 // three traces and all nine standalone pairings).
+//
+// RE-RECORDED A THIRD TIME by the murmillo kit
+// (`docs/superpowers/specs/2026-09-17-kit-design.md`, PR-1). `heavy.glb` is
+// now the Barbarian body at rig scale 0.9148 instead of the Knight's at 0.8641,
+// with the Knight's sword and shield transplanted, so the murmillo's
+// `horizontalEquipmentRadius` grew 1.5861850532796753 -> 1.679186605264372
+// (read in the browser; `fast` and `technical` re-read in the same pass and
+// bit-identical). `WIDEST_EQUIPMENT_RADIUS` did NOT move -- the hoplomachus'
+// spear is still the widest rig -- so the band edge stays at 7.5312 and only
+// the one trace that fields a murmillo has a new opening shot. `ticks` again
+// does not move (`src/simulation/**` is untouched):
+//
+//   01 murmillo vs retiarius    1827 -> 1827 ticks   opening 15.4353 -> 15.6163   crossings 1 -> 1
+//   04 retiarius vs retiarius   1705 -> 1705 ticks   opening 15.7947 (unchanged)  crossings 3 -> 3
+//   07 hoplomachus vs retiarius 1261 -> 1261 ticks   opening 16.2333 (unchanged)  crossings 1 -> 1
+//
+// Traces 04 and 07 field no murmillo, so their inputs are byte-identical and
+// they were predicted not to move; they did not. The opening distance on 01
+// rose because the reset shot's group extent is 0.093 x 1.1 wider: the
+// murmillo's outer edge sits that much further out, the retiarius' is where it
+// was. `expectSmoothFraming` was re-run unmodified over the three traces and
+// the nine standalone pairings and holds.
+//
 // RE-FROZEN 2026-09-05 (fighting room), AND THIS IS THE FIRST TIME `ticks`
 // LEGITIMATELY MOVES. Every previous entry above turns on the rule that an
 // unchanged bout length is what separates a re-recording from a re-baseline of
@@ -125,8 +148,34 @@ export interface RecordedCameraTrace {
 // a ceiling of 2, the worst previously measured anywhere), peak zoom rates
 // 3.09 / 4.68 / 3.27 against the limit of 5, clamped and unclamped series
 // byte-identical, and every distance inside 8.81..18.
+//
+// RE-RECORDED A FIFTH TIME by the MERGE of the two slices above, which is the
+// only entry here produced by neither slice alone. They move different factors
+// and both factors are inputs to the opening shot, so neither side's numbers
+// survive: the fighting-room slice moved the bouts (`ticks`, and the 9.4-unit
+// start that lifts every opening distance) and the murmillo kit moved the
+// murmillo's `horizontalEquipmentRadius` (1.5861850532796753 ->
+// 1.679186605264372), which widens the reset shot's group extent in the one
+// trace that fields a murmillo.
+//
+// `ticks` is taken from the fighting-room recording UNCHANGED, and that is the
+// check that this is a merge and not a behaviour change: the kit touches
+// `src/simulation/**` and `src/content/**` not at all, so a bout length that
+// moved here would mean something else did.
+//
+//   01 murmillo vs retiarius    3480 ticks (held)   opening 16.5843 -> 16.7316   crossings 1 -> 1
+//   04 retiarius vs retiarius   1632 ticks (held)   opening 16.8736 (unchanged)  crossings 1 -> 1
+//   07 hoplomachus vs retiarius 1496 ticks (held)   opening 17.2076 (unchanged)  crossings 3 -> 3
+//
+// Traces 04 and 07 field no murmillo, so their inputs are byte-identical to the
+// fighting-room recording and were predicted not to move; they did not. Trace
+// 01's rise is +0.1473, NOT the +0.1810 the kit-only recording showed for the
+// same radius change: the reset shot frames a pair that now starts a unit
+// further apart, and the framing distance is not linear in one fighter's
+// radius. Predicted by hand at 16.7666 and measured at 16.7316 -- the measured
+// value is the one frozen.
 export const RECORDED_TRACES: readonly RecordedCameraTrace[] = [
-  { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 3480, openingDistance: 16.584304863301924, crossings: 1 },
+  { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 3480, openingDistance: 16.731582009986504, crossings: 1 },
   { label: '04 retiarius vs retiarius', lineup: ['aquila', 'nerva', 'brutus'], ticks: 1632, openingDistance: 16.87359929174532, crossings: 1 },
   { label: '07 hoplomachus vs retiarius', lineup: ['nerva', 'brutus', 'aquila'], ticks: 1496, openingDistance: 17.207578048058593, crossings: 3 },
 ]

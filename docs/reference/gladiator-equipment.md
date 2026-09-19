@@ -2,9 +2,16 @@
 
 **Scope.** The three types this game draws — **murmillo** (`heavy`),
 **hoplomachus** (`technical`), **retiarius** (`fast`) — element by element: what
-is drawn, which `STYLE_SPECS` field in `src/presentation/ProceduralFighter.ts`
-carries it, how well the element is attested, and where the attestation comes
-from.
+is drawn, which mesh carries it, how well the element is attested, and where
+the attestation comes from.
+
+*Which mesh* means, for the murmillo (§1, re-pointed 2026-09-17), the mesh
+node in `public/models/heavy.glb` and its `extras.slot`, as
+`tools/blender/build_gladiators.py` builds it and `tools/inspect-glb.mjs`
+prints it. §2 and §3 still name the fields of the procedural rig's
+`STYLE_SPECS` (`src/presentation/ProceduralFighter.ts`, deleted with the
+2026-09-04 skinned-gladiators slice); they are re-pointed the same way when
+their kits are next touched.
 
 **Why it exists.** The design spec
 (`docs/superpowers/specs/2026-08-23-readable-gladiator-types-design.md`,
@@ -49,23 +56,28 @@ the named chapter or object group.
 
 ## 1. Murmillo — archetype `heavy`
 
-| Element | Shape as drawn | `STYLE_SPECS` field | Confidence | Source |
-|---|---|---|---|---|
-| Curved rectangular **scutum** | Tall slab, bowed forward about a vertical axis; chord clearly narrower than its height; carried on the off (left) arm | `shieldKind: 'scutum'`, `shieldWidth`, `shieldHeight`, `shieldCurvature`, `shieldThickness`, `shieldForwardOffset` | **attested** | `Junkelmann-2000`, `Zliten`, `Nennig` |
-| **Gladius** | Short straight blade with a crossguard, held point-forward-and-down | `weaponKind: 'gladius'`, `weaponLength`, `weaponWidth`, `weaponThickness`, `weaponForwardBias` | **attested** | `Junkelmann-2000`, `Pompeii-arms`, `Borghese` |
-| Broad-**brimmed helmet** with face guard | Bronze dome plus a wide flaring brim, worn on the `head` joint | `helmetKind: 'brimmed-crested'` (dome + brim half) | **attested** | `Pompeii-arms`, `Junkelmann-2000` |
-| **Crest** (*crista*) | Semicircular comb bedded into the helmet dome, running front to back | `helmetKind: 'brimmed-crested'` (crest half) | **attested** *(the crest; see §4 for its decoration, and §6 for why it is drawn low)* | `Pompeii-arms`, `Junkelmann-2000` |
-| One low **ocrea** on the lead (left) leg | Box greave growing up from the ankle over roughly half the shin. **Drawn but not observable** — it is on the far leg from the shipped camera and review could not find it in any frame at any magnification, so it is not a working cue and nothing should be built on it | `greaves: 'one-low'` | **attested** | `Junkelmann-2000`, `Pompeii-arms`, `Zliten` |
-| No shoulder guard | — (nothing drawn) | `shoulderGuard: false` | **attested** (the *galerus* is the retiarius' piece) | `Junkelmann-2000` |
-| Bare torso | No armour mesh; only the shared value blocks of §6 | `hasLightArmor: false` | **attested** | `Junkelmann-2000`, `Zliten`, `Nennig` |
-| Type colour | Deep violet-slate on the loincloth and legs | `clothColor` | **not a historical claim** — a legibility channel, see §6 | — |
+As built on 2026-09-17 (`docs/superpowers/specs/2026-09-17-kit-design.md`
+§4.1): the Barbarian body from the KayKit pack, the Knight's sword and shield
+transplanted onto its identical skeleton, and the bronze pieces built by the
+script from primitives. Before that he was the Knight entire, in plate, and
+read as a knight.
 
-**Attested but deliberately not drawn:** the right-arm **manica** (the padded
-sleeve on the sword arm). It is well attested for the murmillo
-(`Junkelmann-2000`, `Pompeii-arms`) but no `STYLE_SPECS` field carries it and
-the rig has no arm-armour builder. Its absence is a rig limit, not a claim that
-he fought bare-armed. Recorded as a gap in the task report rather than patched
-here.
+| Element | Shape as drawn | Mesh in `heavy.glb` (slot) | Confidence | Source |
+|---|---|---|---|---|
+| Curved rectangular **scutum** | Tall slab, bowed forward about a vertical axis; chord clearly narrower than its height; carried on the off (left) arm | `Rectangle_Shield` (`shield`) — the Knight's mesh under `handslot.l`, with its `knight_texture` emblem | **attested** | `Junkelmann-2000`, `Zliten`, `Nennig` |
+| **Gladius** | Short straight blade with a crossguard, held point-forward-and-down | `1H_Sword` (`weapon`) — the Knight's mesh under `handslot.r`; `weaponTip` sits at its far end | **attested** | `Junkelmann-2000`, `Pompeii-arms`, `Borghese` |
+| Broad-**brimmed helmet** with face guard | Bronze 16-segment dome under a cone, over a flat brim 1.72 source units across — wider than the torso, the murmillo's signature at any distance; worn on the `head` bone | `galea_dome`, `galea_cap`, `galea_brim` (`helmet`), all in the shared `kit_bronze` material | **attested** | `Pompeii-arms`, `Junkelmann-2000` |
+| **Crest** (*crista*) | Plain dark comb 0.26 source units tall, running front to back on top of the cap | `galea_crest` (`helmet`), material `galea_crest` | **attested** *(the crest; see §4 for its decoration, and §6 for why it is drawn low)* | `Pompeii-arms`, `Junkelmann-2000` |
+| **Manica** on the sword (right) arm | Two rigid bronze sleeves, one per arm bone, bending at the elbow with the arm; the lower one stops short of the wrist so it does not fight the Barbarian's own fur bracer | `manica_upper` on `upperarm.r`, `manica_lower` on `lowerarm.r` (`armour`) | **attested** | `Junkelmann-2000`, `Pompeii-arms` |
+| One **ocrea** on the lead (left) leg | Bronze band on the lower leg running from just above the boot to over the knee. **Drawn but still not observable**: the 2026-09-17 re-capture of the arena baselines shows it in none of the four murmillo frames (the camera views him from behind and above, and the band sits under the kilt hem and the boot cuff), so it is a fidelity item, not a working cue, and nothing is built on it | `greave` on `lowerleg.l` (`armour`) | **attested** | `Junkelmann-2000`, `Pompeii-arms`, `Zliten` |
+| No shoulder guard | — (nothing built) | — | **attested** (the *galerus* is the retiarius' piece) | `Junkelmann-2000` |
+| No torso armour | The Barbarian's own six skinned meshes as the pack paints them: a sleeveless tunic, a belt with a round buckle and a fur kilt; no armour mesh over them. The pack's belt and kilt stand in for the *balteus* and *subligaculum* (a second belt built over the first would be invisible) | `Barbarian_Body`, `Barbarian_Head`, `Barbarian_ArmLeft/Right`, `Barbarian_LegLeft/Right` (`body`) | **attested** (the absence of torso armour) | `Junkelmann-2000`, `Zliten`, `Nennig` |
+| Type colour | Bronze kit (`kit_bronze` 0.72, 0.50, 0.20) on a body the pack paints; bronze because the plate was grey and this must not read as plate, and a dark crest because the HUD already owns red and blue. The procedural rig's per-type cloth colour is gone with it | `kit_bronze`, `galea_crest` materials | **not a historical claim** — a legibility choice, see §6 | — |
+
+The manica, recorded in this section as "attested but deliberately not drawn"
+while the procedural rig had no arm-armour builder, is drawn since 2026-09-17.
+The two sleeves are the rigid-cylinder-on-a-bone form the pack's scale allows: a
+laminated look needs gaps under a pixel at the shipped framing.
 
 ## 2. Hoplomachus — archetype `technical`
 
@@ -106,8 +118,9 @@ here.
 | Type colour | Pale bone / undyed linen on the loincloth and legs | `clothColor` | **not a historical claim** — see §6 | — |
 
 **Attested but deliberately not drawn:** the left-arm **manica** that the
-galerus sits above. Same rig limit as the murmillo's right-arm manica; no field
-carries it.
+galerus sits above. No field carries it; the form it would take is the
+murmillo's right-arm manica of §1 (two rigid sleeves in the `armour` slot),
+built since 2026-09-17 and not yet applied here.
 
 ## 4. Explicitly **not** asserted
 
