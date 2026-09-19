@@ -19,8 +19,31 @@ export function isDispositionId(value: unknown): value is DispositionId {
 const APPROACH_INTENTS: ReadonlySet<LocomotionIntent> = new Set(['pressure', 'burst-in', 'advance'])
 const KEEPER_INTENTS: ReadonlySet<LocomotionIntent> = new Set(['hold-range', 'backstep', 'retreat'])
 
-const COMMITTED_ADJUST = 6
-const LOCOMOTION_ADJUST = 4
+// 6/4 until 2026-09-05, when the fighting-room slice moved them to 7/5.
+//
+// The clause that went red was criterion 1's guarded risk term: guarded's saved
+// share of bouts won from under 25% HP fell to 1.6% against a 2.0% floor, while
+// the other three clauses stayed comfortable. That is the mechanic getting
+// quieter rather than the metric misbehaving -- with every separation 0.30
+// further out and the arena a size larger, backing off buys guarded less than
+// it used to, because there is more room to back off INTO and the opponent
+// spends longer closing it again.
+//
+// Measured at 200 seeds x nine pairings x three orders, on this build. Floors
+// are 3.0% / 3.0% / 2.0% / 2.0%:
+//
+//   committed / locomotion   pressWin   guardLoss   pressRisk   guardSave
+//        6 / 4 (was)           8.6%       6.3%        4.7%        1.6%   FAIL
+//        7 / 5 (this)          8.9%       8.6%        3.9%        2.6%
+//
+// 7/5 is one step in each, the smallest move that clears the floor, and it sits
+// inside the COMMITTED 4..8 x LOCOMOTION 3..6 grid the original calibration
+// swept. Note what it costs on the other side: `pressRisk` falls 4.7% -> 3.9%,
+// and the file header already names that clause as criterion 1's thinnest. It
+// still clears its floor by 1.9 points, but a further step in this direction is
+// not free, and the next red run there is a finding rather than a knob.
+const COMMITTED_ADJUST = 7
+const LOCOMOTION_ADJUST = 5
 
 // `sign` +1 = press, -1 = guarded. Weights pass through combatDecision.ts's
 // own `max(0, …)` clamp, so a negative adjustment can suppress but never

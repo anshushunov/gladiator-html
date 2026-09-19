@@ -1130,9 +1130,22 @@ export class ArenaView {
 
   // -- Arena set dressing (unchanged in spirit from the previous renderer) --
 
+  /**
+   * The sand disc's radius, 1.2 units outside the duel arena's own
+   * `DUEL_RADIUS` (`battle.ts`) so a fighter driven to the simulation's edge
+   * still has visible ground under and beyond him rather than standing on the
+   * lip. 8.7 since 2026-09-05, when the body-width translation grew the duel
+   * floor from 6.5 to 7.5; the margin is what is authored here, not the total.
+   *
+   * Deliberately a presentation constant rather than an import: `ArenaView`
+   * frames whatever arena it is handed, and the duel's dimensions are not a
+   * rendering rule. If a second arena size ever ships, this becomes a parameter.
+   */
+  private static readonly FLOOR_RADIUS = 8.7
+
   private buildArena(): void {
     const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(7.7, 64),
+      new THREE.CircleGeometry(ArenaView.FLOOR_RADIUS, 64),
       new THREE.MeshStandardMaterial({ color: 0x8a6845, roughness: 1 }),
     )
     floor.rotation.x = -Math.PI / 2
@@ -1201,7 +1214,7 @@ const MEASURED_CORNER = new THREE.Vector3()
  * a negative `w` and come back mirrored. Nothing measured here can be behind
  * it -- the camera always sits `CAMERA_MIN_DISTANCE..CAMERA_MAX_DISTANCE`
  * (8.81..18) units back from the look target it is
- * pointed at, and everything measured is a fighter inside a `7.7`-radius
+ * pointed at, and everything measured is a fighter inside the sand disc
  * arena floor -- so this deliberately carries no guard that would silently
  * substitute a fake number for a real geometry bug.
  */

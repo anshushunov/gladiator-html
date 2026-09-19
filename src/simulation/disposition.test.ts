@@ -34,24 +34,24 @@ describe('disposition ids', () => {
 
 describe('press', () => {
   it('raises committed attacks, leaves probes alone', () => {
-    expect(adjust('press', action('heavy-cleave'))).toBe(6)       // tags include 'committed'
-    expect(adjust('press', action('fast-burst-lunge'))).toBe(6)
+    expect(adjust('press', action('heavy-cleave'))).toBe(7)       // tags include 'committed'
+    expect(adjust('press', action('fast-burst-lunge'))).toBe(7)
     expect(adjust('press', action('heavy-shield-jab'))).toBe(0)   // probe
     expect(adjust('press', action('technical-thrust'))).toBe(0)   // probe
   })
   it('raises approach intents and lowers distance-keepers', () => {
-    for (const intent of ['pressure', 'burst-in', 'advance']) expect(adjust('press', move(intent))).toBe(4)
-    for (const intent of ['hold-range', 'backstep', 'retreat']) expect(adjust('press', move(intent))).toBe(-4)
+    for (const intent of ['pressure', 'burst-in', 'advance']) expect(adjust('press', move(intent))).toBe(5)
+    for (const intent of ['hold-range', 'backstep', 'retreat']) expect(adjust('press', move(intent))).toBe(-5)
     expect(adjust('press', move('circle-left'))).toBe(0)
   })
 })
 
 describe('guarded', () => {
   it('mirrors press', () => {
-    expect(adjust('guarded', action('heavy-cleave'))).toBe(-6)
+    expect(adjust('guarded', action('heavy-cleave'))).toBe(-7)
     expect(adjust('guarded', action('heavy-shield-jab'))).toBe(0)
-    for (const intent of ['pressure', 'burst-in', 'advance']) expect(adjust('guarded', move(intent))).toBe(-4)
-    for (const intent of ['hold-range', 'backstep', 'retreat']) expect(adjust('guarded', move(intent))).toBe(4)
+    for (const intent of ['pressure', 'burst-in', 'advance']) expect(adjust('guarded', move(intent))).toBe(-5)
+    for (const intent of ['hold-range', 'backstep', 'retreat']) expect(adjust('guarded', move(intent))).toBe(5)
     expect(adjust('guarded', move('circle-right'))).toBe(0)
   })
 })

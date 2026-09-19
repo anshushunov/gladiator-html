@@ -183,9 +183,14 @@ describe('acquireNearestHostile', () => {
 // ===========================================================================
 
 describe('scoreCombatCandidates (Heavy brief fixture)', () => {
-  it('matches the exact candidate list and weights from the design fixture at distance 2.0, neutral matchup, arena centre, no opening, pressure zero', () => {
+  it('matches the exact candidate list and weights from the design fixture at distance 2.3, neutral matchup, arena centre, no opening, pressure zero', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
-    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 2, z: 0 } })
+    // 2.3, which is the brief's 2.0 carried through the 2026-09-05 translation.
+    // Every weight below is UNCHANGED by that move, which is the property a
+    // translation is supposed to have: `heavy-cleave`'s predicted contact sits
+    // the same 0.2 off its band midpoint as it did at 2.0, and the jab is still
+    // the one action whose root travel cannot reach.
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 2.3, z: 0 } })
     const context = buildCombatDecisionContext({
       tick: 0,
       selfId: 'self',
@@ -203,7 +208,7 @@ describe('scoreCombatCandidates (Heavy brief fixture)', () => {
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
 
     // NOTE: the brief's authored literal for heavy-cleave's weight is
-    // 19.11111111111111. Recomputing `8 + 20 * clamp(1 - abs(1.55 - 1.35) /
+    // 19.11111111111111. Recomputing `8 + 20 * clamp(1 - abs(1.85 - 1.65) /
     // 0.45, 0, 1)` in both Node and Python double precision arithmetic
     // (division, not multiply-by-reciprocal) instead yields
     // 19.111111111111114 -- one ULP different. This is a floating-point
@@ -250,47 +255,55 @@ describe('scoreCombatCandidates (Heavy brief fixture)', () => {
 
 describe('scoreCombatCandidates: range reach legality', () => {
   it('excludes an action whose predicted contact distance overshoots contactRange.max', () => {
-    // heavy-shield-jab: rootTravel 0.25, contactRange 0.9-1.4. At distance
-    // 2.0, even a full 0.25 of travel only reaches 1.75 > 1.4, illegal. This
+    // heavy-shield-jab: rootTravel 0.25, contactRange 1.2-1.7. At distance
+    // 2.3, even a full 0.25 of travel only reaches 2.05 > 1.7, illegal. This
     // is design.md's authored example verbatim: "heavy-shield-jab is illegal
-    // because its 0.25 root travel cannot reach 1.4".
+    // because its 0.25 root travel cannot reach" its own maximum.
     const self = fighterState('self', 'heavy')
-    const target = fighterState('foe', 'heavy', { position: { x: 2, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 2.3, z: 0 } })
     const context = makeContext({ self, target })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
     expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')).toBe(false)
   })
 
   it('includes an action once its predicted contact distance falls back inside contactRange', () => {
-    // At distance 1.5, predicted = 1.5 - 0.25 = 1.25, inside 0.9-1.4.
+    // At distance 1.8, predicted = 1.8 - 0.25 = 1.55, inside 1.2-1.7.
     const self = fighterState('self', 'heavy')
-    const target = fighterState('foe', 'heavy', { position: { x: 1.5, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 1.8, z: 0 } })
     const context = makeContext({ self, target })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
     expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')).toBe(true)
   })
 
   it('keeps an action legal inside contactRange.min + rootTravel, stopping short instead of overshooting', () => {
-    // At distance 1.0 the jab does not need its full 0.25 travel: it stops
-    // early and contacts at `contactRange.min` (0.9), which is legal.
+    // At distance 1.3 the jab does not need its full 0.25 travel: it stops
+    // early and contacts at `contactRange.min` (1.2), which is legal.
     const self = fighterState('self', 'heavy')
-    const target = fighterState('foe', 'heavy', { position: { x: 1.0, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 1.3, z: 0 } })
     const context = makeContext({ self, target })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
     expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')).toBe(true)
   })
 
   it('keeps an action legal one ULP below the arena minimum separation', () => {
-    // The three-pass separation solver parks a pressed-together pair at
-    // `0.89999999999999991` -- one ULP below the 0.9 floor that both
-    // `arena.minimumSeparation` and every `contactRange.min` sit on. A bare
+    // The three-pass separation solver parks a pressed-together pair one ULP
+    // below the floor that both `arena.minimumSeparation` and the
+    // floor-hugging `contactRange.min`s sit on. A bare
     // `d >= contactRange.min` rejects that, and the pair deadlocks. Both ends
     // of the reachable contact interval are therefore clamped to the floor.
-    const justBelow = 0.9 - Number.EPSILON / 2
-    expect(justBelow).toBeLessThan(0.9)
+    //
+    // The arena is spelled out here rather than taken from `freeArena`,
+    // because the whole point of the test is the case where the two numbers
+    // COINCIDE. `freeArena` keeps a loose 0.9 floor, which the 2026-09-05
+    // translation left below `heavy-shield-jab`'s new 1.2 minimum -- a fighter
+    // one ULP under 0.9 there is genuinely out of range, which is the
+    // neighbouring test, not this one.
+    const floor = COMBAT_STYLES.attacks['heavy-shield-jab'].contactRange.min
+    const justBelow = floor - Number.EPSILON / 2
+    expect(justBelow).toBeLessThan(floor)
     const self = fighterState('self', 'heavy')
     const target = fighterState('foe', 'heavy', { position: { x: justBelow, z: 0 } })
-    const context = makeContext({ self, target })
+    const context = makeContext({ self, target, arena: { ...freeArena, minimumSeparation: floor } })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
     expect(scored.some((c) => c.decision.type === 'action')).toBe(true)
   })
@@ -298,7 +311,7 @@ describe('scoreCombatCandidates: range reach legality', () => {
   it('still rejects an action when the arena floor is genuinely looser than contactRange.min', () => {
     // The floor clamp must not become a blanket "always in range" rule: with
     // a 0.3 minimum separation, a heavy at 0.5 units really is inside
-    // heavy-shield-jab's 0.9 contact minimum and cannot back up to fix it.
+    // heavy-shield-jab's 1.2 contact minimum and cannot back up to fix it.
     const self = fighterState('self', 'heavy')
     const target = fighterState('foe', 'heavy', { position: { x: 0.5, z: 0 } })
     const context = makeContext({ self, target, arena: { ...freeArena, minimumSeparation: 0.3 } })
@@ -307,30 +320,38 @@ describe('scoreCombatCandidates: range reach legality', () => {
   })
 
   it('keeps the close-quarters styles able to attack at exactly the arena minimum separation', () => {
-    // The regression that mattered: at the 0.9 separation floor a style whose
+    // The regression that mattered: at the separation floor a style whose
     // reach covers that distance must still have a legal attack, or two
     // fighters that close to contact can never resolve anything again.
     //
+    // The floor is the DUEL's, read from the catalogue rather than from
+    // `freeArena`, and the arena is built to match. `freeArena` deliberately
+    // keeps a loose 0.9, which the 2026-09-05 translation left below every
+    // close-quarters attack's new 1.2 minimum; measuring this rule against it
+    // would test a fighter standing under the floor, not on it.
+    //
     // SCOPE: Heavy and Fast only. Technical is deliberately excluded, and the
     // exclusion is a real behavioural statement rather than a convenience.
-    // Technical's ordinary attacks start at 1.2 (`technical-thrust`) and 1.6
+    // Technical's ordinary attacks start at 1.5 (`technical-thrust`) and 1.9
     // (`technical-driving-thrust`), so a spear genuinely cannot be used at
     // grappling range. It previously appeared to satisfy this assertion only
-    // because `technical-parry-counter` (contact range 0.9-2.3) leaked into
+    // because `technical-parry-counter` (contact range 1.2-2.6) leaked into
     // ordinary weighted selection, which design.md:516 forbids -- so the thing
     // that made Technical pass here was the defect, not the design.
     //
     // Technical does not deadlock at the floor. Two other rules compose to
-    // cover it: `backstep` is gated to targets inside 1.2 units, which is
+    // cover it: `backstep` is gated to targets inside 1.5 units, which is
     // exactly this range, and the anti-stall movement exemption un-suppresses
     // it when Technical has no viable action, so Technical steps back into its
     // own measure and regains `technical-thrust`. The
     // "restores suppressed movement for a wall-pinned technical" and
     // "Technical locomotion range gates" blocks below pin that path.
+    const floor = COMBAT_STYLES.attacks['heavy-shield-jab'].contactRange.min
+    const arena = { ...freeArena, minimumSeparation: floor }
     for (const archetype of ['heavy', 'fast'] as const) {
       const self = fighterState('self', archetype)
-      const target = fighterState('foe', archetype, { position: { x: freeArena.minimumSeparation, z: 0 } })
-      const context = makeContext({ self, target })
+      const target = fighterState('foe', archetype, { position: { x: floor, z: 0 } })
+      const context = makeContext({ self, target, arena })
       const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles[archetype])
       expect(scored.some((c) => c.decision.type === 'action')).toBe(true)
     }
@@ -340,7 +361,8 @@ describe('scoreCombatCandidates: range reach legality', () => {
     // assumed.
     const technical = makeContext({
       self: fighterState('self', 'technical', { lastResolutionTick: 0 }),
-      target: fighterState('foe', 'technical', { position: { x: freeArena.minimumSeparation, z: 0 } }),
+      target: fighterState('foe', 'technical', { position: { x: floor, z: 0 } }),
+      arena,
       tick: 400,
     })
     const scored = scoreCombatCandidates(technical, COMBAT_STYLES.styles.technical)
@@ -349,12 +371,12 @@ describe('scoreCombatCandidates: range reach legality', () => {
   })
 
   it('scores a stopped-short action at contactRange.min rather than at a distance it never occupies', () => {
-    // predicted = max(0.9, 1.0 - 0.25) = 0.9. rangeMid 1.15, halfWidth 0.25,
+    // predicted = max(1.2, 1.3 - 0.25) = 1.2. rangeMid 1.45, halfWidth 0.25,
     // so rangeFit = 20 * clamp(1 - 0.25/0.25, 0, 1) = 0 and the jab keeps its
     // bare baseWeight of 14 -- legal, but correctly unattractive at a range it
     // has to stop short to reach.
     const self = fighterState('self', 'heavy')
-    const target = fighterState('foe', 'heavy', { position: { x: 1.0, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 1.3, z: 0 } })
     const context = makeContext({ self, target })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
     const jab = scored.find((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')
@@ -365,17 +387,21 @@ describe('scoreCombatCandidates: range reach legality', () => {
 describe('scoreCombatCandidates: arena boundary penalty (-20)', () => {
   it('applies no penalty when the finishing position is well inside the arena', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 0, z: 1 } })
-    const target = fighterState('foe', 'heavy', { position: { x: 0, z: 1.8 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 0, z: 2.1 } })
     const context = makeContext({ self, target, arena: freeArena })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
     const cleave = scored.find((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave')
-    // baseWeight 8 + rangeFit 20 (predicted 1.35 sits exactly on rangeMid) = 28.
-    expect(cleave?.weight).toBe(28)
+    // baseWeight 8 + rangeFit 20 (predicted 1.65 sits exactly on rangeMid) = 28.
+    // `toBeCloseTo` rather than `toBe`: `2.1 - 0.45` and `(1.2 + 2.1) / 2` are
+    // not the same double even though they are the same number. The translated
+    // band edges are simply less exactly representable than the old ones; the
+    // quantity being asserted is unchanged.
+    expect(cleave?.weight).toBeCloseTo(28, 9)
   })
 
   it('subtracts exactly 20 when the finishing position lands within 0.4 units of the lateral boundary', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 19.61 }, facing: { x: 0, z: 1 } })
-    const target = fighterState('foe', 'heavy', { position: { x: 0, z: 21.41 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 0, z: 21.71 } })
     const context = makeContext({ self, target, arena: freeArena })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
     const cleave = scored.find((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave')
@@ -389,22 +415,22 @@ describe('scoreCombatCandidates: opening bonus', () => {
   it('adds +18 to a committed action against a target in recovery', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
     const target = fighterState('foe', 'heavy', {
-      position: { x: 1.8, z: 0 },
+      position: { x: 2.1, z: 0 },
       action: { type: 'active', instanceId: 'foe:0', definitionId: 'heavy-cleave', phase: 'recovery', phaseStartedTick: 0, phaseEndsAtTick: 100, targetId: 'self' },
     })
     const context = makeContext({ self, target, tick: 50 })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
     const cleave = scored.find((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave')
-    expect(cleave?.weight).toBe(46) // 28 baseline + 18
+    expect(cleave?.weight).toBeCloseTo(46, 9) // 28 baseline + 18
   })
 
   it('adds +6 to a probe action against a staggered target', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
-    const target = fighterState('foe', 'heavy', { position: { x: 1.5, z: 0 }, staggerUntilTick: 60 })
+    const target = fighterState('foe', 'heavy', { position: { x: 1.8, z: 0 }, staggerUntilTick: 60 })
     const context = makeContext({ self, target, tick: 50 })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
     const jab = scored.find((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-shield-jab')
-    // baseWeight 14 + rangeFit 12 (predicted 1.25, rangeMid 1.15, halfWidth
+    // baseWeight 14 + rangeFit 12 (predicted 1.55, rangeMid 1.45, halfWidth
     // 0.25 -> 20*(1-0.4)=12) + opening 6 = 32.
     expect(jab?.weight).toBeCloseTo(32, 9)
   })
@@ -412,20 +438,24 @@ describe('scoreCombatCandidates: opening bonus', () => {
   it('adds no opening bonus against a target that is merely in windup', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
     const target = fighterState('foe', 'heavy', {
-      position: { x: 1.8, z: 0 },
+      position: { x: 2.1, z: 0 },
       action: { type: 'active', instanceId: 'foe:0', definitionId: 'heavy-cleave', phase: 'windup', phaseStartedTick: 0, phaseEndsAtTick: 100, targetId: 'self' },
     })
     const context = makeContext({ self, target, tick: 50 })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
     const cleave = scored.find((c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave')
-    expect(cleave?.weight).toBe(28)
+    // `toBeCloseTo` rather than `toBe`: `2.1 - 0.45` and `(1.2 + 2.1) / 2` are
+    // not the same double even though they are the same number. The translated
+    // band edges are simply less exactly representable than the old ones; the
+    // quantity being asserted is unchanged.
+    expect(cleave?.weight).toBeCloseTo(28, 9)
   })
 })
 
 describe('scoreCombatCandidates: pressure adjustment (+-8 x pressureLevel)', () => {
   it('adds +8 x pressureLevel to advance/pressure/burst-in candidates', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
-    const target = fighterState('foe', 'heavy', { position: { x: 2, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 2.3, z: 0 } })
     const context = makeContext({ self, target, pressureLevel: 3 })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
     const advance = scored.find((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'advance')
@@ -434,10 +464,10 @@ describe('scoreCombatCandidates: pressure adjustment (+-8 x pressureLevel)', () 
   })
 
   it('adds -8 x pressureLevel to retreat/disengage candidates', () => {
-    // Fast, distance 1.5 (below preferredRange.min 2.4): retreat reduces
+    // Fast, distance 1.8 (below preferredRange.min 2.7): retreat reduces
     // error -> +12. baseWeight(retreat)=8. At pressureLevel 1: 8+12-8=12.
     const self = fighterState('self', 'fast', { position: { x: 0, z: 0 } })
-    const target = fighterState('foe', 'fast', { position: { x: 1.5, z: 0 } })
+    const target = fighterState('foe', 'fast', { position: { x: 1.8, z: 0 } })
     const context = makeContext({ self, target, pressureLevel: 1 })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.fast)
     const retreat = scored.find((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'retreat')
@@ -445,7 +475,7 @@ describe('scoreCombatCandidates: pressure adjustment (+-8 x pressureLevel)', () 
   })
 })
 
-describe('scoreCombatCandidates: burst-in legality band (2.8..4.0 units)', () => {
+describe('scoreCombatCandidates: burst-in legality band (3.1..4.3 units)', () => {
   // `isLocomotionLegal` (private) gates `burst-in` to this band -- see its
   // own comment and `BURST_IN_MIN_RANGE`/`BURST_IN_MAX_RANGE`. It had no
   // boundary test at all (unlike the adjacent gates covered above, e.g.
@@ -457,26 +487,26 @@ describe('scoreCombatCandidates: burst-in legality band (2.8..4.0 units)', () =>
   // positive at both boundaries once the "reduces distance error" distance
   // adjustment is added (see the two tests below), so presence/absence here
   // tracks legality, not merely a coincidental zero score.
-  it('is legal at the lower boundary (2.8) and illegal just inside it (2.79)', () => {
+  it('is legal at the lower boundary (3.1) and illegal just inside it (3.09)', () => {
     const self = fighterState('self', 'fast', { position: { x: 0, z: 0 } })
 
-    const atBoundary = makeContext({ self, target: fighterState('foe', 'fast', { position: { x: 2.8, z: 0 } }) })
+    const atBoundary = makeContext({ self, target: fighterState('foe', 'fast', { position: { x: 3.1, z: 0 } }) })
     const scoredAtBoundary = scoreCombatCandidates(atBoundary, COMBAT_STYLES.styles.fast)
     expect(scoredAtBoundary.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'burst-in')).toBe(true)
 
-    const justInside = makeContext({ self, target: fighterState('foe', 'fast', { position: { x: 2.79, z: 0 } }) })
+    const justInside = makeContext({ self, target: fighterState('foe', 'fast', { position: { x: 3.09, z: 0 } }) })
     const scoredJustInside = scoreCombatCandidates(justInside, COMBAT_STYLES.styles.fast)
     expect(scoredJustInside.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'burst-in')).toBe(false)
   })
 
-  it('is legal at the upper boundary (4.0) and illegal just beyond it (4.01)', () => {
+  it('is legal at the upper boundary (4.3) and illegal just beyond it (4.31)', () => {
     const self = fighterState('self', 'fast', { position: { x: 0, z: 0 } })
 
-    const atBoundary = makeContext({ self, target: fighterState('foe', 'fast', { position: { x: 4.0, z: 0 } }) })
+    const atBoundary = makeContext({ self, target: fighterState('foe', 'fast', { position: { x: 4.3, z: 0 } }) })
     const scoredAtBoundary = scoreCombatCandidates(atBoundary, COMBAT_STYLES.styles.fast)
     expect(scoredAtBoundary.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'burst-in')).toBe(true)
 
-    const justBeyond = makeContext({ self, target: fighterState('foe', 'fast', { position: { x: 4.01, z: 0 } }) })
+    const justBeyond = makeContext({ self, target: fighterState('foe', 'fast', { position: { x: 4.31, z: 0 } }) })
     const scoredJustBeyond = scoreCombatCandidates(justBeyond, COMBAT_STYLES.styles.fast)
     expect(scoredJustBeyond.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'burst-in')).toBe(false)
   })
@@ -485,7 +515,7 @@ describe('scoreCombatCandidates: burst-in legality band (2.8..4.0 units)', () =>
 describe('scoreCombatCandidates: matchup comparison (+-5)', () => {
   it('adds +5 for advantage and -5 for disadvantage relative to the neutral baseline', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
-    const target = fighterState('foe', 'heavy', { position: { x: 1.8, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 2.1, z: 0 } })
 
     const neutralWeight = scoreCombatCandidates(makeContext({ self, target, comparison: 'neutral' }), COMBAT_STYLES.styles.heavy).find(
       (c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave',
@@ -497,16 +527,16 @@ describe('scoreCombatCandidates: matchup comparison (+-5)', () => {
       (c) => c.decision.type === 'action' && c.decision.actionId === 'heavy-cleave',
     )?.weight
 
-    expect(neutralWeight).toBe(28)
-    expect(advantageWeight).toBe(33)
-    expect(disadvantageWeight).toBe(23)
+    expect(neutralWeight).toBeCloseTo(28, 9)
+    expect(advantageWeight).toBeCloseTo(33, 9)
+    expect(disadvantageWeight).toBeCloseTo(23, 9)
   })
 })
 
 describe('scoreCombatCandidates: anti-stall local-resolution suppression', () => {
   it('suppresses retreat/circle-* candidates once the local resolution gap reaches 300 ticks', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, lastResolutionTick: 0 })
-    const target = fighterState('foe', 'heavy', { position: { x: 2, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 2.3, z: 0 } })
 
     const fresh = scoreCombatCandidates(makeContext({ self, target, tick: 299 }), COMBAT_STYLES.styles.heavy)
     expect(fresh.some((c) => c.decision.type === 'locomotion' && c.decision.locomotionIntent === 'circle-left')).toBe(true)
@@ -521,7 +551,7 @@ describe('scoreCombatCandidates: anti-stall local-resolution suppression', () =>
 describe('scoreCombatCandidates: the future modifier seam', () => {
   it('defaults to no modifiers, and an explicit modifier adjusts a specific candidate by its returned delta', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
-    const target = fighterState('foe', 'heavy', { position: { x: 2, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 2.3, z: 0 } })
     const context = makeContext({ self, target })
 
     const withoutModifier = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
@@ -676,13 +706,13 @@ describe('chooseCombatDecision: deterministic all-zero fallback', () => {
 describe('anti-stall suppression yields to movement that restores action legality', () => {
   // Duel-shaped arena so the lateral limit is reachable, matching the geometry
   // the cohort stalls actually occurred in.
-  const duel = { radius: 6.5, lateralLimit: 2.5, minimumSeparation: 0.9, movementPolicy: 'ordered-pair' as const, orderedPair: ['self', 'foe'] as const }
+  const duel = { radius: 6.5, lateralLimit: 2.5, minimumSeparation: 1.2, movementPolicy: 'ordered-pair' as const, orderedPair: ['self', 'foe'] as const }
   const STALE_SUPPRESSED = new Set<string>(['retreat', 'backstep', 'circle-left', 'circle-right', 'disengage'])
 
   /** Heavy pinned against the lateral wall at the separation floor, facing its target along +x. */
   function wallPinned(tick: number) {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 2.34 }, facing: { x: 1, z: 0 }, lastResolutionTick: 0 })
-    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0.9, z: 2.34 } })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 1.2, z: 2.34 } })
     return makeContext({ self, target, tick, arena: duel })
   }
 
@@ -722,11 +752,11 @@ describe('anti-stall suppression yields to movement that restores action legalit
   it('restores suppressed movement for a wall-pinned technical too -- the clause is not heavy-specific', () => {
     // Technical pressed to the separation floor against the lateral wall.
     // Away from a boundary it would still have `technical-parry-counter`
-    // (contact range 0.9-2.3) to fall back on, but at the wall the -20
+    // (contact range 1.2-2.6) to fall back on, but at the wall the -20
     // boundary penalty zeroes that too, leaving movement as its only route to
     // a resolution.
     const self = fighterState('self', 'technical', { position: { x: 0, z: 2.34 }, facing: { x: 1, z: 0 }, lastResolutionTick: 0 })
-    const target = fighterState('foe', 'technical', { factionId: 'other', position: { x: 0.9, z: 2.34 } })
+    const target = fighterState('foe', 'technical', { factionId: 'other', position: { x: 1.2, z: 2.34 } })
     const stalled = makeContext({ self, target, tick: 400, arena: duel })
 
     const scored = scoreCombatCandidates(stalled, COMBAT_STYLES.styles.technical)
@@ -746,7 +776,7 @@ describe('anti-stall suppression yields to movement that restores action legalit
     // had already escaped a stall it is still in, so the lookahead projects
     // through `movement.ts`'s own clamp.
     const self = fighterState('self', 'technical', { position: { x: 0, z: 2.5 }, facing: { x: 0, z: -1 }, lastResolutionTick: 0 })
-    const target = fighterState('foe', 'technical', { factionId: 'other', position: { x: 0, z: 1.6 } })
+    const target = fighterState('foe', 'technical', { factionId: 'other', position: { x: 0, z: 1.3 } })
     const stalled = makeContext({ self, target, tick: 400, arena: duel })
 
     const scored = scoreCombatCandidates(stalled, COMBAT_STYLES.styles.technical)
@@ -775,7 +805,7 @@ describe('anti-stall suppression yields to movement that restores action legalit
     // A stalled fighter that HAS a viable action is never allowed to kite
     // instead: gate 1 of the exemption.
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 }, lastResolutionTick: 0 })
-    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 1.5, z: 0 } })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 1.8, z: 0 } })
     const stalled = makeContext({ self, target, tick: 400, arena: freeArena })
 
     const scored = scoreCombatCandidates(stalled, COMBAT_STYLES.styles.heavy)
@@ -795,11 +825,11 @@ describe('anti-stall suppression yields to movement that restores action legalit
 // ---------------------------------------------------------------------------
 
 describe('locomotion candidates are filtered by arena path', () => {
-  const duel = { radius: 6.5, lateralLimit: 2.5, minimumSeparation: 0.9, movementPolicy: 'ordered-pair' as const, orderedPair: ['self', 'foe'] as const }
+  const duel = { radius: 6.5, lateralLimit: 2.5, minimumSeparation: 1.2, movementPolicy: 'ordered-pair' as const, orderedPair: ['self', 'foe'] as const }
 
   it('drops forward intents when the target is already at the separation floor', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 } })
-    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0.9, z: 0 } })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 1.2, z: 0 } })
     const context = makeContext({ self, target, arena: duel })
 
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.heavy)
@@ -828,7 +858,7 @@ describe('locomotion candidates are filtered by arena path', () => {
     // separation constraint eats the whole step.
     const blocked = makeContext({
       self: fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 } }),
-      target: fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0.9, z: 0 } }),
+      target: fighterState('foe', 'heavy', { factionId: 'other', position: { x: 1.2, z: 0 } }),
       arena: duel,
     })
     expect(scoreCombatCandidates(blocked, closerStyle)).toEqual([])
@@ -837,7 +867,7 @@ describe('locomotion candidates are filtered by arena path', () => {
     // produces real displacement and must stay legal.
     const oblique = makeContext({
       self: fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 0, z: 1 } }),
-      target: fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0.9, z: 0 } }),
+      target: fighterState('foe', 'heavy', { factionId: 'other', position: { x: 1.2, z: 0 } }),
       arena: duel,
     })
     expect(scoreCombatCandidates(oblique, closerStyle).some(
@@ -867,7 +897,7 @@ describe('locomotion candidates are filtered by arena path', () => {
     // executable -- is the only truthful answer left.
     const forwardOnlyStyle: CombatStyleDefinition = { ...closerStyle }
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 } })
-    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0.9, z: 0 } })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 1.2, z: 0 } })
     const context = makeContext({ self, target, arena: duel })
 
     expect(scoreCombatCandidates(context, forwardOnlyStyle)).toEqual([])
@@ -882,7 +912,7 @@ describe('locomotion candidates are filtered by arena path', () => {
     // the fallback must take it rather than settling for `hold-range`.
     const withRetreat: CombatStyleDefinition = { ...closerStyle, preferredRange: { min: 3, max: 4 }, baseWeights: { advance: 12, retreat: 0 } }
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 } })
-    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 0.9, z: 0 } })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 1.2, z: 0 } })
     const context = makeContext({ self, target, arena: duel })
 
     expect(chooseCombatDecision(context, withRetreat, { selection: 0.5, interval: 0.5 })).toEqual({
@@ -923,9 +953,9 @@ describe('locomotion candidates are filtered by arena path', () => {
 
 describe('forced-tagged actions bypass weighted selection', () => {
   it('never offers technical-parry-counter as an ordinary candidate at any distance in its contact range', () => {
-    // Its authored contact range is 0.9-2.3 with 0.30 root travel, so without
+    // Its authored contact range is 1.2-2.6 with 0.30 root travel, so without
     // the filter it is legal and positively weighted across most of this sweep.
-    for (const distance of [0.9, 1.0, 1.3, 1.6, 1.9, 2.2, 2.3, 2.6]) {
+    for (const distance of [1.2, 1.3, 1.6, 1.9, 2.2, 2.5, 2.6, 2.9]) {
       const self = fighterState('self', 'technical', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 } })
       const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: distance, z: 0 } })
       const context = makeContext({ self, target })
@@ -935,11 +965,11 @@ describe('forced-tagged actions bypass weighted selection', () => {
   })
 
   it('excludes it even where its range-fit score would otherwise be near maximal', () => {
-    // Predicted contact 1.6 sits exactly on the 0.9-2.3 midpoint, so rangeFit
+    // Predicted contact 1.9 sits exactly on the 1.2-2.6 midpoint, so rangeFit
     // would be the full +20, plus +5 for Technical's advantage over Heavy --
     // comfortably the strongest candidate in the pool if it were admitted.
     const self = fighterState('self', 'technical', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 } })
-    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 1.9, z: 0 } })
+    const target = fighterState('foe', 'heavy', { factionId: 'other', position: { x: 2.2, z: 0 } })
     const context = makeContext({ self, target })
     const scored = scoreCombatCandidates(context, COMBAT_STYLES.styles.technical)
     expect(scored.some((c) => c.decision.type === 'action' && c.decision.actionId === 'technical-parry-counter')).toBe(false)
@@ -971,7 +1001,7 @@ describe('forced-tagged actions bypass weighted selection', () => {
 })
 
 describe('Technical locomotion range gates', () => {
-  const duel = { radius: 6.5, lateralLimit: 2.5, minimumSeparation: 0.9, movementPolicy: 'ordered-pair' as const, orderedPair: ['self', 'foe'] as const }
+  const duel = { radius: 6.5, lateralLimit: 2.5, minimumSeparation: 1.2, movementPolicy: 'ordered-pair' as const, orderedPair: ['self', 'foe'] as const }
 
   function technicalAt(distance: number, tick = 0) {
     const self = fighterState('self', 'technical', { position: { x: 0, z: 0 }, facing: { x: 1, z: 0 }, lastResolutionTick: tick })
@@ -984,18 +1014,18 @@ describe('Technical locomotion range gates', () => {
       .filter((c) => c.decision.type === 'locomotion')
       .map((c) => (c.decision as { locomotionIntent: string }).locomotionIntent)
 
-  it('offers backstep only below 1.2 units', () => {
-    expect(intentsAt(1.0)).toContain('backstep')
-    expect(intentsAt(1.19)).toContain('backstep')
-    expect(intentsAt(1.2)).not.toContain('backstep')
+  it('offers backstep only below 1.5 units', () => {
+    expect(intentsAt(1.3)).toContain('backstep')
+    expect(intentsAt(1.49)).toContain('backstep')
     expect(intentsAt(1.5)).not.toContain('backstep')
+    expect(intentsAt(1.8)).not.toContain('backstep')
   })
 
   it('does not let Technical backstep away from its own preferred measure', () => {
-    // The kiting case: at 2.1-2.8 units Technical is exactly where it wants to
+    // The kiting case: at 2.4-3.1 units Technical is exactly where it wants to
     // be and must commit to holding, circling, advancing or attacking -- not
     // walk backwards faster than a Heavy can follow.
-    for (const distance of [2.1, 2.4, 2.8]) {
+    for (const distance of [2.4, 2.8, 3.1]) {
       const intents = intentsAt(distance)
       expect(intents).not.toContain('backstep')
       expect(intents.length).toBeGreaterThan(0) // still has legal locomotion
@@ -1003,7 +1033,7 @@ describe('Technical locomotion range gates', () => {
   })
 
   it('keeps every other Technical intent available at measure', () => {
-    const intents = intentsAt(2.4)
+    const intents = intentsAt(2.7)
     expect(intents).toContain('hold-range')
     expect(intents).toContain('circle-left')
     expect(intents).toContain('circle-right')
@@ -1012,7 +1042,7 @@ describe('Technical locomotion range gates', () => {
   it('allows circling only while the style can keep facing the opponent', () => {
     // v/d <= sin(maxTurn). Technical circles at 1.3 u/s (0.02167/tick) and
     // turns 2.6 degrees/tick (sin 0.04536), so it needs d > ~0.478. Every
-    // arena's minimumSeparation is 0.9, so this never binds on real content --
+    // arena's minimumSeparation is at least 0.9, so this never binds on real content --
     // asserted here against a synthetic style that circles far faster than it
     // can look, so the rule is pinned rather than merely present.
     const spinner: CombatStyleDefinition = {
@@ -1045,7 +1075,7 @@ describe('Technical locomotion range gates', () => {
 describe('chooseCombatDecision: proportional selection among positive weights', () => {
   it('selects the candidate whose cumulative weight band contains the selection roll', () => {
     const self = fighterState('self', 'heavy', { position: { x: 0, z: 0 } })
-    const target = fighterState('foe', 'heavy', { position: { x: 2, z: 0 } })
+    const target = fighterState('foe', 'heavy', { position: { x: 2.3, z: 0 } })
     const context = makeContext({ self, target })
     // scored = advance(24), pressure(24), circle-left(2), circle-right(2), heavy-cleave(~19.11); total ~71.11
     const veryLowRoll = chooseCombatDecision(context, COMBAT_STYLES.styles.heavy, { selection: 0.0001, interval: 0 })
@@ -1184,10 +1214,13 @@ describe('forced behavior thresholds', () => {
     expect(hasFastForcedDisengageEnded(FAST_FORCED_DISENGAGE_END_RANGE, FAST_FORCED_DISENGAGE_MAX_TICKS)).toBe('range')
   })
 
-  it('Technical forced parry counter starts only within 2.3 units, otherwise clears', () => {
+  it('Technical forced parry counter starts only within 2.6 units, otherwise clears', () => {
     expect(resolveForcedParryCounterStart(TECHNICAL_FORCED_COUNTER_RANGE)).toBe('technical-parry-counter')
-    expect(resolveForcedParryCounterStart(2.29)).toBe('technical-parry-counter')
-    expect(resolveForcedParryCounterStart(2.31)).toBeUndefined()
+    expect(resolveForcedParryCounterStart(2.59)).toBe('technical-parry-counter')
+    expect(resolveForcedParryCounterStart(2.61)).toBeUndefined()
+    // The threshold is the action's own reach, not an independent number, and
+    // the 2026-09-05 translation moved both together.
+    expect(TECHNICAL_FORCED_COUNTER_RANGE).toBe(COMBAT_STYLES.attacks['technical-parry-counter'].contactRange.max)
   })
 })
 

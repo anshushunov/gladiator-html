@@ -100,8 +100,33 @@ export interface RecordedCameraTrace {
 // often. Every `expectSmoothFraming` bound was re-checked unmodified after the
 // move and passes with the same margin as before (0 direction reversals in all
 // three traces and all nine standalone pairings).
+// RE-FROZEN 2026-09-05 (fighting room), AND THIS IS THE FIRST TIME `ticks`
+// LEGITIMATELY MOVES. Every previous entry above turns on the rule that an
+// unchanged bout length is what separates a re-recording from a re-baseline of
+// something that actually broke -- and that rule holds precisely because those
+// slices touched only the camera's framing inputs. This one changes
+// `src/simulation/**` and `src/content/**` on purpose: the body-width
+// translation (+0.30 on every separation), the duel arena that grew with it
+// (6.5 x 2.5 -> 7.5 x 3.3, start +/-4.2 -> +/-4.7), the spear's `pushDistance`,
+// and Aquila's `power`. Different bouts, therefore different lengths.
+//
+//   01 murmillo vs retiarius    1827 -> 3480 ticks   opening 15.4353 -> 16.5843   crossings 1 -> 1
+//   04 retiarius vs retiarius   1705 -> 1632 ticks   opening 15.7947 -> 16.8736   crossings 3 -> 1
+//   07 hoplomachus vs retiarius 1261 -> 1496 ticks   opening 16.2333 -> 17.2076   crossings 1 -> 3
+//
+// Opening distance rose in all three because the fighters now start 9.4 units
+// apart instead of 8.4. Trace 01 is the one to look at twice: 3480 ticks is
+// close to the 3600 cap, and it is a real tail rather than a stall -- the bout
+// still ends by defeat, and `balance.test.ts` measures this pairing at a 2132
+// median with a p95 under 3200 and no timeouts across 200 seeds.
+//
+// Everything `expectSmoothFraming` asserts was re-checked unmodified and
+// passes: 0 direction reversals in traces 01 and 04 and 2 in trace 07 (against
+// a ceiling of 2, the worst previously measured anywhere), peak zoom rates
+// 3.09 / 4.68 / 3.27 against the limit of 5, clamped and unclamped series
+// byte-identical, and every distance inside 8.81..18.
 export const RECORDED_TRACES: readonly RecordedCameraTrace[] = [
-  { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 1827, openingDistance: 15.435310845379714, crossings: 1 },
-  { label: '04 retiarius vs retiarius', lineup: ['aquila', 'nerva', 'brutus'], ticks: 1705, openingDistance: 15.794692273631078, crossings: 3 },
-  { label: '07 hoplomachus vs retiarius', lineup: ['nerva', 'brutus', 'aquila'], ticks: 1261, openingDistance: 16.233329149631913, crossings: 1 },
+  { label: '01 murmillo vs retiarius', lineup: ['brutus', 'aquila', 'nerva'], ticks: 3480, openingDistance: 16.584304863301924, crossings: 1 },
+  { label: '04 retiarius vs retiarius', lineup: ['aquila', 'nerva', 'brutus'], ticks: 1632, openingDistance: 16.87359929174532, crossings: 1 },
+  { label: '07 hoplomachus vs retiarius', lineup: ['nerva', 'brutus', 'aquila'], ticks: 1496, openingDistance: 17.207578048058593, crossings: 3 },
 ]

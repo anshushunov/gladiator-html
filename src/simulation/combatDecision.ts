@@ -297,8 +297,10 @@ const STALE_SUPPRESSED_INTENTS: ReadonlySet<LocomotionIntent> = new Set<Locomoti
 // locomotion section); this is a fixed authored constant, not derived from
 // any catalog speed field even though it happens to coincide numerically
 // with Fast's `burstUnitsPerSecond`.
-const BURST_IN_MIN_RANGE = 2.8
-const BURST_IN_MAX_RANGE = 4.0
+// Both are separations, so both moved +0.30 in the 2026-09-05 body-width
+// translation (from 2.8 and 4.0) along with the rest of the distance axis.
+const BURST_IN_MIN_RANGE = 3.1
+const BURST_IN_MAX_RANGE = 4.3
 
 // design.md's locomotion section, Technical: "Technical holds spear measure,
 // selects `backstep` when an opponent enters below 1.2 units, and may circle
@@ -310,11 +312,58 @@ const BURST_IN_MAX_RANGE = 4.0
 // described in a style-specific sentence, also implemented as an intent-level
 // range gate.
 //
-// Leaving it ungated let Technical backstep from its own preferred 2.1-2.8
-// measure, which is what made it able to kite a Heavy indefinitely: Heavy
-// closes at 1.4 u/s and Technical retreats at 2.0 u/s, so an ordinary backstep
-// available at any distance means the exchange never has to happen.
-const BACKSTEP_MAX_RANGE = 1.2
+// Leaving it UNGATED let Technical backstep from its own preferred measure,
+// which is what made it able to kite a Heavy indefinitely: Heavy closes at
+// 1.4 u/s and Technical retreats at 2.0 u/s, so an ordinary backstep available
+// at any distance means the exchange never has to happen. That failure is why
+// the gate exists at all, and it still bounds this constant from above.
+//
+// ---------------------------------------------------------------------------
+// 2026-09-05: 1.5, WHICH IS THE DESIGN'S 1.2 TRANSLATED AND NOTHING ELSE
+// ---------------------------------------------------------------------------
+//
+// The whole distance axis moved outward by 0.30 (see
+// `src/content/combatStyles.ts`'s header), so this constant moved with it and
+// still sits exactly on `technical-thrust`'s floor: Technical may open ground
+// precisely where it has no ordinary attack.
+//
+// RAISING IT FURTHER WAS TRIED FOR THE PLAYTEST'S FIRST FINDING AND MEASURED
+// AS A FAILURE. The finding was "the hoplomachus goes into melee, makes no
+// attempt to break the range, and just trades", and the obvious reading is
+// the one this constant invites: Technical authors exactly one backward intent
+// (`backstep`, no `retreat`), so tying the gate to the thrust floor leaves it
+// no legal way to open ground anywhere between that floor and its own measure
+// -- which is precisely the murmillo's pocket.
+//
+// That reading is wrong, and the instrument that showed it is
+// `scripts/measure-distance.ts` at 20 seeds x 9 roster pairings. Against the
+// murmillo the gate does essentially nothing, and what it does do is bad. The
+// two heavy-vs-technical pairings, Technical's share of ticks inside its own
+// 2.4-3.1 measure, and the share of ALL ticks pinned within 0.15 of the
+// separation floor:
+//
+//   gate   brutus/cassius   nerva/magnus   mirror   ticks pinned at the floor
+//   1.5         4.3%           4.7%        16.1%       9.8%   <- this constant
+//   1.8         5.8%           4.4%        20.7%      10.6%
+//   2.0         5.4%           5.5%        28.9%      11.0%
+//   2.2         6.9%           5.7%        45.9%      12.2%
+//   2.4         6.3%           6.5%        51.8%      13.2%
+//
+// The murmillo columns are flat inside noise across the whole sweep while the
+// pinning gets monotonically WORSE -- the longest single pin against a
+// murmillo grows from 2.8 s to 6.4 s. The reason is that a backstep is a
+// walking race the hoplomachus cannot win in a bounded arena: Heavy closes
+// continuously at 1.4 u/s, while Technical retreats at 2.0 u/s only on the
+// fraction of ticks it is not committed to a 38-tick thrust, and a fighter
+// that keeps walking backwards ends up against the arena boundary, where
+// `hasArenaPath` deletes the intent and the murmillo has him. The gate only
+// pays in the MIRROR, where neither side is chasing.
+//
+// What actually answers the finding is `technical-thrust`/
+// `technical-driving-thrust`'s `pushDistance`: a push makes measure instantly
+// and so is not a race at all. See those two actions' comments for the sweep
+// that shipped. This constant stays where the design put it.
+const BACKSTEP_MAX_RANGE = 1.5
 
 /**
  * "...and may circle only while remaining able to face the opponent."
@@ -327,7 +376,7 @@ const BACKSTEP_MAX_RANGE = 1.2
  * trigonometry, per design.md's simulation constraints.
  *
  * With the current authored content this never binds: the tightest style needs
- * only `d > 0.59` (Fast), and every arena's `minimumSeparation` is `0.9`. It is
+ * only `d > 0.59` (Fast), and no arena's `minimumSeparation` is below `0.9`. It is
  * implemented because it is a stated rule and because content tuning can move
  * lateral speeds and turn rates independently, at which point a style could
  * silently acquire the ability to circle faster than it can look.
@@ -591,12 +640,14 @@ function movementRestoresAction(
  *
  * Modelling this as an unconditional `currentDistance - rootTravel` was the
  * root cause of Task 13's measured timeout wall: every attack's
- * `contactRange.min` is `0.9`, which equals the duel arena's
+ * `contactRange.min` was then `0.9`, which equalled the duel arena's
  * `minimumSeparation`, so subtracting a strictly positive `rootTravel` made
  * EVERY action illegal for EVERY style at the separation floor. Fighters that
- * closed to `0.9` could never attack again, and 8 of the 9 roster pairings
+ * closed to the floor could never attack again, and 8 of the 9 roster pairings
  * deadlocked there (91.9% of ticks at `d <= 0.9` with no legal attack for
- * either side on 98.1% of ticks) until the 3600-tick cap.
+ * either side on 98.1% of ticks) until the 3600-tick cap. The 2026-09-05
+ * translation moved both numbers to `1.2` together and preserves the equality,
+ * so the hazard is unchanged in kind and this function still answers it.
  */
 function predictedContactDistance(currentDistance: number, action: Readonly<AttackActionDefinition>): number {
   return Math.max(action.contactRange.min, currentDistance - action.rootTravel)
@@ -624,22 +675,24 @@ function predictedContactDistance(currentDistance: number, action: Readonly<Atta
  * Both ends are clamped to the arena's `minimumSeparation` because that is a
  * hard floor the separation solver enforces: a combatant is never legitimately
  * closer than it. That clamp is load-bearing rather than cosmetic. Validation
- * requires `contactRange.min >= arena.minimumSeparation`, and in the duel they
- * are exactly equal at `0.9` -- but the three-pass separation solver parks a
- * pressed-together pair at `0.89999999999999991`, one ULP below `0.9`. Without
- * the clamp, a bare `d >= contactRange.min` rejects every action for both
- * fighters, and the pair deadlocks at the separation floor exactly as it did
- * when root travel was treated as mandatory. Measured on the worst-affected
- * bout, 917 of 1253 stalled ticks sat at precisely that one-ULP-low distance.
- * The clamp only ever bites below the floor, so an arena whose
- * `minimumSeparation` is genuinely looser than an action's `contactRange.min`
- * still correctly reports that action illegal at close quarters.
+ * requires `contactRange.min >= arena.minimumSeparation`, and in the duel the
+ * floor-hugging attacks sit exactly on it (`0.9` before the 2026-09-05
+ * translation, `1.2` after) -- but the three-pass separation solver parks a
+ * pressed-together pair one ULP below the floor. Without the clamp, a bare
+ * `d >= contactRange.min` rejects every action for both fighters, and the pair
+ * deadlocks at the separation floor exactly as it did when root travel was
+ * treated as mandatory. Measured on the worst-affected bout, 917 of 1253
+ * stalled ticks sat at precisely that one-ULP-low distance. The clamp only ever
+ * bites below the floor, so an arena whose `minimumSeparation` is genuinely
+ * looser than an action's `contactRange.min` still correctly reports that
+ * action illegal at close quarters.
  *
- * This preserves both of the design's authored fixtures at `d = 2.0`:
- * `heavy-shield-jab` (travel `0.25`, max `1.4`) stays ILLEGAL because
- * `1.75 > 1.4` -- exactly design.md's "heavy-shield-jab is illegal because its
- * 0.25 root travel cannot reach 1.4" -- while `heavy-cleave` (travel `0.45`,
- * max `1.8`) stays legal with predicted contact `1.55`.
+ * This preserves both of the design's authored fixtures, translated with
+ * everything else to `d = 2.3`: `heavy-shield-jab` (travel `0.25`, max `1.7`)
+ * stays ILLEGAL because `2.05 > 1.7` -- exactly design.md's "heavy-shield-jab
+ * is illegal because its 0.25 root travel cannot reach" its own maximum --
+ * while `heavy-cleave` (travel `0.45`, max `2.1`) stays legal with predicted
+ * contact `1.85`.
  */
 function legalActionCandidates(context: CombatDecisionContext, style: CombatStyleDefinition): CombatDecision[] {
   const currentDistance = distanceBetween(context.self.position, context.target.position)
@@ -965,12 +1018,15 @@ export function decisionIntervalTicks(archetype: Archetype, intervalRoll: number
  *
  * 3.35 rather than the authored 2.4, because the lunge itself moved. The
  * authored exit sat 0.95 above the authored lunge's contact max of 1.45; the
- * same gap above the new 2.40 is 3.35. Leaving it at 2.4 would have put the
- * exit INSIDE the lunge's own contact range, so the disengage would end on the
- * tick it began -- exactly the defect that was fixed on 2026-08-18, arriving
- * again by a different route.
+ * same gap above the then-new 2.40 was 3.35. Leaving it at 2.4 would have put
+ * the exit INSIDE the lunge's own contact range, so the disengage would end on
+ * the tick it began -- exactly the defect that was fixed on 2026-08-18,
+ * arriving again by a different route.
+ *
+ * 3.65 since the 2026-09-05 translation: this is a separation, the lunge's
+ * contact max moved to 2.70, and the 0.95 gap above it is preserved.
  */
-export const FAST_FORCED_DISENGAGE_END_RANGE = 3.35
+export const FAST_FORCED_DISENGAGE_END_RANGE = 3.65
 /**
  * ...or after this many ticks, whichever comes first.
  *
@@ -1125,8 +1181,12 @@ export function fastForcedDisengageExit(
   return undefined
 }
 
-/** Technical's forced parry-counter begins on the next tick only within this range. */
-export const TECHNICAL_FORCED_COUNTER_RANGE = 2.3
+/**
+ * Technical's forced parry-counter begins on the next tick only within this
+ * range. Tracks `technical-parry-counter`'s own `contactRange.max`, so it moved
+ * +0.30 (from 2.3) with it in the 2026-09-05 translation.
+ */
+export const TECHNICAL_FORCED_COUNTER_RANGE = 2.6
 
 /**
  * Returns `'technical-parry-counter'` when the target remains within

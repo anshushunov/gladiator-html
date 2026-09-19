@@ -67,11 +67,24 @@ export const freeArena: Readonly<CombatArenaDefinition> = {
  * Duel-shaped arena with `ordered-pair` movement, matching the design's
  * duel-adapter dimensions. `orderedPair` names `'a'`/`'b'`, the combatant IDs
  * used throughout `encounter.test.ts`'s two-combatant fixtures.
+ *
+ * `minimumSeparation` is 1.2 and must track `battle.ts`'s
+ * `DUEL_MINIMUM_SEPARATION`, which the 2026-09-05 body-width translation moved
+ * from 0.9. Leaving it behind is not a harmless staleness: every attack in the
+ * catalogue now has `contactRange.min >= 1.2`, so a fixture arena with a 0.9
+ * floor opens a 0.3-wide band in which NO attack is legal for anyone. Measured
+ * on `brutusVsDrususConfig` while the two disagreed, that dead band pushed
+ * seed 3's first `damage-dealt` from tick 120 out to tick 198, and the
+ * two-combatant pacing probe from 20-of-20 bouts finishing to 17.
+ *
+ * `freeArena` above deliberately keeps its looser 0.9: it exists to be
+ * permissive, and several tests use the gap between its floor and an attack's
+ * own `contactRange.min` on purpose.
  */
 export const duelArena: Readonly<CombatArenaDefinition> = {
   radius: 6.5,
   lateralLimit: 2.5,
-  minimumSeparation: 0.9,
+  minimumSeparation: 1.2,
   movementPolicy: 'ordered-pair',
   orderedPair: ['a', 'b'],
 }
