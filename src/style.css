@@ -522,7 +522,24 @@ h1 span { color: #c78b4f; font-style: italic; }
   pointer-events: none;
 }
 
-.arena canvas { display: block; width: 100%; height: 100%; }
+/* ABSOLUTE, NOT JUST `height: 100%` -- the canvas must never be able to size
+   its own parent.
+
+   `.arena` has no definite height (only `min-height`), so a percentage height
+   on an in-flow canvas does not resolve: it falls back to the canvas's own
+   INTRINSIC size, which is its `width`/`height` attributes -- and those are
+   written by `ArenaView.resize()` from the element's measured box. That closes
+   a loop. Minimise and restore the window (or any reflow that leaves the row
+   height indefinite for a frame) and the canvas takes its intrinsic aspect
+   ratio, grows `.arena` to match, `resize()` writes a buffer at the new ratio,
+   and the layout latches there: measured 730x518 -> 730x691 after one cycle,
+   stable at the wrong size and never returning. Reported by the design owner
+   in the 2026-09-20 playtest, question 7.
+
+   Taking the canvas out of flow breaks the loop at its first link: `.arena` is
+   already `position: relative`, the row is sized by the HP cards as it was
+   meant to be, and `resize()` reads a box that nothing it writes can change. */
+.arena canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
 .arena canvas[hidden] { display: none; }
 
 /* Damage numbers: DOM digits over the canvas, placed per frame from the

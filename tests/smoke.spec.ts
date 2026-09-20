@@ -995,6 +995,35 @@ test('keeps the sound control (and its audio voice/cursor reset) working across 
   await expect(page.getByTestId('toggle-sound')).toBeVisible()
 })
 
+test('the arena comes back to its own size after the window shrinks and is restored', async ({ page }) => {
+  // The 2026-09-20 playtest's question 7: minimise the window, restore it, and
+  // the arena does not return -- it settles taller than it was and stays there,
+  // pushing the HP cards below the fold.
+  //
+  // The mechanism is a layout loop, which is why this asserts the ELEMENT BOX
+  // and not a screenshot: `.arena` has no definite height, so a percentage
+  // height on an in-flow canvas falls back to the canvas's intrinsic size --
+  // its `width`/`height` attributes -- and `ArenaView.resize()` writes those
+  // from the element's measured box. Canvas grows arena, arena grows buffer,
+  // buffer's new aspect ratio holds the canvas at the wrong height. The fix is
+  // `position: absolute` on the canvas (see `style.css`); this test fails
+  // without it, at 730x691 against the 730x518 it started from.
+  await startSeededFirstBout(page)
+  const box = async () => page.evaluate(() => {
+    const canvas = document.querySelector('.arena canvas')!
+    return { width: canvas.clientWidth, height: canvas.clientHeight }
+  })
+  const before = await box()
+  expect(before.height).toBeGreaterThan(0)
+
+  await page.setViewportSize({ width: 400, height: 200 })
+  await page.setViewportSize({ width: 1280, height: 820 })
+  // `resize()` runs off a `ResizeObserver`, so the box settles a frame or two
+  // after the viewport call resolves; poll rather than sleep on a guess.
+  await expect.poll(async () => (await box()).height).toBe(before.height)
+  expect(await box()).toEqual(before)
+})
+
 test('audio debug: triggers all ten cues via the dev-only ?audioDebug=1 panel without starting a bout', async ({ page }) => {
   await page.goto('/?audioDebug=1&seed=20260815&snapshot')
   await page.waitForFunction(() => Boolean(window.__GLADIATOR_TEST__))

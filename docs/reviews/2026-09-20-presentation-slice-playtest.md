@@ -105,5 +105,164 @@ answer.
 
 ## Verdicts
 
-_(filled in after the pass; the instrumented follow-up on each finding goes
-below, one section per finding, in the style of the 2026-09-05 report)_
+The owner's pass, 2026-09-20, live build at `npm run dev`, seed 20260815,
+×1 through ×4.
+
+| # | question | verdict |
+|---|---|---|
+| 1 | slipping together | «бывает, но реже. Когда с трезубцем чуваку нужно рвать дистанцию он упирается спиной в границу и часто не может» |
+| 2 | hoplomachus making room | «пытаются, но есть что улучшить» |
+| 3 | hit / block / miss without the HUD | «стали нормальные цифры выводиться, по ним понятно. По удару — почти всегда» |
+| 4 | how much it cost | «нормально» |
+| 5 | murmillo reads as a gladiator | «шлем очень странный с каким-то гребешком. Тут бы посмотреть на шлемы гладиаторов» |
+| 6 | the spear lands | «вроде нормально» |
+| 7 | cropping at a narrow window | «если свернуть а потом развернуть то арена не возвращается к исходной» |
+| 8 | anything worse | «в целом ок. Единственное что арт самих гладиаторов как-то ушёл от задумки изначальной. Хотелось более естественных тел» |
+| 9 | spray life 420 ms | «брызги не очень хорошо видно. В половине раз как будто не появляются. Можно чуть ярче и чуть дольше» |
+| 10 | digits under the status heading | «нормально» |
+| 11 | killing blow's number lingers | «ок» |
+| 12 | two-handed reach as amplitude | «пока ок» |
+| 13 | fur kilt for a loincloth | «пока ок» |
+
+New asks, outside the checklist:
+
+> Ещё неясно зачем нужен щит. Как будто хочется механику эвейда и блока — тем
+> у кого есть щит с разной анимацией.
+
+> Ну потом бы прикрутить разные статы и скилы, чтобы разные гладиаторы
+> по-разному читались. Ну и массовые бои потом.
+
+## Finding 1 — the retiarius fights with his back to the wall for half the bout
+
+The clinch is gone and the owner says so, but the thing that replaced it is
+worse to watch: the retiarius, whose whole game is distance, spends most of a
+murmillo bout unable to take any.
+
+Measured over all nine pairings, 20 seeds each, every tick. "At the edge" is
+within 0.35 of `DUEL_RADIUS` 7.5 or `DUEL_LATERAL_LIMIT` 3.3; "backing" is a
+`backstep` or `disengage` locomotion intent.
+
+| pairing | who | % of bout at the edge | % of its backing done AT the edge |
+|---|---|---:|---:|
+| brutus (murmillo) vs drusus (retiarius) | retiarius | **51.5%** | **50.9%** |
+| | murmillo | 1.2% | — |
+| aquila (retiarius) vs magnus (murmillo) | retiarius | **58.4%** | **62.7%** |
+| | murmillo | 0.6% | — |
+| nerva (hoplomachus) vs drusus (retiarius) | retiarius | 23.5% | 40.2% |
+| aquila (retiarius) vs cassius (hoplomachus) | retiarius | 23.1% | 43.3% |
+| brutus vs cassius | hoplomachus | 17.9% | 27.2% |
+| nerva vs magnus | hoplomachus | 15.9% | 24.0% |
+| aquila vs drusus | both retiarii | 6–8% | 7–18% |
+| nerva vs cassius | both hoplomachi | 3–6% | 0% |
+
+Read the second column against the third. Against a murmillo the retiarius is
+on the boundary for **more than half the bout**, and when he decides to back
+away, **half to two-thirds of that decision is spent already against the wall**
+— the intent fires, the movement has nowhere to go, and what the eye sees is a
+man pressed to the edge being worked over. The murmillo is at the edge 0.6–1.2%
+of the same bouts: he is the one doing the pushing, and nothing pushes him back.
+
+The fighting-room slice moved every separation outward by 0.30 and grew the
+arena's radius by 1.0 (6.5 → 7.5) to pay for it. That was sized against the
+CLINCH, and it fixed the clinch. It was not sized against the retiarius' own
+authored range (`preferredRange` 2.7–3.3, the widest in the roster) plus a
+murmillo advancing on him: the pair needs room for his preferred separation AND
+his retreat AND the murmillo's approach, and 7.5 does not have it.
+
+Levers, in the order they should be tried: the arena radius again (cheapest,
+and the same instrument measures it); a boundary-aware disengage that turns
+along the wall instead of into it (`selectEvadeDirection` already knows about
+arena boundaries for evades — `disengage` does not); or a ring rather than an
+ellipse, so there is no short axis to be pinned against. This is its own slice.
+
+## Finding 2 — the spray is short because effect life is simulation time, not wall time
+
+"В половине раз как будто не появляются" is not about brightness, and it is not
+about blocked hits: over the same 4,239 `damage-dealt` events across the roster,
+only **284 (6.7%)** are blocked, and those are the only hits that deliberately
+show a shield spark instead of blood.
+
+The actual mechanism: `ArenaView` drives every effect off
+`presentationMs = encounter.tick * MS_PER_TICK` — SIMULATION time. The speed
+control multiplies ticks per real second, so it divides every effect's wall-clock
+life by the same factor:
+
+| speed | spray life, wall clock | at full opacity (`SPRAY_HOLD_FRACTION` 0.45) |
+|---|---:|---:|
+| ×1 | 420 ms | 189 ms |
+| ×2 | 210 ms | 95 ms |
+| ×4 | **105 ms** | **47 ms — about 3 frames** |
+
+The owner watched at ×4. Three frames at full opacity is below what the eye
+reliably catches, which is exactly the reported symptom, and it applies to every
+channel: the sand puff (220 ms) is 55 ms at ×4, the shield and weapon sparks
+(260 ms) are 65 ms.
+
+Two levers, and they are not equivalent:
+
+- **Brighter and longer, as asked.** `SPRAY_PEAK_OPACITY` 0.92 and
+  `FLASH_DURATION_MS.body` 420 are one-line changes and they help at every
+  speed. They do not remove the ×4 divisor, they only move where it bites.
+- **Make effect life wall-clock.** The principled fix — an effect is a thing the
+  eye must catch, so it should be measured in the eye's time. But the tick-driven
+  clock is precisely what makes `combat-visuals.spec.ts`'s frozen frames
+  reproducible: `advanceToCaptureTick` can place a spray at age 0 because age is
+  a function of the tick. A wall-clock life would need those fixtures re-founded
+  on a clock the test can hold still.
+
+Recommend the first now (it is what was asked for and it is safe), and the second
+as its own slice with the fixture question answered first.
+
+## Finding 3 — the arena never comes back after a minimise (fixed here)
+
+Reproduced, root-caused and fixed in this commit; the repro is now
+`smoke.spec.ts`'s "the arena comes back to its own size after the window shrinks
+and is restored".
+
+`.arena` has no definite height — only `min-height: 520px` — so `height: 100%`
+on an in-flow canvas does not resolve and falls back to the canvas's INTRINSIC
+size, which is its `width`/`height` attributes. `ArenaView.resize()` writes those
+attributes from the element's measured box. That is a loop: any reflow that
+leaves the row height indefinite for a frame lets the canvas take its own aspect
+ratio, grow `.arena` to match, and have the next `resize()` write a buffer at the
+new ratio — which then holds it there.
+
+Measured: 730×518 before, **730×691 after one shrink-and-restore cycle**, and
+stable at 691 on every cycle after. Not a ratchet, but it never returns. With
+the HP cards sized to the old row it pushes them below the fold, which is what
+the owner's screenshot shows.
+
+The fix is `position: absolute; inset: 0` on the canvas — `.arena` is already
+`position: relative`, so taking the canvas out of flow breaks the loop at its
+first link and the row goes back to being sized by the HP cards.
+
+## Finding 4 — the galea, and the bodies
+
+Two art notes, neither of them a defect, both for the next art pass:
+
+- **«Шлем очень странный с каким-то гребешком».** The galea is four primitives:
+  a dome, a cone, a brim 1.72 wide and a low dark crest. At the shipped camera
+  the brim hides the dome from above, so what reads is a wide flat hat with a
+  ridge on it. The brim width is the number to attack — it was sized to be
+  visible in silhouette at 130 px, and it overshot into hat territory. Real
+  murmillo helmets are a tall rounded bowl with a broad angled brim and a
+  substantial fin-like crest; the reference the owner asks for belongs in
+  `docs/reference/gladiator-equipment.md` beside the existing rows.
+- **«Арт ушёл от задумки, хотелось более естественных тел».** The KayKit
+  Adventurers pack is chibi by construction — large heads, short limbs. That was
+  accepted when the pack was chosen (PR #25) as the cost of a rigged CC0 set with
+  clips; it is not something this slice moved. Changing it means a different pack
+  or authored bodies, which is a track, not a slice.
+
+## Backlog from this pass
+
+Not scheduled here, recorded so they are not lost:
+
+1. **The shield needs a reason to exist.** The owner wants block and evade as
+   distinct mechanics with distinct animations, split by who carries a shield.
+   Today `heavy-guard` blocks, `fast-evade` dodges and `technical-parry` parries
+   — the mechanics exist per archetype, but the shield is not what decides, and
+   the animations do not read as different answers to the same blow.
+2. **Per-gladiator stats and skills**, so two fighters of one type read
+   differently.
+3. **Mass battles.**
