@@ -16,6 +16,7 @@
     "benchmark:duel-log": "vite-node scripts/benchmark-duel-log.ts",
     "measure:distance": "vite-node scripts/measure-distance.ts",
     "measure:pairings": "vite-node scripts/measure-pairings.ts",
+    "measure:boundary": "vite-node scripts/measure-boundary.ts",
     "review:clips": "vite-node scripts/record-review-clips.ts",
     "check": "npm run test && npm run build && npm run test:e2e",
     "test:slow": "vitest run --project slow",
