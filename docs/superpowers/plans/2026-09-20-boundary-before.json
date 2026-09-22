@@ -10,6 +10,8 @@
         "edgeTicks": 523,
         "backingTicks": 0,
         "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 5054,
+        "anyBackwardAtEdgeTicks": 79,
         "totalTicks": 42776
       },
       "away": {
@@ -18,6 +20,8 @@
         "edgeTicks": 22027,
         "backingTicks": 5424,
         "backingAtEdgeTicks": 2763,
+        "anyBackwardTicks": 16821,
+        "anyBackwardAtEdgeTicks": 10776,
         "totalTicks": 42772
       }
     },
@@ -29,6 +33,8 @@
         "edgeTicks": 840,
         "backingTicks": 0,
         "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 3563,
+        "anyBackwardAtEdgeTicks": 22,
         "totalTicks": 43049
       },
       "away": {
@@ -37,6 +43,8 @@
         "edgeTicks": 7723,
         "backingTicks": 9598,
         "backingAtEdgeTicks": 2612,
+        "anyBackwardTicks": 9598,
+        "anyBackwardAtEdgeTicks": 2612,
         "totalTicks": 43047
       }
     },
@@ -48,6 +56,8 @@
         "edgeTicks": 0,
         "backingTicks": 0,
         "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 4427,
+        "anyBackwardAtEdgeTicks": 0,
         "totalTicks": 34460
       },
       "away": {
@@ -56,6 +66,8 @@
         "edgeTicks": 0,
         "backingTicks": 0,
         "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 5909,
+        "anyBackwardAtEdgeTicks": 0,
         "totalTicks": 34448
       }
     },
@@ -67,6 +79,8 @@
         "edgeTicks": 2309,
         "backingTicks": 3668,
         "backingAtEdgeTicks": 262,
+        "anyBackwardTicks": 8557,
+        "anyBackwardAtEdgeTicks": 521,
         "totalTicks": 37405
       },
       "away": {
@@ -75,6 +89,8 @@
         "edgeTicks": 3175,
         "backingTicks": 4259,
         "backingAtEdgeTicks": 754,
+        "anyBackwardTicks": 9254,
+        "anyBackwardAtEdgeTicks": 1462,
         "totalTicks": 37417
       }
     },
@@ -86,6 +102,8 @@
         "edgeTicks": 7858,
         "backingTicks": 4011,
         "backingAtEdgeTicks": 1735,
+        "anyBackwardTicks": 8298,
+        "anyBackwardAtEdgeTicks": 2966,
         "totalTicks": 34042
       },
       "away": {
@@ -94,6 +112,8 @@
         "edgeTicks": 1310,
         "backingTicks": 2585,
         "backingAtEdgeTicks": 36,
+        "anyBackwardTicks": 2585,
+        "anyBackwardAtEdgeTicks": 36,
         "totalTicks": 34036
       }
     },
@@ -105,6 +125,8 @@
         "edgeTicks": 25504,
         "backingTicks": 4558,
         "backingAtEdgeTicks": 2859,
+        "anyBackwardTicks": 15895,
+        "anyBackwardAtEdgeTicks": 11233,
         "totalTicks": 43668
       },
       "away": {
@@ -113,6 +135,8 @@
         "edgeTicks": 278,
         "backingTicks": 0,
         "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 4379,
+        "anyBackwardAtEdgeTicks": 0,
         "totalTicks": 43686
       }
     },
@@ -124,6 +148,8 @@
         "edgeTicks": 538,
         "backingTicks": 1600,
         "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 1600,
+        "anyBackwardAtEdgeTicks": 0,
         "totalTicks": 30414
       },
       "away": {
@@ -132,6 +158,8 @@
         "edgeTicks": 7150,
         "backingTicks": 3939,
         "backingAtEdgeTicks": 1583,
+        "anyBackwardTicks": 8546,
+        "anyBackwardAtEdgeTicks": 3125,
         "totalTicks": 30428
       }
     },
@@ -143,6 +171,8 @@
         "edgeTicks": 2155,
         "backingTicks": 494,
         "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 494,
+        "anyBackwardAtEdgeTicks": 0,
         "totalTicks": 34405
       },
       "away": {
@@ -151,6 +181,8 @@
         "edgeTicks": 1133,
         "backingTicks": 1018,
         "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 1018,
+        "anyBackwardAtEdgeTicks": 0,
         "totalTicks": 34403
       }
     },
@@ -162,6 +194,8 @@
         "edgeTicks": 6535,
         "backingTicks": 10089,
         "backingAtEdgeTicks": 2420,
+        "anyBackwardTicks": 10089,
+        "anyBackwardAtEdgeTicks": 2420,
         "totalTicks": 41187
       },
       "away": {
@@ -170,6 +204,8 @@
         "edgeTicks": 316,
         "backingTicks": 0,
         "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 3603,
+        "anyBackwardAtEdgeTicks": 44,
         "totalTicks": 41173
       }
     }

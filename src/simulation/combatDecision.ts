@@ -735,7 +735,7 @@ export interface DecisionModifier {
 
 type MovementDirectionGroup = 'forward' | 'backward' | 'lateral'
 
-const LOCOMOTION_DIRECTION_GROUP: Readonly<Partial<Record<LocomotionIntent, MovementDirectionGroup>>> = {
+export const LOCOMOTION_DIRECTION_GROUP:Readonly<Partial<Record<LocomotionIntent, MovementDirectionGroup>>> = {
   advance: 'forward',
   pressure: 'forward',
   'burst-in': 'forward',

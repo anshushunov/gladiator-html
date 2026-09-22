@@ -12,6 +12,16 @@
 // intent issued while already at the wall executes into the clamp and buys
 // nothing, and the report measured half to two thirds of his backing that way.
 //
+// The second question is asked twice, over two definitions of "backing":
+//
+// - "backing (report)" counts `backstep` and `disengage` only -- the report's
+//   definition, kept so every run stays comparable with the 2026-09-20 table.
+// - "any backward" counts the decision's whole backward group, which adds
+//   `retreat`. Most of the retiarius' backing IS `retreat` (brutus vs drusus:
+//   39.3% of his ticks under this definition, 12.7% under the report's), and
+//   the boundary-aware weight this slice adds acts on the whole group -- so the
+//   report's column alone would miss most of what that weight changes.
+//
 // Recording only. Nothing here asserts a threshold; the acceptance bands live
 // in `src/simulation/*.test.ts`.
 //
@@ -23,7 +33,7 @@ import { writeFileSync } from 'node:fs'
 import { BASELINE_TEST_SEED, homeRoster, opponents } from '../src/content/mvpSeries'
 import { COMBAT_STYLES } from '../src/content/combatStyles'
 import { advanceBattleTick, createBattle, MAX_BOUT_TICKS } from '../src/simulation/battle'
-import { arenaBoundaryMargin } from '../src/simulation/combatDecision'
+import { arenaBoundaryMargin, LOCOMOTION_DIRECTION_GROUP } from '../src/simulation/combatDecision'
 import type { FighterDefinition } from '../src/simulation/fighters'
 import type { LocomotionIntent } from '../src/simulation/movement'
 
@@ -43,12 +53,25 @@ const EDGE_MARGIN = 0.35
  */
 const BACKING_INTENTS: ReadonlySet<LocomotionIntent> = new Set(['backstep', 'disengage'])
 
+/**
+ * Every intent the decision scores as moving backward, taken from the
+ * decision's own grouping rather than listed again here, so the column follows
+ * the policy if an intent is ever regrouped.
+ */
+const BACKWARD_INTENTS: ReadonlySet<string> = new Set(
+  Object.entries(LOCOMOTION_DIRECTION_GROUP)
+    .filter(([, group]) => group === 'backward')
+    .map(([intent]) => intent),
+)
+
 interface SideSample {
   fighterId: string
   archetype: string
   edgeTicks: number
   backingTicks: number
   backingAtEdgeTicks: number
+  anyBackwardTicks: number
+  anyBackwardAtEdgeTicks: number
   totalTicks: number
 }
 
@@ -59,7 +82,16 @@ interface PairingSample {
 }
 
 function emptySide(fighter: FighterDefinition): SideSample {
-  return { fighterId: fighter.id, archetype: fighter.archetype, edgeTicks: 0, backingTicks: 0, backingAtEdgeTicks: 0, totalTicks: 0 }
+  return {
+    fighterId: fighter.id,
+    archetype: fighter.archetype,
+    edgeTicks: 0,
+    backingTicks: 0,
+    backingAtEdgeTicks: 0,
+    anyBackwardTicks: 0,
+    anyBackwardAtEdgeTicks: 0,
+    totalTicks: 0,
+  }
 }
 
 function samplePairing(home: FighterDefinition, away: FighterDefinition, seedCount: number): PairingSample {
@@ -84,10 +116,13 @@ function samplePairing(home: FighterDefinition, away: FighterDefinition, seedCou
         if (combatant.status !== 'active') continue
         const atEdge = arenaBoundaryMargin(arena, combatant.position) < EDGE_MARGIN
         const backing = BACKING_INTENTS.has(combatant.locomotionIntent)
+        const anyBackward = BACKWARD_INTENTS.has(combatant.locomotionIntent)
         side.into.totalTicks += 1
         if (atEdge) side.into.edgeTicks += 1
         if (backing) side.into.backingTicks += 1
         if (backing && atEdge) side.into.backingAtEdgeTicks += 1
+        if (anyBackward) side.into.anyBackwardTicks += 1
+        if (anyBackward && atEdge) side.into.anyBackwardAtEdgeTicks += 1
       }
     }
   }
@@ -124,7 +159,9 @@ function main(): void {
     }
   }
 
-  const rows: string[][] = [['pairing', 'side', 'who', 'at edge', 'backing', 'backing AT edge']]
+  const rows: string[][] = [
+    ['pairing', 'side', 'who', 'at edge', 'backing (report)', 'backing AT edge (report)', 'any backward', 'any backward AT edge'],
+  ]
   for (const pairing of samples) {
     for (const [label, side] of [['home', pairing.home], ['away', pairing.away]] as const) {
       rows.push([
@@ -134,6 +171,8 @@ function main(): void {
         pct(share(side.edgeTicks, side.totalTicks)),
         pct(share(side.backingTicks, side.totalTicks)),
         pct(share(side.backingAtEdgeTicks, side.backingTicks)),
+        pct(share(side.anyBackwardTicks, side.totalTicks)),
+        pct(share(side.anyBackwardAtEdgeTicks, side.anyBackwardTicks)),
       ])
     }
   }
@@ -150,7 +189,11 @@ function main(): void {
   for (const archetype of ['fast', 'technical', 'heavy']) {
     const edge = byArchetype(archetype, (side) => share(side.edgeTicks, side.totalTicks))
     const wasted = byArchetype(archetype, (side) => share(side.backingAtEdgeTicks, side.backingTicks))
-    console.log(`\n${archetype}: at the edge ${pct(mean(edge))}, backing issued at the edge ${pct(mean(wasted))} (${edge.length} observations)`)
+    const anyWasted = byArchetype(archetype, (side) => share(side.anyBackwardAtEdgeTicks, side.anyBackwardTicks))
+    console.log(
+      `\n${archetype}: at the edge ${pct(mean(edge))}, backing (report) issued at the edge ${pct(mean(wasted))}, ` +
+        `any backward issued at the edge ${pct(mean(anyWasted))} (${edge.length} observations)`,
+    )
   }
   console.log('')
 
