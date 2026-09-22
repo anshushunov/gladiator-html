@@ -62,7 +62,7 @@ export function layoutDamageNumber(ageMs: number, reducedMotion: boolean): { ris
 /**
  * The number's style from the batch's own pairing: `critical` when the batch
  * carried a `critical-hit` for the same action instance, else `shield` for
- * blocked chip damage (the feed's "blocks but takes N"), else `body`. The
+ * blocked chip damage (the feed's "blocks the <attack> but takes N"), else `body`. The
  * kernel never emits both `critical-hit` and `attack-blocked` for one hit, so
  * `critical` first is a defensive ordering, not a reachable rule (§6.2).
  */

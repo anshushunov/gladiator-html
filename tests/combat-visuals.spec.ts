@@ -1095,7 +1095,7 @@ test('combat outcomes: defeat', async ({ page }) => {
   //
   // Effects in the window (3420, 3480]: the killing blow and nothing else --
   // its body spray at age 0 (scale 0.45, opacity 0.92) and its number, 63, over
-  // away.drusus at age 0, the same 63 the feed's last "deals N" line shows in
+  // away.drusus at age 0, the same 63 the feed's last "<verb> for N" line shows in
   // this frame. The sixty ticks before it are empty, so this is the one capture
   // where the whole hit channel is on screen at full strength with nothing else
   // competing: the frame the feedback slice exists to be judged on.

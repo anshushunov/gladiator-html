@@ -1,5 +1,6 @@
 import { TICKS_PER_SECOND } from '../simulation/battle'
 import type { CombatantId, EncounterEvent } from '../simulation/encounter'
+import { ATTACK_PHRASES } from './actionNames'
 
 export interface BattleFeedEntry { eventId: number; atSeconds: number; message: string }
 
@@ -26,12 +27,12 @@ export function formatBattleFeed(events: readonly EncounterEvent[], names: Recor
     if (event.type === 'damage-dealt') {
       const previous = events[index - 1]
       if (previous?.type === 'attack-blocked' && previous.actionInstanceId === event.actionInstanceId) {
-        entries.push({ eventId: previous.id, atSeconds: previous.tick / TICKS_PER_SECOND, message: `${names[previous.targetId]} blocks but takes ${event.amount}.` })
+        entries.push({ eventId: previous.id, atSeconds: previous.tick / TICKS_PER_SECOND, message: `${names[previous.targetId]} blocks the ${ATTACK_PHRASES[previous.actionId].noun} but takes ${event.amount}.` })
         index -= 1
         continue
       }
       if (previous?.type === 'critical-hit' && previous.actionInstanceId === event.actionInstanceId) {
-        entries.push({ eventId: previous.id, atSeconds: previous.tick / TICKS_PER_SECOND, message: `${names[previous.actorId]} lands a critical hit for ${event.amount}.` })
+        entries.push({ eventId: previous.id, atSeconds: previous.tick / TICKS_PER_SECOND, message: `${names[previous.actorId]} ${ATTACK_PHRASES[previous.actionId].verb} for ${event.amount} — a critical hit.` })
         index -= 1
         continue
       }
@@ -44,12 +45,12 @@ export function formatBattleFeed(events: readonly EncounterEvent[], names: Recor
 function formatEventMessage(event: EncounterEvent, names: Record<CombatantId, string>): string {
   switch (event.type) {
     case 'encounter-started': return 'The gates open.'
-    case 'attack-missed': return `${names[event.actorId]} misses.`
-    case 'attack-evaded': return `${names[event.targetId]} evades.`
-    case 'attack-blocked': return `${names[event.targetId]} blocks.`
-    case 'attack-parried': return `${names[event.defenderId]} parries.`
+    case 'attack-missed': return `${names[event.actorId]} ${ATTACK_PHRASES[event.actionId].verb} and misses.`
+    case 'attack-evaded': return `${names[event.targetId]} evades the ${ATTACK_PHRASES[event.actionId].noun}.`
+    case 'attack-blocked': return `${names[event.targetId]} blocks the ${ATTACK_PHRASES[event.actionId].noun}.`
+    case 'attack-parried': return `${names[event.defenderId]} parries the ${ATTACK_PHRASES[event.actionId].noun}.`
     case 'critical-hit': return `${names[event.actorId]} lands a critical hit.`
-    case 'damage-dealt': return `${names[event.actorId]} deals ${event.amount}.`
+    case 'damage-dealt': return `${names[event.actorId]} ${ATTACK_PHRASES[event.actionId].verb} for ${event.amount}.`
     case 'fighter-defeated': return `${names[event.defeatedId]} falls.`
     case 'encounter-finished': return event.reason === 'no-hostile-pairs'
       ? `${names[event.winnerIds[0]]} wins by defeat.`
