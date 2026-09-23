@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript, Vitest (two projects: `fast` and `slow`), Three.js for presentation, `vite-node` for measurement scripts.
 
+> **Stopped after Task 3, 2026-09-23.** Task 3 shipped as the shield change alone (`GUARD_DAMAGE_MULTIPLIER` 0.35 → 0.25): the footwork moved the wall but no strength the balance bands allow moved it much — the murmillo's counter over the retiarius rests on pinning him, and several criteria sit within a bout or two of their thresholds. Footwork + shield + Sura is parked on `wip/retiarius-footwork-v1` (`79a4671`), the first net on `wip/retiarius-net-v1` (`7ca6f7f`). Tasks 4–7 wait for a balance-margin slice. The retiarius' wall finding is **not** fixed by this branch.
+
 > **Replanned 2026-09-23.** The net cast (originally Task 3) was built, swept over 48 settings, and parked on `wip/retiarius-net-v1`: thrown from the retiarius' own measure it barely moved his time at the wall against the murmillo (51.5 % → 46–52 %) and broke balance in the matchups where it did fire. The owner chose: footwork first, then a net that is legal only when he is pinned. New order: 1 instrument · 2 log · 3 footwork · 4 skill at neutral · 5 last-resort net · 6 net on screen · 7 roster spread. Tasks 1–2 are done. Owner rulings that bind every task: pure snapshots (state hash, recorded traces, fixture episodes, series scores, action-id pins, the golden season) may be re-baselined when a task changes behaviour on purpose, each listed with its reason in the commit — the golden season only if challenges 2 and 3 still cannot field a fresh lineup; design and balance assertions are never re-baselined or widened.
 
 ## Global Constraints
