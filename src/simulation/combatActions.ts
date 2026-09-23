@@ -399,9 +399,10 @@ export function calculateContactDamage(
  *   pass; the controller accepted the loss (2026-09-23).
  *
  *   0.25 rather than further because going further spends the brutus/drusus
- *   margin: at 0.15 Brutus beats Drusus 84.5% of the time, 0.5 points (two
- *   bouts in 200) under the ceiling, for a heavy>fast edge the shipped build
- *   does not need. The shield now absorbs 15.6% of the damage the
+ *   margin: at 0.15 Brutus beats Drusus 84.5% of the time (169 of 200), one
+ *   bout under the 85% ceiling and two wins from failing it (the check is
+ *   <= 0.85, so 171 fails), for a heavy>fast edge the shipped build does not
+ *   need. The shield now absorbs 15.6% of the damage the
  *   retiarius throws at the murmillo (was 13.5%), 18.7% of the hoplomachus'
  *   (16.3%) and 10.8% of another murmillo's (9.5%), roster pairings, 200 seeds.
  *   The share of hits he blocks does not move (20.0 / 24.4 / 13.1%), and

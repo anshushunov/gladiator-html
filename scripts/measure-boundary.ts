@@ -7,8 +7,8 @@
 // distance.ts` samples the separation BETWEEN the fighters and cannot see the
 // arena at all, and `contactDiagnostics.ts` samples only contact ticks.
 //
-// Two columns, because the finding needs both. The first says where he stands.
-// The second says whether his own decisions are doing anything: a backing
+// Two questions, because the finding needs both. The first says where he
+// stands. The second says whether his own decisions are doing anything: a backing
 // intent issued while already at the wall executes into the clamp and buys
 // nothing, and the report measured half to two thirds of his backing that way.
 //
@@ -19,8 +19,9 @@
 // - "any backward" counts the decision's whole backward group, which adds
 //   `retreat`. Most of the retiarius' backing IS `retreat` (brutus vs drusus:
 //   39.3% of his ticks under this definition, 12.7% under the report's), and
-//   the boundary-aware weight this slice adds acts on the whole group -- so the
-//   report's column alone would miss most of what that weight changes.
+//   the boundary-aware weight planned for this axis (parked on
+//   `wip/retiarius-footwork-v1`) acts on the whole group -- so the report's
+//   column alone would miss most of what such a weight changes.
 //
 // Recording only. Nothing here asserts a threshold; the acceptance bands live
 // in `src/simulation/*.test.ts`.

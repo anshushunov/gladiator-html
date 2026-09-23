@@ -735,7 +735,7 @@ export interface DecisionModifier {
 
 type MovementDirectionGroup = 'forward' | 'backward' | 'lateral'
 
-export const LOCOMOTION_DIRECTION_GROUP:Readonly<Partial<Record<LocomotionIntent, MovementDirectionGroup>>> = {
+export const LOCOMOTION_DIRECTION_GROUP: Readonly<Partial<Record<LocomotionIntent, MovementDirectionGroup>>> = {
   advance: 'forward',
   pressure: 'forward',
   'burst-in': 'forward',
@@ -788,8 +788,8 @@ const ARENA_BOUNDARY_MARGIN = 0.4
  * band or outer radius, matching `movement.ts`'s two-stage clamp). Negative
  * outside.
  *
- * Exported so `scripts/measure-boundary.ts` and `skill.ts` ask the same
- * question the policy asks. A second copy of "how close to the wall is this"
+ * Exported so `scripts/measure-boundary.ts` asks the same question the policy
+ * asks. A second copy of "how close to the wall is this"
  * in the instrument would be free to drift from the one the decision uses,
  * and the instrument's whole job is to report on that decision.
  */
