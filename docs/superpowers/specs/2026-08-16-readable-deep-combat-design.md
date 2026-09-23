@@ -426,7 +426,7 @@ Incoming-facing effectiveness uses `dot(defender.facing, normalize(attacker.posi
 ### Heavy guard
 
 - May answer any current attack tag that arrives inside the authored front arc.
-- Multiplies damage by `0.35`, push by `0.30`, and stagger duration by `0.40`. Damage uses the common final rounding formula, push remains a float, and stagger uses the explicit integer rounding below.
+- Multiplies damage by `0.25`, push by `0.30`, and stagger duration by `0.40`. (Damage was `0.35` until 2026-09-23. It was lowered in the retiarius' room slice so that a blocked hit reads as a defence. The measured sweep, and why the guard's arc and reaction lead were not the lever, are in `combatActions.ts` at `GUARD_DAMAGE_MULTIPLIER`.) Damage uses the common final rounding formula, push remains a float, and stagger uses the explicit integer rounding below.
 - Holds root position during contact and impact.
 - Emits `attack-blocked` followed by `damage-dealt` when the attack hits.
 

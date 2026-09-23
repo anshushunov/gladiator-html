@@ -354,8 +354,52 @@ export function calculateContactDamage(
 // this file's existing `calculateContactPoint`/`calculateContactDamage`.
 // ---------------------------------------------------------------------------
 
-/** Heavy guard's damage/push/stagger attenuation (design.md's "Heavy guard" section). */
-export const GUARD_DAMAGE_MULTIPLIER = 0.35
+/**
+ * Heavy guard's damage/push/stagger attenuation (design.md's "Heavy guard" section).
+ *
+ * DAMAGE moved 0.35 -> 0.25 on 2026-09-23 (the retiarius' room), the first
+ * step on the backlog item "the shield needs a reason to exist": the playtest
+ * found blocked hits too cheap to read as a defence at all.
+ *
+ * Three levers were tried, in this order, and only this one does anything:
+ *
+ * - `heavy-guard`'s `minimumIncomingFacingDot` (0.3420, ~+/-70deg) is INERT.
+ *   The murmillo turns toward his target every tick at 2deg/tick, faster than
+ *   anyone circles him, so a bound guard never met an attack from outside the
+ *   arc -- not at 0.1736, not at 0, not even at 0.99 (+/-8deg): zero
+ *   `defense-failed(facing)` events across every roster pairing with a heavy in
+ *   it, and bit-identical cohorts. Widening it changes nothing.
+ * - `minimumReactionLeadTicks` 8 -> 7 -> 6 makes things WORSE: the single
+ *   reaction tick moves closer to contact, where he is busy more often, and the
+ *   blocked share FALLS (18.2% -> 17.2% of the retiarius' hits); equal-stat
+ *   heavy>fast went 51.2 -> 51.6 -> 50.8 and nerva/magnus 86.5 -> 88.0 -> 86.0
+ *   (measured alongside the boundary-read footwork, see below).
+ * - This multiplier. It changes how much a block saves, not how often he
+ *   blocks. Measured alone (200-seed roster, 500-seed equal-stat cohorts):
+ *
+ *     DAMAGE  heavy>fast  tech>heavy  brutus/drusus  nerva/magnus  press  guarded
+ *      0.35      59.2        71.4         82.0           84.5       3.9%    2.6%
+ *      0.25      60.8        69.2         82.5           83.0       3.4%    2.4%
+ *      0.20      61.0        68.6         84.0           83.0       3.2%    2.3%
+ *      0.15      62.6        68.2         84.5           82.0       3.2%    2.3%
+ *      0.10      63.8        65.8         84.5           81.5       2.6%    2.7%
+ *     (bands: 55..75, 55..75, 15..85, 15..85; dispositionBalance's press
+ *      extra / guarded saved bloody-win share, both >= 2.0%)
+ *
+ *   0.25 rather than further: at 0.15 Brutus beats Drusus 84.5% of the time,
+ *   two bouts under the roster ceiling. At 0.25 every band keeps at least the
+ *   margin it had before. The shield now absorbs 15.6% of the damage the
+ *   retiarius throws at the murmillo (was 13.5%), 18.7% of the hoplomachus'
+ *   (16.3%) and 10.8% of another murmillo's (9.5%), roster pairings, 200 seeds.
+ *   The share of hits he blocks does not move (20.0 / 24.4 / 13.1%), and
+ *   should not: that is the guard's timing, which this does not touch.
+ *
+ * This was first swept as the partner of a boundary read that took the
+ * retiarius off the wall (parked on `wip/retiarius-footwork-v1`). That pairing
+ * needed 0.15 to hold the heavy>fast edge and still failed one of
+ * `dispositionBalance`'s risk clauses, so the shield shipped alone.
+ */
+export const GUARD_DAMAGE_MULTIPLIER = 0.25
 export const GUARD_PUSH_MULTIPLIER = 0.30
 export const GUARD_STAGGER_MULTIPLIER = 0.40
 

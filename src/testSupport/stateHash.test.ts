@@ -77,15 +77,15 @@ it('pins a rolling per-tick hash of all nine pairings', () => {
   )
   expect(rows).toMatchInlineSnapshot(`
     [
-      "brutus/drusus:9523f707",
+      "brutus/drusus:554c7fa7",
       "brutus/cassius:bd338886",
-      "brutus/magnus:677bc2af",
+      "brutus/magnus:75901119",
       "aquila/drusus:5e49fb48",
       "aquila/cassius:a6d1a821",
       "aquila/magnus:9c39643d",
       "nerva/drusus:c75dfc92",
       "nerva/cassius:31636c7f",
-      "nerva/magnus:85441ba3",
+      "nerva/magnus:ffff583c",
     ]
   `)
 }, 30_000)

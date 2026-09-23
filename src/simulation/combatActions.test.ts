@@ -317,8 +317,8 @@ describe('calculateContactDamage', () => {
 // ---------------------------------------------------------------------------
 
 describe('guard/parry multiplier constants', () => {
-  it('matches design.md exactly: damage 0.35, push 0.30, stagger 0.40, parry-attacker stagger 24', () => {
-    expect(GUARD_DAMAGE_MULTIPLIER).toBe(0.35)
+  it('matches design.md exactly: damage 0.25, push 0.30, stagger 0.40, parry-attacker stagger 24', () => {
+    expect(GUARD_DAMAGE_MULTIPLIER).toBe(0.25)
     expect(GUARD_PUSH_MULTIPLIER).toBe(0.30)
     expect(GUARD_STAGGER_MULTIPLIER).toBe(0.40)
     expect(PARRY_ATTACKER_STAGGER_TICKS).toBe(24)

@@ -1778,11 +1778,11 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
 
     expect(types(blockBatch)).toEqual(['attack-blocked', 'damage-dealt', 'fighter-staggered'])
     expect(blockBatch[0]).toMatchObject({ contactZone: 'shield' })
-    expect(blockBatch[1]).toMatchObject({ amount: 19, remainingHp: 81, contactZone: 'shield' }) // round(20*2.70*0.35)=18.9->19
+    expect(blockBatch[1]).toMatchObject({ amount: 14, remainingHp: 86, contactZone: 'shield' }) // round(20*2.70*0.25)=13.5->14
     expect(blockBatch[2]).toMatchObject({ durationTicks: 10 }) // max(1,round(24*0.40))=10
     expect((blockBatch[2] as Extract<EncounterEvent, { type: 'fighter-staggered' }>).direction.x).toBeCloseTo(1, 9)
 
-    expect(next.combatants.target.hp).toBe(81)
+    expect(next.combatants.target.hp).toBe(86)
     // push 0.70 * 0.30 = 0.21 away from the actor (toward +x); no separation correction needed at this distance.
     expect(next.combatants.target.position.x).toBeCloseTo(0.21, 6)
   })
