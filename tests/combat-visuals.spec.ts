@@ -622,15 +622,17 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   // tick 366: the guard actually blocks -- `attack-blocked` + a shield-zone
   // `damage-dealt` (reduced chip damage, not the full hit), and the shield
   // contact flash is live. The blocked attack is the lunge rather than the old
-  // `fast-slash`, so the chip is 17 rather than 11 -- the same reduction rule
-  // applied to a heavier blow, not a changed rule.
+  // `fast-slash` (a heavier blow under the same reduction rule), and since the
+  // 2026-09-20 retiarius-room slice the rule itself is lighter:
+  // `GUARD_DAMAGE_MULTIPLIER` went 0.35 -> 0.25, so this chip went 17 -> 12.
+  // The bout is otherwise unchanged at this tick; only the chip moved.
   await advanceToTick(page, 366, cursor)
   const blockEvents = await eventsAtTick(page, 366)
   expect(blockEvents.some((event) => event.type === 'attack-blocked')).toBe(true)
   const shieldDamage = blockEvents.find((event) => event.type === 'damage-dealt')
-  expect(shieldDamage).toMatchObject({ contactZone: 'shield', amount: 17 })
+  expect(shieldDamage).toMatchObject({ contactZone: 'shield', amount: 12 })
   const brutusAfterBlock = await combatantState(page, 'home.brutus')
-  expect(brutusAfterBlock.hp).toBe(354) // 371 - 17 (shield chip damage, not a full hit)
+  expect(brutusAfterBlock.hp).toBe(359) // 371 - 12 (shield chip damage, not a full hit)
   snapshot = await arenaSnapshot(page)
   // Exactly one shield flash, not merely "one or more": a guard-blocked hit
   // emits both `attack-blocked` and a paired `damage-dealt` for the same
@@ -640,7 +642,7 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   // alone is satisfied by either outcome, so it is not a regression guard for
   // that dedupe -- assert the count.
   expect(snapshot!.activeEffectIds.filter((id) => id.startsWith('shield-'))).toHaveLength(1)
-  // ONE number: the 17 in the `shield` style (blocked chip damage), at age 0.
+  // ONE number: the 12 in the `shield` style (blocked chip damage), at age 0.
   //
   // This assertion used to carry two, the tick-231 body 31 alongside the chip,
   // because on the pre-2026-09-05 bout the two exchanges sat 22 ticks apart and
@@ -650,7 +652,7 @@ test('freezes heavy guard/cleave, fast burst/disengage, an ordinary hit/stagger,
   // the check is deliberately unchanged -- `toMatchObject` on an array, not
   // `toHaveLength(1)` -- because the burst semantics it guards against
   // (feedback spec §8.2) are what would put a second entry back.
-  expect(snapshot!.activeDamageNumbers).toMatchObject([{ amount: 17, kind: 'shield' }])
+  expect(snapshot!.activeDamageNumbers).toMatchObject([{ amount: 12, kind: 'shield' }])
 
   // tick 593, the miss checkpoint (feedback spec §8.2): the bout's first
   // `attack-missed` -- away.drusus at tick 592, reason `geometry` -- with the
@@ -1023,7 +1025,7 @@ test('key pose: heavy cleave windup', async ({ page }) => {
   // his own, and the two stand 3.23 units apart -- an uncluttered silhouette,
   // which is the whole point of this capture.
   //
-  // Effects in the window (360, 420]: the t=366 shield block and its 17 of
+  // Effects in the window (360, 420]: the t=366 shield block and its 12 of
   // chip damage. Its spark is long dead (54 > 15.6) and its number is dead
   // too, but only just -- 54 ticks is 900.0 ms, exactly `DAMAGE_NUMBER_LIFE_MS`,
   // and `layoutDamageNumber` returns `null` at `t >= 1`. So the frame is clean:
