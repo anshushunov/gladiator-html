@@ -164,6 +164,18 @@ pairings × 20 seeds × every tick:
 
 Same definitions as the report, so before and after are directly comparable.
 
+## Replan, 2026-09-23 — the net moves to where he is in trouble
+
+The net as specified in section 1 was built and swept over 48 settings (branch `wip/retiarius-net-v1`). It did not do this slice's job. The murmillo fights at 1.5–2.0, below the net's 2.4 floor, so it was thrown ~1.4 times per murmillo bout and moved the retiarius' time at the wall only 51.5 % → 46–52 %; meanwhile it fired 5–10 times per bout in the mirror and against the hoplomachus and broke balance there. A floor of 1.5 cut wall time to ~41 % but collapsed nerva/drusus to 8–14 %, because an unparryable net at close range is too much for the hoplomachus.
+
+The design error was placing the net at the retiarius' own measure — where he is comfortable — instead of where he is in trouble. Changes, chosen by the owner:
+
+- **Footwork lands first** (section 2), and becomes the baseline the net is measured against.
+- **The net is a last resort.** `contactRange` 1.2–3.3, and it is a legal candidate only while the retiarius is near the wall (the footwork's `BACKING_ROOM`) **and** his opponent is inside his preferred range. 3.3 rather than 3.6 because a hit from 3.6 left two retiarii ~4.4 apart, past `burst-in`'s 4.3 start range, and they circled for ~300 ticks.
+- **Order of work** becomes: instrument · log · footwork · skill at neutral · last-resort net · net on screen · roster spread.
+
+Owner rulings recorded with it: pure snapshots (state hash, recorded traces, fixture episodes, series scores, action-id pins, the golden season) may be re-baselined when a task changes behaviour on purpose, each with its reason in the commit — the golden season only if challenges 2 and 3 still cannot field a fresh lineup. Design and balance assertions are never re-baselined or widened.
+
 ## Presentation
 
 The animation pack in `public/models/fast.glb` has twelve clips and none of them

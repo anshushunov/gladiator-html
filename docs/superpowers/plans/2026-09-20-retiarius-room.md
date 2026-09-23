@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript, Vitest (two projects: `fast` and `slow`), Three.js for presentation, `vite-node` for measurement scripts.
 
+> **Replanned 2026-09-23.** The net cast (originally Task 3) was built, swept over 48 settings, and parked on `wip/retiarius-net-v1`: thrown from the retiarius' own measure it barely moved his time at the wall against the murmillo (51.5 % → 46–52 %) and broke balance in the matchups where it did fire. The owner chose: footwork first, then a net that is legal only when he is pinned. New order: 1 instrument · 2 log · 3 footwork · 4 skill at neutral · 5 last-resort net · 6 net on screen · 7 roster spread. Tasks 1–2 are done. Owner rulings that bind every task: pure snapshots (state hash, recorded traces, fixture episodes, series scores, action-id pins, the golden season) may be re-baselined when a task changes behaviour on purpose, each listed with its reason in the commit — the golden season only if challenges 2 and 3 still cannot field a fresh lineup; design and balance assertions are never re-baselined or widened.
+
 ## Global Constraints
 
 - **Never run `npx`** — it is broken on this machine. Invoke binaries through node directly:
@@ -34,7 +36,7 @@
 | `src/simulation/fighters.ts` | modify | optional `skill` field, `NEUTRAL_SKILL`, `fighterSkill()`, validation |
 | `src/simulation/skill.ts` | create | the one place a skill number becomes behaviour (copy of `disposition.ts`'s shape) |
 | `src/simulation/encounter.ts` | modify | one line: compose skill modifiers with disposition modifiers |
-| `src/testSupport/combatFixtures.ts` | modify (Task 6) | `fighterState`/`makeContext` move here so a second test file can use them |
+| `src/testSupport/combatFixtures.ts` | modify (Task 4) | `fighterState`/`makeContext` move here so a second test file can use them |
 | `src/presentation/actionNames.ts` | create | verb/noun phrase per attack, exhaustive over `AttackActionId` |
 | `src/presentation/battleFeed.ts` | modify | use the phrases |
 | `src/presentation/netTangle.ts` | create | pure: who is currently tangled in a net, from events + encounter state |
@@ -55,7 +57,7 @@ Nothing below this task is checkable without it. Its acceptance is that it **rep
 
 **Interfaces:**
 - Consumes: `createBattle`, `advanceBattleTick`, `MAX_BOUT_TICKS` from `src/simulation/battle`; `homeRoster`, `opponents`, `BASELINE_TEST_SEED` from `src/content/mvpSeries`; `COMBAT_STYLES` from `src/content/combatStyles`.
-- Produces: `export function arenaBoundaryMargin(arena: Readonly<CombatArenaDefinition>, position: Readonly<Vec2>): number` from `src/simulation/combatDecision.ts` — Tasks 5 and 6 use it.
+- Produces: `export function arenaBoundaryMargin(arena: Readonly<CombatArenaDefinition>, position: Readonly<Vec2>): number` from `src/simulation/combatDecision.ts` — Tasks 3 and 4 use it.
 
 - [ ] **Step 1: Write the failing test for the exported margin**
 
@@ -349,7 +351,7 @@ Independent of every other task, and it makes all the later playtests readable. 
 
 **Interfaces:**
 - Consumes: `AttackActionId` from `src/simulation/combatActions`.
-- Produces: `export interface AttackPhrase { verb: string; noun: string }` and `export const ATTACK_PHRASES: Readonly<Record<AttackActionId, AttackPhrase>>` from `src/presentation/actionNames.ts`. Task 3 adds the `'fast-net-cast'` entry to it.
+- Produces: `export interface AttackPhrase { verb: string; noun: string }` and `export const ATTACK_PHRASES: Readonly<Record<AttackActionId, AttackPhrase>>` from `src/presentation/actionNames.ts`. Task 5 adds the `'fast-net-cast'` entry to it.
 
 - [ ] **Step 1: Write the failing test for the phrase table**
 
@@ -533,453 +535,11 @@ EOF
 
 ---
 
-### Task 3: The net cast
-
-The mechanism. The retiarius is the only archetype with no way to move his opponent — largest `pushDistance` 0.35, on the lunge that carries him *in*, against the hoplomachus' 1.10. `combatDecision.ts:340-366` already records that walking backwards cannot win that race in a bounded arena, and that a push is what fixed it for the hoplomachus.
-
-**Files:**
-- Modify: `src/simulation/combatActions.ts:24-32` (union) and `:558` (`ATTACK_ACTION_ID_SET`)
-- Modify: `src/content/combatStyles.ts` (the attack; `fast`'s `attackActionIds` at `:94` and `baseWeights` at `:96-104`)
-- Modify: `src/presentation/actionNames.ts` (the phrase)
-- Modify: `src/presentation/fighterModelContract.ts:46-54` (`ATTACK_CLIPS`) and `:64-68` (`ARCHETYPE_ATTACKS`)
-- Test: `src/content/combatStyles.test.ts`
-
-**Interfaces:**
-- Consumes: `ATTACK_PHRASES` from Task 2.
-- Produces: the `'fast-net-cast'` member of `AttackActionId`, used by Task 4.
-
-- [ ] **Step 1: Write the failing tests**
-
-Add to `src/content/combatStyles.test.ts`:
-
-```ts
-describe('the net cast', () => {
-  const net = COMBAT_STYLES.attacks['fast-net-cast']
-
-  it('is authored', () => {
-    expect(net).toBeDefined()
-  })
-
-  it('makes more room than anything the murmillo can answer with', () => {
-    const murmilloBest = Math.max(
-      COMBAT_STYLES.attacks['heavy-shield-jab'].pushDistance,
-      COMBAT_STYLES.attacks['heavy-cleave'].pushDistance,
-    )
-    expect(net.pushDistance).toBeGreaterThan(murmilloBest)
-  })
-
-  it('buys a beat rather than damage', () => {
-    expect(net.damageMultiplier).toBeLessThan(COMBAT_STYLES.attacks['fast-slash'].damageMultiplier)
-    expect(net.staggerTicks).toBeGreaterThan(COMBAT_STYLES.attacks['fast-burst-lunge'].staggerTicks)
-  })
-
-  it('is thrown from his own measure, not from inside it', () => {
-    const measure = COMBAT_STYLES.styles.fast.preferredRange
-    expect(net.contactRange.min).toBeLessThanOrEqual(measure.min)
-    expect(net.contactRange.max).toBeGreaterThanOrEqual(measure.max)
-  })
-
-  it('is not parryable and carries the net tag', () => {
-    expect(net.tags).toContain('net')
-    expect(net.tags).toContain('unparryable')
-    expect(net.tags).not.toContain('parryable')
-  })
-
-  it('is in the retiarius kit and weighted below his attacks', () => {
-    const fast = COMBAT_STYLES.styles.fast
-    expect(fast.attackActionIds).toContain('fast-net-cast')
-    expect(fast.baseWeights['fast-net-cast']).toBeLessThan(fast.baseWeights['fast-slash'])
-  })
-
-  it('leaves the retiarius an attack at the separation floor', () => {
-    // Unchanged invariant, restated because the net's floor is well above it:
-    // `fast-slash` is the one that has to cover the bottom of the axis.
-    expect(COMBAT_STYLES.attacks['fast-slash'].contactRange.min).toBe(1.2)
-  })
-})
-```
-
-- [ ] **Step 2: Run them and watch them fail**
-
-Run: `node node_modules/vitest/vitest.mjs run --project fast src/content/combatStyles.test.ts`
-Expected: FAIL — `'fast-net-cast'` is not a key of `COMBAT_STYLES.attacks`, and TypeScript rejects the index.
-
-- [ ] **Step 3: Extend the action id union**
-
-In `src/simulation/combatActions.ts:24-32`:
-
-```ts
-export type AttackActionId =
-  | 'heavy-shield-jab'
-  | 'heavy-cleave'
-  | 'fast-slash'
-  | 'fast-burst-lunge'
-  | 'fast-net-cast'
-  | 'technical-thrust'
-  | 'technical-driving-thrust'
-  | 'technical-parry-counter'
-```
-
-And in `ATTACK_ACTION_ID_SET` (`:558`), add `'fast-net-cast': true,` after `'fast-burst-lunge': true,`.
-
-- [ ] **Step 4: Author the net**
-
-In `src/content/combatStyles.ts`, add after the `'fast-burst-lunge'` entry (which ends at `:246`):
-
-```ts
-    'fast-net-cast': {
-      id: 'fast-net-cast',
-      tags: ['attack', 'probe', 'net', 'unparryable'],
-      // The retiarius' answer to the 2026-09-20 finding, and a deliberate copy
-      // of the shape that answered the same finding for the hoplomachus.
-      //
-      // He was the only archetype with no way to move his opponent: his largest
-      // `pushDistance` was 0.35, on the lunge that carries him IN, against the
-      // murmillo's 0.70 and the hoplomachus' 1.10. So the only distance he had
-      // was distance he walked, and `BACKSTEP_MAX_RANGE`'s comment above already
-      // records why that loses in a bounded arena -- he ends up against the wall
-      // and the murmillo has him. Measured over nine pairings x 20 seeds: at the
-      // edge 51.5% and 58.4% of a murmillo bout, with half to two thirds of his
-      // own backing issued while already there.
-      //
-      // Thrown from his own measure (`preferredRange` 2.7-3.3) and reaching past
-      // it: the longest contact range in the game, and the only one authored
-      // ABOVE the thrower's preferred band rather than through it.
-      contactRange: { min: 2.4, max: 3.6 },
-      minimumFacingDot: 0.4226, // ~65°, the probe's cone -- a thrown net is not aimed down a line
-      windupTicks: 14,
-      impactTicks: 2,
-      // The price of a miss, and the reason this is not simply a better probe:
-      // longer than `fast-slash`'s 10, short of the lunge's 20. He is committed
-      // for a quarter of a second more than his probe costs him.
-      recoveryTicks: 16,
-      // A net does not kill. Everything this action is worth is in the two
-      // fields below it.
-      damageMultiplier: 0.35,
-      accuracyModifier: -0.05,
-      // He throws; he does not step in. Every other attack in the catalogue
-      // carries the actor forward, which is exactly what he must not do.
-      rootTravel: 0,
-      // Between the hoplomachus' thrust (0.70) and his driving thrust (1.10).
-      pushDistance: 0.90,
-      // THE OUTLIER IN THIS FILE, and the one field to reach for first if the
-      // cohorts go red: three times the largest stagger the game had
-      // (`fast-burst-lunge`, 14). 45 ticks is 0.75 s at 60 ticks/s -- long
-      // enough that the room the push bought is still there when he uses it.
-      // Swept over 30..60; see the plan's Task 3 for the measured table.
-      staggerTicks: 45,
-      contactPriority: 35,
-    },
-```
-
-Then in the `fast` style (`:94-104`):
-
-```ts
-      attackActionIds: ['fast-slash', 'fast-burst-lunge', 'fast-net-cast'],
-      defenseActionId: 'fast-evade',
-      baseWeights: {
-        'circle-left': 12,
-        'circle-right': 12,
-        'hold-range': 5,
-        retreat: 8,
-        'burst-in': 14,
-        'fast-slash': 12,
-        'fast-burst-lunge': 14,
-        // Below both attacks on purpose: the net is a tool for making room, not
-        // the retiarius' whole game. If the measured share of his contacts that
-        // are nets is large enough to hollow out his offence, this moves first.
-        'fast-net-cast': 10,
-      },
-```
-
-- [ ] **Step 5: Name it in the log and give it a clip**
-
-In `src/presentation/actionNames.ts`, add to `ATTACK_PHRASES`:
-
-```ts
-  'fast-net-cast': { verb: 'casts the net', noun: 'net' },
-```
-
-In `src/presentation/fighterModelContract.ts`, add to `ATTACK_CLIPS`:
-
-```ts
-  // No throw clip exists in the pack (`fast.glb` ships twelve, none of them a
-  // throw), so the cast reads through the two-handed chop -- a big overhead
-  // sweep of both arms, which is what a cast looks like from the side. A real
-  // throw animation is its own slice.
-  'fast-net-cast': { clip: '2H_Melee_Attack_Chop', contactAt: 0.45 },
-```
-
-And extend `ARCHETYPE_ATTACKS`:
-
-```ts
-  fast: ['fast-slash', 'fast-burst-lunge', 'fast-net-cast'],
-```
-
-- [ ] **Step 6: Typecheck and run the fast suite**
-
-Run: `node node_modules/typescript/bin/tsc --noEmit`
-Expected: PASS. If any other exhaustive `Record<AttackActionId, …>` surfaces, add the entry there — the known ones are the four edited above; `CombatAudio.ts`'s `ATTACK_ACTION_COMMITMENT` derives itself from the catalogue and needs no edit.
-
-Run: `node node_modules/vitest/vitest.mjs run --project fast`
-Expected: PASS.
-
-- [ ] **Step 7: Measure what the net did to the wall**
-
-Run:
-```bash
-node node_modules/vite-node/vite-node.mjs scripts/measure-boundary.ts -- --seeds=20 --json=docs/superpowers/plans/2026-09-20-boundary-after-net.json
-```
-Record the retiarius' two columns against Task 1's baseline in the commit body.
-
-- [ ] **Step 8: Run the balance cohorts and sweep if red**
-
-Run: `node node_modules/vitest/vitest.mjs run --project slow`
-Expected: ~9–14 minutes. All bands pass.
-
-**If a band goes red**, sweep in this order, re-running `--project slow` each time and keeping a table of the results:
-1. `staggerTicks` down the ladder 45 → 40 → 35 → 30 (the outlier, and the most likely cause);
-2. `pushDistance` 0.90 → 0.80 → 0.70;
-3. `baseWeights['fast-net-cast']` 10 → 8 → 6.
-
-Paste the sweep table into the action's comment, replacing the "Swept over 30..60; see the plan" line with the measured rows — that is the house style for every tuned constant in this file.
-
-**Do not widen a band.** If no combination clears them, stop and report the distribution.
-
-- [ ] **Step 9: Commit**
-
-```bash
-git add src/simulation/combatActions.ts src/content/combatStyles.ts src/content/combatStyles.test.ts src/presentation/actionNames.ts src/presentation/fighterModelContract.ts docs/superpowers/plans/2026-09-20-boundary-after-net.json
-git commit -F - <<'EOF'
-feat(combat): the retiarius gets a net to cast
-
-He was the only archetype with no way to move his opponent -- largest
-pushDistance 0.35, on the lunge that carries him in, against the murmillo's
-0.70 and the hoplomachus' 1.10. So the only distance he had was distance he
-walked, and combatDecision.ts:340-366 already recorded why that loses in a
-bounded arena.
-
-The same comment records the fix that worked for the hoplomachus: a push
-makes measure instantly and so is not a race at all. This is that, shaped
-for a net -- 0.90 push, 0.35 damage, and the stagger doing the real work.
-
-At the wall, retiarius vs murmillo: <before> -> <after>.
-Stagger sweep: <table>.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
-EOF
-```
-
----
-
-### Task 4: The net is visible on the man it caught
-
-The retiarius' model **already carries a net**: `public/models/fast.glb` has a mesh node named `net` with `extras.slot = 'net'`, bone-parented to his off hand, and `ArenaView.ts` already knows about the slot (`HELD_EQUIPMENT_SLOTS` at `:292`, `SAFE_AREA_EXEMPT_SLOTS` at `:306`). No new geometry is needed — the net moves from his hand onto his opponent and back.
-
-The tangle is driven by simulation state, not by a timer, so it is immune to the effect-life problem Finding 2 describes: at ×4 speed a wall-clock effect is compressed, but "this combatant is staggered" is true for exactly as many ticks either way.
-
-**Files:**
-- Create: `src/presentation/netTangle.ts`
-- Create: `src/presentation/netTangle.test.ts`
-- Modify: `src/presentation/ArenaView.ts` (rig construction; the event scan near `:1240-1280`; the per-frame update near `:1139`)
-
-**Interfaces:**
-- Consumes: `'fast-net-cast'` from Task 3; `EncounterEvent`, `EncounterState` from `src/simulation/encounter`.
-- Produces:
-  ```ts
-  export interface NetTangle { casterId: CombatantId; targetId: CombatantId }
-  export function updateNetTangles(
-    previous: readonly NetTangle[],
-    events: readonly EncounterEvent[],
-    encounter: Readonly<EncounterState>,
-  ): NetTangle[]
-  ```
-
-- [ ] **Step 1: Write the failing test**
-
-Create `src/presentation/netTangle.test.ts`:
-
-```ts
-import { describe, expect, it } from 'vitest'
-import { updateNetTangles, type NetTangle } from './netTangle'
-import type { EncounterEvent, EncounterState } from '../simulation/encounter'
-
-const encounterAt = (tick: number, staggerUntilTick: number): EncounterState =>
-  ({ tick, combatants: { 'away.brutus': { staggerUntilTick } } }) as unknown as EncounterState
-
-const netHit = (tick: number): EncounterEvent =>
-  ({ id: 1, tick, type: 'damage-dealt', actorId: 'home.drusus', targetId: 'away.brutus', actionInstanceId: 'a1', actionId: 'fast-net-cast', amount: 3, remainingHp: 400, contactZone: 'body', contactPoint: { x: 0, z: 0 } }) as unknown as EncounterEvent
-
-const slashHit = (tick: number): EncounterEvent =>
-  ({ ...(netHit(tick) as object), actionId: 'fast-slash' }) as unknown as EncounterEvent
-
-describe('updateNetTangles', () => {
-  it('starts a tangle when a net lands', () => {
-    expect(updateNetTangles([], [netHit(100)], encounterAt(100, 145))).toEqual([
-      { casterId: 'home.drusus', targetId: 'away.brutus' },
-    ])
-  })
-
-  it('ignores an attack that is not a net', () => {
-    expect(updateNetTangles([], [slashHit(100)], encounterAt(100, 108))).toEqual([])
-  })
-
-  it('keeps the tangle while the stagger runs', () => {
-    const existing: NetTangle[] = [{ casterId: 'home.drusus', targetId: 'away.brutus' }]
-    expect(updateNetTangles(existing, [], encounterAt(140, 145))).toEqual(existing)
-  })
-
-  it('drops the tangle once the stagger has expired', () => {
-    const existing: NetTangle[] = [{ casterId: 'home.drusus', targetId: 'away.brutus' }]
-    expect(updateNetTangles(existing, [], encounterAt(145, 145))).toEqual([])
-  })
-
-  it('never records the same target twice', () => {
-    const existing: NetTangle[] = [{ casterId: 'home.drusus', targetId: 'away.brutus' }]
-    expect(updateNetTangles(existing, [netHit(120)], encounterAt(120, 165))).toHaveLength(1)
-  })
-})
-```
-
-- [ ] **Step 2: Run it and watch it fail**
-
-Run: `node node_modules/vitest/vitest.mjs run --project fast src/presentation/netTangle.test.ts`
-Expected: FAIL — cannot resolve `./netTangle`.
-
-- [ ] **Step 3: Write the resolver**
-
-Create `src/presentation/netTangle.ts`:
-
-```ts
-// Who is currently tangled in a net, and who put him there.
-//
-// Pure, and a function of SIMULATION state rather than wall-clock time. That is
-// deliberate: the 2026-09-20 playtest's Finding 2 is that effects driven off
-// `presentationMs` get their life divided by the speed multiplier, so a 420 ms
-// spray is three frames at x4. A tangle that lasts exactly as long as the
-// target's `staggerUntilTick` cannot have that problem -- the stagger is the
-// same number of ticks at every speed, which is the whole reason the net is
-// worth anything in the first place.
-
-import type { CombatantId, EncounterEvent, EncounterState } from '../simulation/encounter'
-
-const NET_ACTION_ID = 'fast-net-cast'
-
-export interface NetTangle { casterId: CombatantId; targetId: CombatantId }
-
-/**
- * `previous` with expired tangles dropped and any net landed in `events` added.
- *
- * A tangle starts on `damage-dealt` or `attack-blocked` -- the two contact
- * outcomes that carry a `targetId` and mean the net reached him. It ends when
- * the target's own `staggerUntilTick` is reached, so the visual and the
- * mechanical effect are the same fact rather than two clocks that can disagree.
- */
-export function updateNetTangles(
-  previous: readonly NetTangle[],
-  events: readonly EncounterEvent[],
-  encounter: Readonly<EncounterState>,
-): NetTangle[] {
-  const next: NetTangle[] = []
-  const seen = new Set<CombatantId>()
-
-  const keep = (tangle: NetTangle): void => {
-    if (seen.has(tangle.targetId)) return
-    if (encounter.combatants[tangle.targetId]?.staggerUntilTick <= encounter.tick) return
-    seen.add(tangle.targetId)
-    next.push(tangle)
-  }
-
-  for (const event of events) {
-    if (event.type !== 'damage-dealt' && event.type !== 'attack-blocked') continue
-    if (event.actionId !== NET_ACTION_ID) continue
-    keep({ casterId: event.actorId, targetId: event.targetId })
-  }
-  for (const tangle of previous) keep(tangle)
-
-  return next
-}
-```
-
-- [ ] **Step 4: Run the test to verify it passes**
-
-Run: `node node_modules/vitest/vitest.mjs run --project fast src/presentation/netTangle.test.ts`
-Expected: PASS.
-
-- [ ] **Step 5: Wire it into the view**
-
-In `src/presentation/ArenaView.ts`:
-
-1. When a rig is built from a loaded model, find and remember the net, and build a hidden clone parented to that rig's `hitCenter` anchor:
-
-```ts
-// The retiarius is the only archetype whose file carries a `slot: 'net'` mesh
-// (bone-parented to his off hand by the build script). The clone is the same
-// geometry draped on whoever he catches: built once at load, hidden, never
-// allocated during play.
-const heldNet = findMeshBySlot(root, 'net')
-const tangleNet = heldNet ? (heldNet.clone() as THREE.Mesh) : undefined
-if (tangleNet) {
-  tangleNet.visible = false
-  anchors.hitCenter.add(tangleNet)
-}
-```
-
-2. Keep the tangle list on the view: `private netTangles: NetTangle[] = []`.
-
-3. In the per-frame update (beside the existing `presentationMs` computation near `:1139`), after the event scan for this frame:
-
-```ts
-this.netTangles = updateNetTangles(this.netTangles, eventsThisFrame, current.encounter)
-const tangledTargets = new Set(this.netTangles.map((tangle) => tangle.targetId))
-const castersWithNetOut = new Set(this.netTangles.map((tangle) => tangle.casterId))
-for (const [id, rig] of this.rigs) {
-  if (rig.tangleNet) rig.tangleNet.visible = tangledTargets.has(id)
-  // While his net is on someone else, his hand is empty.
-  if (rig.heldNet) rig.heldNet.visible = !castersWithNetOut.has(id)
-}
-```
-
-- [ ] **Step 6: Typecheck and run the fast suites**
-
-Run: `node node_modules/typescript/bin/tsc --noEmit`
-Then: `node node_modules/vitest/vitest.mjs run --project fast`
-Then: `node node_modules/@playwright/test/cli.js test --project fast`
-Expected: PASS. If a safe-area e2e baseline shifts because the net is now sometimes on the other fighter, check `SAFE_AREA_EXEMPT_SLOTS` (`ArenaView.ts:306`) still exempts `'net'` — it does, and the clone carries the same `userData.slot`, which is the reason the clone is used rather than a fresh mesh.
-
-- [ ] **Step 7: Look at it**
-
-Run the app (`node node_modules/vite/bin/vite.js`), watch a retiarius-versus-murmillo bout at speed ×1, and confirm: the net leaves his hand on a cast, is visible on the murmillo while he is staggered, and returns.
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add src/presentation/netTangle.ts src/presentation/netTangle.test.ts src/presentation/ArenaView.ts
-git commit -F - <<'EOF'
-feat(arena): the net is visible on the man it caught
-
-The retiarius' model already ships a `slot: 'net'` mesh in his off hand and
-ArenaView already knew the slot, so the cast needs no new geometry: the net
-leaves his hand, appears on the target for as long as the stagger runs, and
-comes back.
-
-Driven off `staggerUntilTick` rather than a presentation timer on purpose.
-Finding 2 of the same playtest is that effect life is simulation time, so a
-wall-clock effect is compressed to three frames at x4; a tangle tied to the
-stagger is the same length at every speed, which is also the only honest
-thing for it to be -- it is showing a mechanical state, not a flourish.
-
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
-EOF
-```
-
----
-
-### Task 5: Feet that read the wall
+### Task 3: Feet that read the wall
 
 `intentDisplacement` is not touched — rotating a displacement away from the intent that named it would put the simulation and `clipMapping.ts`'s gait into quiet disagreement. The judgement is made where judgements live.
 
-This is also deliberately a *weight* rather than a legality rule: `hasArenaPath` already deletes movement that cannot execute; this addresses movement that executes and accomplishes nothing, which is exactly the kind of thing skill should be able to sharpen or dull (Task 6).
+This is also deliberately a *weight* rather than a legality rule: `hasArenaPath` already deletes movement that cannot execute; this addresses movement that executes and accomplishes nothing, which is exactly the kind of thing skill should be able to sharpen or dull (Task 4).
 
 **Files:**
 - Modify: `src/simulation/combatDecision.ts` (new `boundaryReadAdjustment`, wired into `rawCandidateWeight`'s locomotion branch at `:815-821`)
@@ -995,7 +555,7 @@ This is also deliberately a *weight* rather than a legality rule: `hasArenaPath`
     intent: LocomotionIntent,
   ): number
   ```
-  Task 6's skill modifier scales exactly this number.
+  Task 4's skill modifier scales exactly this number.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1159,7 +719,7 @@ Run:
 node node_modules/vite-node/vite-node.mjs scripts/measure-boundary.ts -- --seeds=20 --json=docs/superpowers/plans/2026-09-20-boundary-after-footwork.json
 ```
 
-Target from the spec: the retiarius' "backing issued at the edge" falls materially below 50.9–62.7 %, and his time at the edge moves toward the hoplomachus' 23 %. Record both against Task 3's numbers.
+Target from the spec: the retiarius' "backing issued at the edge" falls materially below 50.9–62.7 %, and his time at the edge moves toward the hoplomachus' 23 %. Record both against Task 1's baseline (`2026-09-20-boundary-before.json`).
 
 Also run the distance instrument, because this touches every archetype's locomotion:
 ```bash
@@ -1202,9 +762,9 @@ EOF
 
 ---
 
-### Task 6: Skill, at the neutral point
+### Task 4: Skill, at the neutral point
 
-The gate for this task is that **nothing changes**. With every fighter at the neutral value the cohort numbers must be identical to Task 5's, which is what makes "the seam is inert until someone authors a spread" a checked claim rather than a hope.
+The gate for this task is that **nothing changes**. With every fighter at the neutral value the cohort numbers must be identical to Task 3's, which is what makes "the seam is inert until someone authors a spread" a checked claim rather than a hope.
 
 `skill` is **optional** on `FighterDefinition` with a neutral default. The spec wrote it as required; optional is strictly better here, because `mvpSeries.ts`, `season.ts` and `balanceCohorts.ts` all build fighters through `as const satisfies readonly FighterDefinition[]`, and a required field would force a value into every cohort fixture — which is exactly the churn this task's gate exists to rule out.
 
@@ -1477,7 +1037,7 @@ Expected: PASS, including `src/simulation/architecture.test.ts` and `src/testSup
 - [ ] **Step 11: The gate — prove it changed nothing**
 
 Run: `node node_modules/vitest/vitest.mjs run --project slow`
-Expected: ~9–14 min, all bands pass, and **the printed cohort numbers are identical to Task 5's run**. Compare them row by row.
+Expected: ~9–14 min, all bands pass, and **the printed cohort numbers are identical to Task 3's run**. Compare them row by row.
 
 If any number moved, the seam is not inert: find out why before authoring any spread. The likely cause is a modifier reaching a code path where `skillModifiers` returned a non-empty array for a neutral fighter.
 
@@ -1485,7 +1045,7 @@ Also confirm the instrument is unmoved:
 ```bash
 node node_modules/vite-node/vite-node.mjs scripts/measure-boundary.ts -- --seeds=20
 ```
-Expected: the same table as Task 5's after-footwork run.
+Expected: the same table as Task 3's after-footwork run.
 
 - [ ] **Step 12: Commit**
 
@@ -1516,16 +1076,366 @@ EOF
 
 ---
 
+### Task 5: The net, for when he is in trouble
+
+**Replanned 2026-09-23.** The first version of this task (parked on branch `wip/retiarius-net-v1`, commit `7ca6f7f`) threw the net from the retiarius' own measure, 2.4–3.6. That was the wrong place: the murmillo fights at 1.5–2.0, so the net was thrown ~1.4 times per murmillo bout and moved his time at the wall only 51.5 % → 46–52 %, while firing 5–10 times per bout in the mirror and against the hoplomachus and breaking the balance there. Lowering the floor to 1.5 cut wall time to ~41 % but collapsed nerva/drusus to 8–14 %. Full sweep: `.superpowers/sdd/2026-09-20-retiarius-room/net-v1-report.md` (git-ignored SDD workspace).
+
+So the net becomes a **last resort**: it can be thrown from close range, but it is a legal candidate only while the retiarius is actually in trouble — near the wall *and* with his opponent inside his measure. That puts it exactly where the finding is, and almost nowhere else.
+
+**Files:**
+- Bring over from `7ca6f7f` (`git cherry-pick -n 7ca6f7f`, then edit): `src/simulation/combatActions.ts` (union + `ATTACK_ACTION_ID_SET`), `src/content/combatStyles.ts`, `src/content/combatStyles.test.ts`, `src/presentation/actionNames.ts`, `src/presentation/fighterModelContract.ts`. Drop the parked `docs/superpowers/plans/2026-09-20-boundary-after-net.json` — it measures the old design.
+- Modify: `src/simulation/combatDecision.ts` (`legalActionCandidates` at `:697`, plus a new predicate)
+- Test: `src/simulation/combatDecision.test.ts`
+
+**Interfaces:**
+- Consumes: `arenaBoundaryMargin` (Task 1), `ATTACK_PHRASES` (Task 2), `BACKING_ROOM` and the post-footwork baseline `docs/superpowers/plans/2026-09-20-boundary-after-footwork.json` (Task 3).
+- Produces: the `'fast-net-cast'` member of `AttackActionId` and the `net` tag, used by Task 6; `export const NET_TAG = 'net'` and `export function isPressedAtWall(context: CombatDecisionContext, style: CombatStyleDefinition): boolean` from `combatDecision.ts`.
+
+**Values.** Change these from the parked commit; every other field stays as parked (push 0.90, stagger 45, damage 0.35, accuracy −0.05, windup 14, impact 2, recovery 16, rootTravel 0, priority 35, tags `attack probe net unparryable`):
+
+| field | parked | now | why |
+|---|---|---|---|
+| `contactRange` | 2.4 – 3.6 | **1.2 – 3.3** | reaches the murmillo's 1.5–2.0; max 3.3 is the parked sweep's fix for the resolution gap (a hit at 3.6 left two retiarii ~4.4 apart, past `burst-in`'s 4.3 start range, and they circled ~300 ticks) |
+| `baseWeights['fast-net-cast']` | 10 | 10 | unchanged start; first sweep knob |
+
+The gate's wall margin is **`BACKING_ROOM`** from Task 3 (0.6, "nowhere left to back into"). Reuse that constant; do not create a second 0.6 with its own name.
+
+- [ ] **Step 1: Bring over the parked scaffolding**
+
+```bash
+git cherry-pick -n 7ca6f7f
+git restore --staged docs/superpowers/plans/2026-09-20-boundary-after-net.json
+rm docs/superpowers/plans/2026-09-20-boundary-after-net.json
+```
+
+Set `contactRange: { min: 1.2, max: 3.3 }` and rewrite the action's comment in the file's house style: it is now a last-resort net, and the comment says why, with the table above. Remove the claim that it is "the longest contact range in the game" — 3.3 is below `technical-driving-thrust`'s max.
+
+In `combatStyles.test.ts`, replace the parked test `is thrown from his own measure, not from inside it` with:
+
+```ts
+  it('reaches the murmillo where the murmillo actually fights', () => {
+    expect(net.contactRange.min).toBeLessThanOrEqual(COMBAT_STYLES.styles.heavy.preferredRange.min)
+  })
+
+  it('stops short of the range where a hit strands both fighters out of reach', () => {
+    // A hit pushes 0.90; from 3.3 that leaves ~4.2, inside burst-in's 4.3
+    // start range. From 3.6 it left ~4.4 and two retiarii circled ~300 ticks.
+    expect(net.contactRange.max + net.pushDistance).toBeLessThanOrEqual(COMBAT_STYLES.attacks['fast-burst-lunge'].startMaxRange ?? Infinity)
+  })
+```
+
+- [ ] **Step 2: Write the failing gate tests**
+
+Add to `src/simulation/combatDecision.test.ts`, using the fixtures `fighterState` / `makeContext` / `freeArena` (from `src/testSupport/combatFixtures.ts` — Task 4 moved them there):
+
+```ts
+describe('the net is a last resort', () => {
+  const fast = COMBAT_STYLES.styles.fast
+  const duelSized = { ...freeArena, radius: 7.5, lateralLimit: 3.3, minimumSeparation: 1.2 }
+  const at = (self: Vec2, target: Vec2) => makeContext({
+    self: fighterState('self', 'fast', { position: self, facing: { x: 1, z: 0 }, targetId: 'target' }),
+    target: fighterState('target', 'heavy', { factionId: 'other', position: target }),
+    arena: duelSized,
+  })
+  const offersNet = (context: CombatDecisionContext) =>
+    scoreCombatCandidates(context, fast).some((c) => c.decision.type === 'action' && c.decision.actionId === 'fast-net-cast')
+
+  it('is offered with his back to the wall and the murmillo on top of him', () => {
+    expect(offersNet(at({ x: -7.2, z: 0 }, { x: -5.4, z: 0 }))).toBe(true)
+  })
+
+  it('is not offered in open floor, however close the murmillo is', () => {
+    expect(offersNet(at({ x: 0, z: 0 }, { x: 1.8, z: 0 }))).toBe(false)
+  })
+
+  it('is not offered at the wall when he still has his measure', () => {
+    expect(offersNet(at({ x: -7.2, z: 0 }, { x: -4.2, z: 0 }))).toBe(false)
+  })
+})
+```
+
+Also add direct cases for `isPressedAtWall` covering each half of the condition failing alone.
+
+- [ ] **Step 3: Run them and watch them fail**
+
+Run: `node node_modules/vitest/vitest.mjs run --project fast src/simulation/combatDecision.test.ts`
+Expected: FAIL — the open-floor and still-has-his-measure cases offer the net, and `isPressedAtWall` does not exist.
+
+- [ ] **Step 4: Implement the gate**
+
+In `src/simulation/combatDecision.ts`:
+
+```ts
+/** Actions carrying this tag are last resorts: legal only while the actor `isPressedAtWall`. */
+export const NET_TAG = 'net'
+
+/**
+ * In trouble: backed near the arena wall AND with the opponent inside this
+ * style's preferred range -- the exact situation the 2026-09-20 playtest
+ * reported, and the only one the net is for.
+ *
+ * Both halves are required. The wall alone is not trouble (a retiarius
+ * circling along it at his own measure is fine); an opponent inside his
+ * measure in open floor is not trouble either (he can still walk). The parked
+ * first version of the net had no gate and was thrown 5-10 times per bout in
+ * the mirror and against the hoplomachus -- where it broke the balance --
+ * and ~1.4 times against the murmillo, where it was needed.
+ */
+export function isPressedAtWall(context: CombatDecisionContext, style: CombatStyleDefinition): boolean {
+  const distance = distanceBetween(context.self.position, context.target.position)
+  return arenaBoundaryMargin(context.arena, context.self.position) < BACKING_ROOM && distance < style.preferredRange.min
+}
+```
+
+and in `legalActionCandidates`, after the `FORCED_ACTION_TAG` check:
+
+```ts
+    if (action.tags.includes(NET_TAG) && !isPressedAtWall(context, style)) continue
+```
+
+Because the gate sits in legality, the anti-stall exemption (`viableActionCandidates` / `movementRestoresAction`) sees it too — a fighter cannot unlock the net by walking, which is correct.
+
+- [ ] **Step 5: Run the tests**
+
+Run: `node node_modules/typescript/bin/tsc --noEmit`
+Then: `node node_modules/vitest/vitest.mjs run --project fast`
+Expected: gate tests PASS. Snapshot tests (state hash, recorded traces, disengage episodes, series scores, action-id pins) may move. Per the owner's 2026-09-23 ruling, re-baseline a pure snapshot **only** after confirming the change comes from this task, and list each one with its reason in the commit body. Design and balance assertions — e.g. "the all-counter lineup must not sweep" — are **not** snapshots: if one fails, stop and report NEEDS_CONTEXT.
+
+- [ ] **Step 6: Measure against the post-footwork baseline**
+
+```bash
+node node_modules/vite-node/vite-node.mjs scripts/measure-boundary.ts -- --seeds=20 --json=docs/superpowers/plans/2026-09-20-boundary-after-net.json
+```
+
+Compare with Task 3's `2026-09-20-boundary-after-footwork.json`. Also report, from a scratch script in the SDD workspace (not committed), **nets thrown per bout per pairing** — the parked version's failure was nets in the wrong matchups, so this number is the check that the gate does its job. Target: materially lower wall time for the retiarius against the murmillo, and few nets in the mirror and against the hoplomachus.
+
+- [ ] **Step 7: Run the balance cohorts; sweep only on evidence**
+
+Run the full slow project in the background (9–14 min, outruns the 10-min Bash timeout), logging to the SDD workspace.
+
+If a band goes red, diagnose first (which pairing, how many nets there, why), then pick the knob from this list with the evidence written down: `baseWeights['fast-net-cast']` 10 → 8 → 6; `unparryable` → `parryable` (if nerva/drusus is the red row — a parry is the hoplomachus' own answer); `pushDistance` 0.90 → 0.80; `staggerTicks` 45 → 35. The parked sweep showed stagger is the weakest lever, so it goes last. Do not move `BACKING_ROOM` here — Task 3 tuned it for footwork.
+
+The golden season may be re-baselined per the owner's ruling (only if challenges 2 and 3 still cannot field a fresh lineup). **Never widen a band.** If no setting clears the bands, stop and report BLOCKED with the distribution.
+
+- [ ] **Step 8: Commit**
+
+Stage the files listed above plus `docs/superpowers/plans/2026-09-20-boundary-after-net.json`, and commit as `feat(combat): the retiarius casts a net when he is pinned`. The body carries: the parked first version and what it measured; the gate; before/after wall numbers against the post-footwork baseline; nets per bout by pairing; the sweep table if one ran; every re-baselined snapshot with its reason; trailer `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
+
+---
+
+### Task 6: The net is visible on the man it caught
+
+The retiarius' model **already carries a net**: `public/models/fast.glb` has a mesh node named `net` with `extras.slot = 'net'`, bone-parented to his off hand, and `ArenaView.ts` already knows about the slot (`HELD_EQUIPMENT_SLOTS` at `:292`, `SAFE_AREA_EXEMPT_SLOTS` at `:306`). No new geometry is needed — the net moves from his hand onto his opponent and back.
+
+The tangle is driven by simulation state, not by a timer, so it is immune to the effect-life problem Finding 2 describes: at ×4 speed a wall-clock effect is compressed, but "this combatant is staggered" is true for exactly as many ticks either way.
+
+**Files:**
+- Create: `src/presentation/netTangle.ts`
+- Create: `src/presentation/netTangle.test.ts`
+- Modify: `src/presentation/ArenaView.ts` (rig construction; the event scan near `:1240-1280`; the per-frame update near `:1139`)
+
+**Interfaces:**
+- Consumes: `'fast-net-cast'` from Task 5; `EncounterEvent`, `EncounterState` from `src/simulation/encounter`.
+- Produces:
+  ```ts
+  export interface NetTangle { casterId: CombatantId; targetId: CombatantId }
+  export function updateNetTangles(
+    previous: readonly NetTangle[],
+    events: readonly EncounterEvent[],
+    encounter: Readonly<EncounterState>,
+  ): NetTangle[]
+  ```
+
+- [ ] **Step 1: Write the failing test**
+
+Create `src/presentation/netTangle.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { updateNetTangles, type NetTangle } from './netTangle'
+import type { EncounterEvent, EncounterState } from '../simulation/encounter'
+
+const encounterAt = (tick: number, staggerUntilTick: number): EncounterState =>
+  ({ tick, combatants: { 'away.brutus': { staggerUntilTick } } }) as unknown as EncounterState
+
+const netHit = (tick: number): EncounterEvent =>
+  ({ id: 1, tick, type: 'damage-dealt', actorId: 'home.drusus', targetId: 'away.brutus', actionInstanceId: 'a1', actionId: 'fast-net-cast', amount: 3, remainingHp: 400, contactZone: 'body', contactPoint: { x: 0, z: 0 } }) as unknown as EncounterEvent
+
+const slashHit = (tick: number): EncounterEvent =>
+  ({ ...(netHit(tick) as object), actionId: 'fast-slash' }) as unknown as EncounterEvent
+
+describe('updateNetTangles', () => {
+  it('starts a tangle when a net lands', () => {
+    expect(updateNetTangles([], [netHit(100)], encounterAt(100, 145))).toEqual([
+      { casterId: 'home.drusus', targetId: 'away.brutus' },
+    ])
+  })
+
+  it('ignores an attack that is not a net', () => {
+    expect(updateNetTangles([], [slashHit(100)], encounterAt(100, 108))).toEqual([])
+  })
+
+  it('keeps the tangle while the stagger runs', () => {
+    const existing: NetTangle[] = [{ casterId: 'home.drusus', targetId: 'away.brutus' }]
+    expect(updateNetTangles(existing, [], encounterAt(140, 145))).toEqual(existing)
+  })
+
+  it('drops the tangle once the stagger has expired', () => {
+    const existing: NetTangle[] = [{ casterId: 'home.drusus', targetId: 'away.brutus' }]
+    expect(updateNetTangles(existing, [], encounterAt(145, 145))).toEqual([])
+  })
+
+  it('never records the same target twice', () => {
+    const existing: NetTangle[] = [{ casterId: 'home.drusus', targetId: 'away.brutus' }]
+    expect(updateNetTangles(existing, [netHit(120)], encounterAt(120, 165))).toHaveLength(1)
+  })
+})
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `node node_modules/vitest/vitest.mjs run --project fast src/presentation/netTangle.test.ts`
+Expected: FAIL — cannot resolve `./netTangle`.
+
+- [ ] **Step 3: Write the resolver**
+
+Create `src/presentation/netTangle.ts`:
+
+```ts
+// Who is currently tangled in a net, and who put him there.
+//
+// Pure, and a function of SIMULATION state rather than wall-clock time. That is
+// deliberate: the 2026-09-20 playtest's Finding 2 is that effects driven off
+// `presentationMs` get their life divided by the speed multiplier, so a 420 ms
+// spray is three frames at x4. A tangle that lasts exactly as long as the
+// target's `staggerUntilTick` cannot have that problem -- the stagger is the
+// same number of ticks at every speed, which is the whole reason the net is
+// worth anything in the first place.
+
+import type { CombatantId, EncounterEvent, EncounterState } from '../simulation/encounter'
+
+const NET_ACTION_ID = 'fast-net-cast'
+
+export interface NetTangle { casterId: CombatantId; targetId: CombatantId }
+
+/**
+ * `previous` with expired tangles dropped and any net landed in `events` added.
+ *
+ * A tangle starts on `damage-dealt` or `attack-blocked` -- the two contact
+ * outcomes that carry a `targetId` and mean the net reached him. It ends when
+ * the target's own `staggerUntilTick` is reached, so the visual and the
+ * mechanical effect are the same fact rather than two clocks that can disagree.
+ */
+export function updateNetTangles(
+  previous: readonly NetTangle[],
+  events: readonly EncounterEvent[],
+  encounter: Readonly<EncounterState>,
+): NetTangle[] {
+  const next: NetTangle[] = []
+  const seen = new Set<CombatantId>()
+
+  const keep = (tangle: NetTangle): void => {
+    if (seen.has(tangle.targetId)) return
+    if (encounter.combatants[tangle.targetId]?.staggerUntilTick <= encounter.tick) return
+    seen.add(tangle.targetId)
+    next.push(tangle)
+  }
+
+  for (const event of events) {
+    if (event.type !== 'damage-dealt' && event.type !== 'attack-blocked') continue
+    if (event.actionId !== NET_ACTION_ID) continue
+    keep({ casterId: event.actorId, targetId: event.targetId })
+  }
+  for (const tangle of previous) keep(tangle)
+
+  return next
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `node node_modules/vitest/vitest.mjs run --project fast src/presentation/netTangle.test.ts`
+Expected: PASS.
+
+- [ ] **Step 5: Wire it into the view**
+
+In `src/presentation/ArenaView.ts`:
+
+1. When a rig is built from a loaded model, find and remember the net, and build a hidden clone parented to that rig's `hitCenter` anchor:
+
+```ts
+// The retiarius is the only archetype whose file carries a `slot: 'net'` mesh
+// (bone-parented to his off hand by the build script). The clone is the same
+// geometry draped on whoever he catches: built once at load, hidden, never
+// allocated during play.
+const heldNet = findMeshBySlot(root, 'net')
+const tangleNet = heldNet ? (heldNet.clone() as THREE.Mesh) : undefined
+if (tangleNet) {
+  tangleNet.visible = false
+  anchors.hitCenter.add(tangleNet)
+}
+```
+
+2. Keep the tangle list on the view: `private netTangles: NetTangle[] = []`.
+
+3. In the per-frame update (beside the existing `presentationMs` computation near `:1139`), after the event scan for this frame:
+
+```ts
+this.netTangles = updateNetTangles(this.netTangles, eventsThisFrame, current.encounter)
+const tangledTargets = new Set(this.netTangles.map((tangle) => tangle.targetId))
+const castersWithNetOut = new Set(this.netTangles.map((tangle) => tangle.casterId))
+for (const [id, rig] of this.rigs) {
+  if (rig.tangleNet) rig.tangleNet.visible = tangledTargets.has(id)
+  // While his net is on someone else, his hand is empty.
+  if (rig.heldNet) rig.heldNet.visible = !castersWithNetOut.has(id)
+}
+```
+
+- [ ] **Step 6: Typecheck and run the fast suites**
+
+Run: `node node_modules/typescript/bin/tsc --noEmit`
+Then: `node node_modules/vitest/vitest.mjs run --project fast`
+Then: `node node_modules/@playwright/test/cli.js test --project fast`
+Expected: PASS. If a safe-area e2e baseline shifts because the net is now sometimes on the other fighter, check `SAFE_AREA_EXEMPT_SLOTS` (`ArenaView.ts:306`) still exempts `'net'` — it does, and the clone carries the same `userData.slot`, which is the reason the clone is used rather than a fresh mesh.
+
+- [ ] **Step 7: Look at it**
+
+Run the app (`node node_modules/vite/bin/vite.js`), watch a retiarius-versus-murmillo bout at speed ×1, and confirm: the net leaves his hand on a cast, is visible on the murmillo while he is staggered, and returns.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/presentation/netTangle.ts src/presentation/netTangle.test.ts src/presentation/ArenaView.ts
+git commit -F - <<'EOF'
+feat(arena): the net is visible on the man it caught
+
+The retiarius' model already ships a `slot: 'net'` mesh in his off hand and
+ArenaView already knew the slot, so the cast needs no new geometry: the net
+leaves his hand, appears on the target for as long as the stagger runs, and
+comes back.
+
+Driven off `staggerUntilTick` rather than a presentation timer on purpose.
+Finding 2 of the same playtest is that effect life is simulation time, so a
+wall-clock effect is compressed to three frames at x4; a tangle tied to the
+stagger is the same length at every speed, which is also the only honest
+thing for it to be -- it is showing a mechanical state, not a flourish.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+EOF
+```
+
+---
+
 ### Task 7: The roster spread
 
-**Conditional.** Run this task only if Task 6's gate was clean — identical cohort numbers. If it was not, stop and report; the spread would be tuning on top of an unexplained change.
+**Conditional.** Run this task only if Task 4's gate was clean — identical cohort numbers. If it was not, stop and report; the spread would be tuning on top of an unexplained change.
 
 **Files:**
 - Modify: `src/content/mvpSeries.ts:115-128`
 - Test: `src/content/mvpSeries.test.ts`
 
 **Interfaces:**
-- Consumes: `skill` on `FighterDefinition` from Task 6.
+- Consumes: `skill` on `FighterDefinition` from Task 4.
 - Produces: nothing new; this is authored content.
 
 - [ ] **Step 1: Write the failing test**
@@ -1601,7 +1511,7 @@ Expected and required: **Aquila and Drusus now differ** in both columns, in the 
 - [ ] **Step 6: Run the balance cohorts**
 
 Run: `node node_modules/vitest/vitest.mjs run --project slow`
-Expected: ~9–14 min. **Numbers will move here** — that is the point of this task, unlike Task 6. Every band must still pass.
+Expected: ~9–14 min. **Numbers will move here** — that is the point of this task, unlike Task 4. Every band must still pass.
 
 If a pairing leaves the 15–85 % band, narrow the spread (0.25/0.80 → 0.35/0.70 → 0.40/0.65) and re-run, recording the table. If even a narrow spread cannot hold the band, that is a finding about the mechanic's strength, not a reason to widen the band — report it and leave the roster neutral.
 
