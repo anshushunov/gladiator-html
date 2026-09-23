@@ -159,10 +159,12 @@ It becomes `scripts/measure-boundary.ts`, beside `measure-distance.ts` and
 pairings × 20 seeds × every tick:
 
 - share of ticks within 0.35 of either boundary (radius or lateral limit);
-- share of backing intents (`retreat` / `backstep` / `disengage`) issued while
-  already inside that band.
+- share of backing intents issued while already inside that band, under two
+  definitions printed side by side: the report's (`backstep` / `disengage`
+  only), and the decision's whole backward group (which adds `retreat`).
 
-Same definitions as the report, so before and after are directly comparable.
+The first column and the report-definition column use the report's own
+definitions, so before and after are directly comparable with its table.
 
 ## Replan, 2026-09-23 — the net moves to where he is in trouble
 
@@ -175,6 +177,26 @@ The design error was placing the net at the retiarius' own measure — where he 
 - **Order of work** becomes: instrument · log · footwork · skill at neutral · last-resort net · net on screen · roster spread.
 
 Owner rulings recorded with it: pure snapshots (state hash, recorded traces, fixture episodes, series scores, action-id pins, the golden season) may be re-baselined when a task changes behaviour on purpose, each with its reason in the commit — the golden season only if challenges 2 and 3 still cannot field a fresh lineup. Design and balance assertions are never re-baselined or widened.
+
+## Outcome, 2026-09-23
+
+The slice stopped short. Only three things shipped: the instrument
+(`scripts/measure-boundary.ts`), the log naming attacks
+(`src/presentation/actionNames.ts`), and `GUARD_DAMAGE_MULTIPLIER` 0.35 → 0.25
+in `src/simulation/combatActions.ts`.
+
+**The wall finding is NOT fixed.** The retiarius against the murmillo still
+spends 51.3 / 58.4 % of the bout at the wall (drusus / aquila, 20 seeds).
+
+The rest is parked, not merged: the footwork (with the shield at 0.15 and a
+Sura nudge) on `wip/retiarius-footwork-v1` (79a4671), and the net on
+`wip/retiarius-net-v1` (7ca6f7f). They stopped because the murmillo's counter
+over the retiarius rests on pinning him against the wall, and with the wall
+opened several balance criteria sit within a bout or two of their thresholds.
+
+The shield change is an exception to "Not in this slice" above, which excludes
+the shield-versus-evade backlog item. It was made by the owner's ruling, and it
+is a first step toward that item, not the item itself.
 
 ## Presentation
 
