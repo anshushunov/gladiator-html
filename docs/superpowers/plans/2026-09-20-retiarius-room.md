@@ -760,6 +760,27 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 ```
 
+#### Amendment 2026-09-23 — the murmillo's edge moves from the wall to his shield
+
+The first run of this task (patch `.superpowers/sdd/2026-09-20-retiarius-room/task-3-footwork-blocked.patch`, report `task-3-report.md` there) showed the term works on the finding — retiarius vs murmillo at the wall 51.5/58.4 % → 40.2/43.0 % at `BACKING_ROOM` 0.6 / `BOUNDARY_ADJUST` 10 — but no cell of the ladder clears the design bands, and the reason is structural: **the murmillo's counter over the retiarius rests on pinning him.** Equal-stat heavy vs fast falls 59.2 % → 51–55 % (band 55–75), all of it from the retiarius using the term; nerva/magnus rises to 85–88.5 % (≤ 85), from the hoplomachus using it; the press under-25 % check and the season "same-style gladiator is no strict upgrade" check also fail.
+
+The owner's ruling: **keep the footwork, and give the murmillo his edge back through his shield** — the start of the backlog item "the shield needs a reason to exist". Today only 6.7 % of hits are blocked. `heavy-guard` blocks only when it is bound in time (`minimumReactionLeadTicks` 8) and the attack arrives inside `minimumIncomingFacingDot` 0.3420 (~±70°); a retiarius who circles — which the footwork makes him do more — attacks from outside that arc.
+
+So this task now ships footwork **and** a shield change together, committed as one or two commits that only land together (the footwork alone fails the bands).
+
+Levers, in the order to try them, each one authored content in `src/content/combatStyles.ts` (`defenses['heavy-guard']`) unless noted:
+1. **The guard's arc**, `minimumIncomingFacingDot` 0.3420 (~±70°) → 0.1736 (~±80°) → 0 (±90°). The big shield covers the flank; circling stops getting around it. This is the thematic answer and goes first.
+2. **The guard's reaction lead**, `minimumReactionLeadTicks` 8 → 7 → 6. He gets the shield up against quicker attacks.
+3. `GUARD_DAMAGE_MULTIPLIER` in `encounter.ts` — last, because it is global to every guard.
+
+Start the footwork at 0.6 / 10 (it moved the wall most); if a shield setting clears everything but nerva/magnus, the footwork's own ladder is still available. Diagnose before each step (which band, which pairing, why), and write the evidence down.
+
+Measure and report, before and after, **the share of hits on the murmillo that are blocked, by attacker archetype** (scratch script in the SDD workspace, not committed) — that number is the "shield means something" evidence the owner asked for. Also report the wall numbers from `measure-boundary.ts`.
+
+Acceptance is unchanged: every design and balance band passes; the wall numbers for the retiarius against the murmillo stay materially below the 51.5/58.4 % baseline; snapshots may be re-baselined per the owner's ruling (each listed with its reason); design assertions are never re-baselined. If no combination clears the bands, stop and report BLOCKED with the distribution.
+
+Commit subject for the shield part: `feat(combat): the murmillo's shield covers his flank` (or whichever lever landed), body with the measured tables. Comment the changed field in `combatStyles.ts` with the sweep table, in the file's house style.
+
 ---
 
 ### Task 4: Skill, at the neutral point
