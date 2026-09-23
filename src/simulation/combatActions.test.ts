@@ -298,7 +298,7 @@ describe('calculateContactDamage', () => {
     expect(calculateContactDamage(22, 0.75, 1.00, 1.5, 1)).toBe(25) // 24.75 -> 25
   })
 
-  it('applies the guard block multiplier (0.35)', () => {
+  it('applies a block multiplier (0.35 here, an arbitrary fraction -- the shipped value is pinned below)', () => {
     expect(calculateContactDamage(22, 0.75, 1.00, 1, 0.35)).toBe(6) // 5.775 -> 6
   })
 

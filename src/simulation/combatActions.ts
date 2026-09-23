@@ -357,11 +357,15 @@ export function calculateContactDamage(
 /**
  * Heavy guard's damage/push/stagger attenuation (design.md's "Heavy guard" section).
  *
- * DAMAGE moved 0.35 -> 0.25 on 2026-09-23 (the retiarius' room), the first
- * step on the backlog item "the shield needs a reason to exist": the playtest
- * found blocked hits too cheap to read as a defence at all.
+ * DAMAGE moved 0.35 -> 0.25 on 2026-09-23 (the retiarius' room), a first step
+ * on the 2026-09-20 playtest's backlog item "the shield needs a reason to
+ * exist" (docs/reviews/2026-09-20-presentation-slice-playtest.md). That item
+ * says the mechanics exist per archetype but "the shield is not what decides",
+ * and asks for block and evade as distinct answers with distinct animations.
+ * This does not deliver that; it only makes a guarded blow cost measurably
+ * less, so the shield is worth more when it does come up.
  *
- * Three levers were tried, in this order, and only this one does anything:
+ * Three levers were tried, in this order, and only this one helps:
  *
  * - `heavy-guard`'s `minimumIncomingFacingDot` (0.3420, ~+/-70deg) is INERT.
  *   The murmillo turns toward his target every tick at 2deg/tick, faster than
@@ -369,11 +373,13 @@ export function calculateContactDamage(
  *   arc -- not at 0.1736, not at 0, not even at 0.99 (+/-8deg): zero
  *   `defense-failed(facing)` events across every roster pairing with a heavy in
  *   it, and bit-identical cohorts. Widening it changes nothing.
- * - `minimumReactionLeadTicks` 8 -> 7 -> 6 makes things WORSE: the single
+ * - `minimumReactionLeadTicks` 8 -> 7 -> 6 made things WORSE: the single
  *   reaction tick moves closer to contact, where he is busy more often, and the
- *   blocked share FALLS (18.2% -> 17.2% of the retiarius' hits); equal-stat
- *   heavy>fast went 51.2 -> 51.6 -> 50.8 and nerva/magnus 86.5 -> 88.0 -> 86.0
- *   (measured alongside the boundary-read footwork, see below).
+ *   blocked share FELL (18.2% -> 17.2% of the retiarius' hits); equal-stat
+ *   heavy>fast went 51.2 -> 51.6 -> 50.8 and nerva/magnus 86.5 -> 88.0 -> 86.0.
+ *   CAVEAT: all of this was measured WITH the boundary-read footwork on (see
+ *   below), not on the shipped build. The mechanism does not depend on the
+ *   footwork, but the numbers do.
  * - This multiplier. It changes how much a block saves, not how often he
  *   blocks. Measured alone (200-seed roster, 500-seed equal-stat cohorts):
  *
@@ -386,9 +392,16 @@ export function calculateContactDamage(
  *     (bands: 55..75, 55..75, 15..85, 15..85; dispositionBalance's press
  *      extra / guarded saved bloody-win share, both >= 2.0%)
  *
- *   0.25 rather than further: at 0.15 Brutus beats Drusus 84.5% of the time,
- *   two bouts under the roster ceiling. At 0.25 every band keeps at least the
- *   margin it had before. The shield now absorbs 15.6% of the damage the
+ *   The trade-off, stated plainly: at 0.25 three bands LOSE margin against
+ *   0.35 -- brutus/drusus 82.0 -> 82.5% (3.0 -> 2.5 points under the 85%
+ *   ceiling), press extra 3.9 -> 3.4% (1.9 -> 1.4 over the 2.0% floor) and
+ *   guarded saved 2.6 -> 2.4% (0.6 -> 0.4 over it). The other three gain. All
+ *   pass; the controller accepted the loss (2026-09-23).
+ *
+ *   0.25 rather than further because going further spends the brutus/drusus
+ *   margin: at 0.15 Brutus beats Drusus 84.5% of the time, 0.5 points (two
+ *   bouts in 200) under the ceiling, for a heavy>fast edge the shipped build
+ *   does not need. The shield now absorbs 15.6% of the damage the
  *   retiarius throws at the murmillo (was 13.5%), 18.7% of the hoplomachus'
  *   (16.3%) and 10.8% of another murmillo's (9.5%), roster pairings, 200 seeds.
  *   The share of hits he blocks does not move (20.0 / 24.4 / 13.1%), and
