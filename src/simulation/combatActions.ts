@@ -354,8 +354,66 @@ export function calculateContactDamage(
 // this file's existing `calculateContactPoint`/`calculateContactDamage`.
 // ---------------------------------------------------------------------------
 
-/** Heavy guard's damage/push/stagger attenuation (design.md's "Heavy guard" section). */
-export const GUARD_DAMAGE_MULTIPLIER = 0.35
+/**
+ * Heavy guard's damage/push/stagger attenuation (design.md's "Heavy guard" section).
+ *
+ * DAMAGE moved 0.35 -> 0.25 on 2026-09-23 (the retiarius' room), a first step
+ * on the 2026-09-20 playtest's backlog item "the shield needs a reason to
+ * exist" (docs/reviews/2026-09-20-presentation-slice-playtest.md). That item
+ * says the mechanics exist per archetype but "the shield is not what decides",
+ * and asks for block and evade as distinct answers with distinct animations.
+ * This does not deliver that; it only makes a guarded blow cost measurably
+ * less, so the shield is worth more when it does come up.
+ *
+ * Three levers were tried, in this order, and only this one helps:
+ *
+ * - `heavy-guard`'s `minimumIncomingFacingDot` (0.3420, ~+/-70deg) is INERT.
+ *   The murmillo turns toward his target every tick at 2deg/tick, faster than
+ *   anyone circles him, so a bound guard never met an attack from outside the
+ *   arc -- not at 0.1736, not at 0, not even at 0.99 (+/-8deg): zero
+ *   `defense-failed(facing)` events across every roster pairing with a heavy in
+ *   it, and bit-identical cohorts. Widening it changes nothing.
+ * - `minimumReactionLeadTicks` 8 -> 7 -> 6 made things WORSE: the single
+ *   reaction tick moves closer to contact, where he is busy more often, and the
+ *   blocked share FELL (18.2% -> 17.2% of the retiarius' hits); equal-stat
+ *   heavy>fast went 51.2 -> 51.6 -> 50.8 and nerva/magnus 86.5 -> 88.0 -> 86.0.
+ *   CAVEAT: all of this was measured WITH the boundary-read footwork on (see
+ *   below), not on the shipped build. The mechanism does not depend on the
+ *   footwork, but the numbers do.
+ * - This multiplier. It changes how much a block saves, not how often he
+ *   blocks. Measured alone (200-seed roster, 500-seed equal-stat cohorts):
+ *
+ *     DAMAGE  heavy>fast  tech>heavy  brutus/drusus  nerva/magnus  press  guarded
+ *      0.35      59.2        71.4         82.0           84.5       3.9%    2.6%
+ *      0.25      60.8        69.2         82.5           83.0       3.4%    2.4%
+ *      0.20      61.0        68.6         84.0           83.0       3.2%    2.3%
+ *      0.15      62.6        68.2         84.5           82.0       3.2%    2.3%
+ *      0.10      63.8        65.8         84.5           81.5       2.6%    2.7%
+ *     (bands: 55..75, 55..75, 15..85, 15..85; dispositionBalance's press
+ *      extra / guarded saved bloody-win share, both >= 2.0%)
+ *
+ *   The trade-off, stated plainly: at 0.25 three bands LOSE margin against
+ *   0.35 -- brutus/drusus 82.0 -> 82.5% (3.0 -> 2.5 points under the 85%
+ *   ceiling), press extra 3.9 -> 3.4% (1.9 -> 1.4 over the 2.0% floor) and
+ *   guarded saved 2.6 -> 2.4% (0.6 -> 0.4 over it). The other three gain. All
+ *   pass; the controller accepted the loss (2026-09-23).
+ *
+ *   0.25 rather than further because going further spends the brutus/drusus
+ *   margin: at 0.15 Brutus beats Drusus 84.5% of the time (169 of 200), one
+ *   bout under the 85% ceiling and two wins from failing it (the check is
+ *   <= 0.85, so 171 fails), for a heavy>fast edge the shipped build does not
+ *   need. The shield now absorbs 15.6% of the damage the
+ *   retiarius throws at the murmillo (was 13.5%), 18.7% of the hoplomachus'
+ *   (16.3%) and 10.8% of another murmillo's (9.5%), roster pairings, 200 seeds.
+ *   The share of hits he blocks does not move (20.0 / 24.4 / 13.1%), and
+ *   should not: that is the guard's timing, which this does not touch.
+ *
+ * This was first swept as the partner of a boundary read that took the
+ * retiarius off the wall (parked on `wip/retiarius-footwork-v1`). That pairing
+ * needed 0.15 to hold the heavy>fast edge and still failed one of
+ * `dispositionBalance`'s risk clauses, so the shield shipped alone.
+ */
+export const GUARD_DAMAGE_MULTIPLIER = 0.25
 export const GUARD_PUSH_MULTIPLIER = 0.30
 export const GUARD_STAGGER_MULTIPLIER = 0.40
 

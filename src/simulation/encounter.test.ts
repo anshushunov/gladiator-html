@@ -1540,6 +1540,8 @@ interface ContactFixtureOptions {
   criticalRoll: number
   actorOverrides?: Partial<FighterCombatState>
   targetOverrides?: Partial<FighterCombatState>
+  /** Overrides the fixture fighter's `power` (default 20), for pins that must stay off a rounding tie. */
+  actorPower?: number
 }
 
 /**
@@ -1559,7 +1561,7 @@ function contactFixture(options: ContactFixtureOptions): EncounterState {
   const created = createEncounter({
     seed: 1,
     combatants: [
-      combatant('actor', 'home', { archetype: options.actorArchetype, startPosition: options.actorPosition }),
+      combatant('actor', 'home', { archetype: options.actorArchetype, startPosition: options.actorPosition, fighter: options.actorPower === undefined ? undefined : { power: options.actorPower } }),
       combatant('target', 'away', { archetype: options.targetArchetype, startPosition: options.targetPosition }),
     ],
     arena: freeArena,
@@ -1763,13 +1765,18 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
     const state = contactFixture({
       actorArchetype: 'heavy',
       targetArchetype: 'heavy',
-      actionId: 'heavy-cleave', // power20 * 1.75 * 1.00(neutral) = 35; push 0.70; staggerTicks 24
+      actionId: 'heavy-cleave', // power22 * 2.70 * 1.00(neutral) = 59.4; push 0.70; staggerTicks 24
       actorPosition: { x: -1.3, z: 0 },
       targetPosition: { x: 0, z: 0 },
       actorFacing: { x: 1, z: 0 },
       accuracyRoll: 0.1, // clamp(0.8-0.06)=0.74; passes
       criticalRoll: 0.01,
       targetOverrides: { facing: { x: -1, z: 0 }, action: boundDefense('heavy-guard') }, // faces the actor: incoming-facing gate (>=0.3420) passes
+      // power 22, not the fixture's 20: 20*2.70*0.25 = 13.5 sits exactly on a
+      // rounding tie, so the pin would depend on floating-point order. 22 also
+      // lands on a value (15) that neither side of that tie could produce, so
+      // the pin proves the override reached the damage formula.
+      actorPower: 22,
     })
 
     const { state: next, events } = advanceEncounterTick(state)
@@ -1778,11 +1785,11 @@ describe('advanceEncounterTick: contact resolution (Task 9) -- canonical outcome
 
     expect(types(blockBatch)).toEqual(['attack-blocked', 'damage-dealt', 'fighter-staggered'])
     expect(blockBatch[0]).toMatchObject({ contactZone: 'shield' })
-    expect(blockBatch[1]).toMatchObject({ amount: 19, remainingHp: 81, contactZone: 'shield' }) // round(20*2.70*0.35)=18.9->19
+    expect(blockBatch[1]).toMatchObject({ amount: 15, remainingHp: 85, contactZone: 'shield' }) // round(22*2.70*0.25)=round(14.85)=15
     expect(blockBatch[2]).toMatchObject({ durationTicks: 10 }) // max(1,round(24*0.40))=10
     expect((blockBatch[2] as Extract<EncounterEvent, { type: 'fighter-staggered' }>).direction.x).toBeCloseTo(1, 9)
 
-    expect(next.combatants.target.hp).toBe(81)
+    expect(next.combatants.target.hp).toBe(85)
     // push 0.70 * 0.30 = 0.21 away from the actor (toward +x); no separation correction needed at this distance.
     expect(next.combatants.target.position.x).toBeCloseTo(0.21, 6)
   })

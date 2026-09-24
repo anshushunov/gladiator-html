@@ -10,7 +10,7 @@ describe('battle feed', () => {
       { id: 0, tick: 60, type: 'attack-blocked', actorId: 'home.brutus', targetId: 'away.cassius', actionInstanceId: 'home.brutus:0', actionId: 'heavy-shield-jab', contactZone: 'shield', contactPoint: { x: 0, z: 0 } },
       { id: 1, tick: 60, type: 'damage-dealt', actorId: 'home.brutus', targetId: 'away.cassius', actionInstanceId: 'home.brutus:0', actionId: 'heavy-shield-jab', amount: 4, remainingHp: 96, contactZone: 'shield', contactPoint: { x: 0, z: 0 } },
     ], names)
-    expect(entries).toEqual([{ eventId: 0, atSeconds: 1, message: 'Cassius blocks but takes 4.' }])
+    expect(entries).toEqual([{ eventId: 0, atSeconds: 1, message: 'Cassius blocks the shield jab but takes 4.' }])
   })
 
   it('combines a critical event with its damage', () => {
@@ -18,7 +18,7 @@ describe('battle feed', () => {
       { id: 0, tick: 120, type: 'critical-hit', actorId: 'home.brutus', targetId: 'away.cassius', actionInstanceId: 'home.brutus:0', actionId: 'heavy-cleave', multiplier: 1.5 },
       { id: 1, tick: 120, type: 'damage-dealt', actorId: 'home.brutus', targetId: 'away.cassius', actionInstanceId: 'home.brutus:0', actionId: 'heavy-cleave', amount: 18, remainingHp: 82, contactZone: 'body', contactPoint: { x: 0, z: 0 } },
     ], names)
-    expect(entries[0].message).toBe('Brutus lands a critical hit for 18.')
+    expect(entries[0].message).toBe('Brutus cleaves for 18 — a critical hit.')
   })
 
   it('does not combine a block/critical with a damage event from a different action instance', () => {
@@ -27,9 +27,33 @@ describe('battle feed', () => {
       { id: 1, tick: 90, type: 'damage-dealt', actorId: 'away.cassius', targetId: 'home.brutus', actionInstanceId: 'away.cassius:0', actionId: 'fast-slash', amount: 4, remainingHp: 96, contactZone: 'body', contactPoint: { x: 0, z: 0 } },
     ], names)
     expect(entries).toEqual([
-      { eventId: 0, atSeconds: 1, message: 'Cassius blocks.' },
-      { eventId: 1, atSeconds: 1.5, message: 'Cassius deals 4.' },
+      { eventId: 0, atSeconds: 1, message: 'Cassius blocks the shield jab.' },
+      { eventId: 1, atSeconds: 1.5, message: 'Cassius slashes for 4.' },
     ])
+  })
+
+  it('names the attack on a hit', () => {
+    const events = [
+      { id: 1, tick: 60, type: 'damage-dealt', actorId: 'home.brutus', targetId: 'away.drusus', actionInstanceId: 'a1', actionId: 'heavy-cleave', amount: 12, remainingHp: 400, contactZone: 'body', contactPoint: { x: 0, z: 0 } },
+    ] as unknown as EncounterEvent[]
+    const [entry] = formatBattleFeed(events, { 'home.brutus': 'Brutus', 'away.drusus': 'Drusus' })
+    expect(entry.message).toBe('Brutus cleaves for 12.')
+  })
+
+  it('names the attack on a miss', () => {
+    const events = [
+      { id: 1, tick: 60, type: 'attack-missed', actorId: 'home.brutus', targetId: 'away.drusus', actionInstanceId: 'a1', actionId: 'heavy-shield-jab', reason: 'accuracy' },
+    ] as unknown as EncounterEvent[]
+    const [entry] = formatBattleFeed(events, { 'home.brutus': 'Brutus', 'away.drusus': 'Drusus' })
+    expect(entry.message).toBe('Brutus jabs with the shield and misses.')
+  })
+
+  it('names the attack the defender answered', () => {
+    const events = [
+      { id: 1, tick: 60, type: 'attack-evaded', actorId: 'home.brutus', targetId: 'away.drusus', actionInstanceId: 'a1', actionId: 'heavy-cleave', evadeIntent: 'backstep' },
+    ] as unknown as EncounterEvent[]
+    const [entry] = formatBattleFeed(events, { 'home.brutus': 'Brutus', 'away.drusus': 'Drusus' })
+    expect(entry.message).toBe('Drusus evades the cleave.')
   })
 
   it.each([
@@ -53,9 +77,9 @@ describe('battle feed', () => {
     const entries = formatBattleFeed(events, names)
     expect(entries.map((entry) => entry.message)).toEqual([
       'The gates open.',
-      'Brutus misses.',
-      'Cassius evades.',
-      'Cassius parries.',
+      'Brutus jabs with the shield and misses.',
+      'Cassius evades the shield jab.',
+      'Cassius parries the cleave.',
       'Cassius falls.',
     ])
   })
@@ -92,8 +116,8 @@ describe('battle feed', () => {
     expect(entries).toHaveLength(8)
     // The kept window is the newest eight (attacks 4..11), oldest-first, each
     // keyed by its block event (the combined entry's own anchor).
-    expect(entries[0]).toMatchObject({ eventId: 4 * 3 + 1, message: 'Cassius blocks but takes 4.' })
-    expect(entries.at(-1)).toMatchObject({ eventId: 11 * 3 + 1, message: 'Cassius blocks but takes 4.' })
+    expect(entries[0]).toMatchObject({ eventId: 4 * 3 + 1, message: 'Cassius blocks the shield jab but takes 4.' })
+    expect(entries.at(-1)).toMatchObject({ eventId: 11 * 3 + 1, message: 'Cassius blocks the shield jab but takes 4.' })
     expect(entries.map((entry) => entry.eventId)).toEqual([13, 16, 19, 22, 25, 28, 31, 34])
   })
 })

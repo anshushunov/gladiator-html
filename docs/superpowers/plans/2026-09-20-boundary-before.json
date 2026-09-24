@@ -1,0 +1,213 @@
+{
+  "seeds": 20,
+  "edgeMargin": 0.35,
+  "samples": [
+    {
+      "label": "brutus (heavy) vs drusus (fast)",
+      "home": {
+        "fighterId": "brutus",
+        "archetype": "heavy",
+        "edgeTicks": 523,
+        "backingTicks": 0,
+        "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 5054,
+        "anyBackwardAtEdgeTicks": 79,
+        "totalTicks": 42776
+      },
+      "away": {
+        "fighterId": "drusus",
+        "archetype": "fast",
+        "edgeTicks": 22027,
+        "backingTicks": 5424,
+        "backingAtEdgeTicks": 2763,
+        "anyBackwardTicks": 16821,
+        "anyBackwardAtEdgeTicks": 10776,
+        "totalTicks": 42772
+      }
+    },
+    {
+      "label": "brutus (heavy) vs cassius (technical)",
+      "home": {
+        "fighterId": "brutus",
+        "archetype": "heavy",
+        "edgeTicks": 840,
+        "backingTicks": 0,
+        "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 3563,
+        "anyBackwardAtEdgeTicks": 22,
+        "totalTicks": 43049
+      },
+      "away": {
+        "fighterId": "cassius",
+        "archetype": "technical",
+        "edgeTicks": 7723,
+        "backingTicks": 9598,
+        "backingAtEdgeTicks": 2612,
+        "anyBackwardTicks": 9598,
+        "anyBackwardAtEdgeTicks": 2612,
+        "totalTicks": 43047
+      }
+    },
+    {
+      "label": "brutus (heavy) vs magnus (heavy)",
+      "home": {
+        "fighterId": "brutus",
+        "archetype": "heavy",
+        "edgeTicks": 0,
+        "backingTicks": 0,
+        "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 4427,
+        "anyBackwardAtEdgeTicks": 0,
+        "totalTicks": 34460
+      },
+      "away": {
+        "fighterId": "magnus",
+        "archetype": "heavy",
+        "edgeTicks": 0,
+        "backingTicks": 0,
+        "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 5909,
+        "anyBackwardAtEdgeTicks": 0,
+        "totalTicks": 34448
+      }
+    },
+    {
+      "label": "aquila (fast) vs drusus (fast)",
+      "home": {
+        "fighterId": "aquila",
+        "archetype": "fast",
+        "edgeTicks": 2309,
+        "backingTicks": 3668,
+        "backingAtEdgeTicks": 262,
+        "anyBackwardTicks": 8557,
+        "anyBackwardAtEdgeTicks": 521,
+        "totalTicks": 37405
+      },
+      "away": {
+        "fighterId": "drusus",
+        "archetype": "fast",
+        "edgeTicks": 3175,
+        "backingTicks": 4259,
+        "backingAtEdgeTicks": 754,
+        "anyBackwardTicks": 9254,
+        "anyBackwardAtEdgeTicks": 1462,
+        "totalTicks": 37417
+      }
+    },
+    {
+      "label": "aquila (fast) vs cassius (technical)",
+      "home": {
+        "fighterId": "aquila",
+        "archetype": "fast",
+        "edgeTicks": 7858,
+        "backingTicks": 4011,
+        "backingAtEdgeTicks": 1735,
+        "anyBackwardTicks": 8298,
+        "anyBackwardAtEdgeTicks": 2966,
+        "totalTicks": 34042
+      },
+      "away": {
+        "fighterId": "cassius",
+        "archetype": "technical",
+        "edgeTicks": 1310,
+        "backingTicks": 2585,
+        "backingAtEdgeTicks": 36,
+        "anyBackwardTicks": 2585,
+        "anyBackwardAtEdgeTicks": 36,
+        "totalTicks": 34036
+      }
+    },
+    {
+      "label": "aquila (fast) vs magnus (heavy)",
+      "home": {
+        "fighterId": "aquila",
+        "archetype": "fast",
+        "edgeTicks": 25504,
+        "backingTicks": 4558,
+        "backingAtEdgeTicks": 2859,
+        "anyBackwardTicks": 15895,
+        "anyBackwardAtEdgeTicks": 11233,
+        "totalTicks": 43668
+      },
+      "away": {
+        "fighterId": "magnus",
+        "archetype": "heavy",
+        "edgeTicks": 278,
+        "backingTicks": 0,
+        "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 4379,
+        "anyBackwardAtEdgeTicks": 0,
+        "totalTicks": 43686
+      }
+    },
+    {
+      "label": "nerva (technical) vs drusus (fast)",
+      "home": {
+        "fighterId": "nerva",
+        "archetype": "technical",
+        "edgeTicks": 538,
+        "backingTicks": 1600,
+        "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 1600,
+        "anyBackwardAtEdgeTicks": 0,
+        "totalTicks": 30414
+      },
+      "away": {
+        "fighterId": "drusus",
+        "archetype": "fast",
+        "edgeTicks": 7150,
+        "backingTicks": 3939,
+        "backingAtEdgeTicks": 1583,
+        "anyBackwardTicks": 8546,
+        "anyBackwardAtEdgeTicks": 3125,
+        "totalTicks": 30428
+      }
+    },
+    {
+      "label": "nerva (technical) vs cassius (technical)",
+      "home": {
+        "fighterId": "nerva",
+        "archetype": "technical",
+        "edgeTicks": 2155,
+        "backingTicks": 494,
+        "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 494,
+        "anyBackwardAtEdgeTicks": 0,
+        "totalTicks": 34405
+      },
+      "away": {
+        "fighterId": "cassius",
+        "archetype": "technical",
+        "edgeTicks": 1133,
+        "backingTicks": 1018,
+        "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 1018,
+        "anyBackwardAtEdgeTicks": 0,
+        "totalTicks": 34403
+      }
+    },
+    {
+      "label": "nerva (technical) vs magnus (heavy)",
+      "home": {
+        "fighterId": "nerva",
+        "archetype": "technical",
+        "edgeTicks": 6535,
+        "backingTicks": 10089,
+        "backingAtEdgeTicks": 2420,
+        "anyBackwardTicks": 10089,
+        "anyBackwardAtEdgeTicks": 2420,
+        "totalTicks": 41187
+      },
+      "away": {
+        "fighterId": "magnus",
+        "archetype": "heavy",
+        "edgeTicks": 316,
+        "backingTicks": 0,
+        "backingAtEdgeTicks": 0,
+        "anyBackwardTicks": 3603,
+        "anyBackwardAtEdgeTicks": 44,
+        "totalTicks": 41173
+      }
+    }
+  ]
+}

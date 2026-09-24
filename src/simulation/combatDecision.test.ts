@@ -4,6 +4,7 @@ import { freeArena } from '../testSupport/combatFixtures'
 import type { CombatStyleDefinition } from './combatActions'
 import {
   acquireNearestHostile,
+  arenaBoundaryMargin,
   buildCombatDecisionContext,
   chooseCombatDecision,
   computePressureLevel,
@@ -1381,5 +1382,32 @@ describe('processDefenseBatch', () => {
     })
 
     expect(result.defender.reactionLedger.map((record) => record.incomingActionId)).toEqual(['x:0', 'y:0', 'z:0'])
+  })
+})
+
+// The duel's own dimensions (`battle.ts`'s DUEL_RADIUS / DUEL_LATERAL_LIMIT),
+// spelled out rather than taken from `freeArena` — that fixture is deliberately
+// roomy so unrelated tests never trip the wall, which is the one thing these
+// cases are about.
+const duelSized = { ...freeArena, radius: 7.5, lateralLimit: 3.3, minimumSeparation: 1.2 }
+
+describe('arenaBoundaryMargin', () => {
+  it('measures the radial boundary when the fighter is out along the long axis', () => {
+    expect(arenaBoundaryMargin(duelSized, { x: 7.0, z: 0 })).toBeCloseTo(0.5, 10)
+  })
+
+  it('measures the lateral boundary when that one is nearer', () => {
+    expect(arenaBoundaryMargin(duelSized, { x: 0, z: 3.0 })).toBeCloseTo(0.3, 10)
+  })
+
+  it('returns the smaller of the two in the corner where both bind', () => {
+    // Chosen so the two margins differ and the radial one is smaller:
+    // |position| = 7.35 gives a radial margin of 0.15, |z| = 3.1 a lateral 0.2.
+    const corner = { x: Math.sqrt(7.35 * 7.35 - 3.1 * 3.1), z: 3.1 }
+    expect(arenaBoundaryMargin(duelSized, corner)).toBeCloseTo(0.15, 10)
+  })
+
+  it('goes negative outside the arena', () => {
+    expect(arenaBoundaryMargin(duelSized, { x: 8.0, z: 0 })).toBeCloseTo(-0.5, 10)
   })
 })

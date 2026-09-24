@@ -735,7 +735,7 @@ export interface DecisionModifier {
 
 type MovementDirectionGroup = 'forward' | 'backward' | 'lateral'
 
-const LOCOMOTION_DIRECTION_GROUP: Readonly<Partial<Record<LocomotionIntent, MovementDirectionGroup>>> = {
+export const LOCOMOTION_DIRECTION_GROUP: Readonly<Partial<Record<LocomotionIntent, MovementDirectionGroup>>> = {
   advance: 'forward',
   pressure: 'forward',
   'burst-in': 'forward',
@@ -783,8 +783,17 @@ function targetHasOpening(target: Readonly<FighterCombatState>, tick: number): b
 /** An action finishing within this distance of either arena boundary takes the `-20` penalty. */
 const ARENA_BOUNDARY_MARGIN = 0.4
 
-/** Distance from `position` to the nearer of the two arena boundaries (lateral band or outer radius, matching `movement.ts`'s two-stage clamp). Negative outside. */
-function arenaBoundaryMargin(arena: Readonly<CombatArenaDefinition>, position: Readonly<Vec2>): number {
+/**
+ * Distance from `position` to the nearer of the two arena boundaries (lateral
+ * band or outer radius, matching `movement.ts`'s two-stage clamp). Negative
+ * outside.
+ *
+ * Exported so `scripts/measure-boundary.ts` asks the same question the policy
+ * asks. A second copy of "how close to the wall is this"
+ * in the instrument would be free to drift from the one the decision uses,
+ * and the instrument's whole job is to report on that decision.
+ */
+export function arenaBoundaryMargin(arena: Readonly<CombatArenaDefinition>, position: Readonly<Vec2>): number {
   const radialMargin = arena.radius - Math.sqrt(position.x * position.x + position.z * position.z)
   const lateralMargin = arena.lateralLimit - Math.abs(position.z)
   return Math.min(radialMargin, lateralMargin)

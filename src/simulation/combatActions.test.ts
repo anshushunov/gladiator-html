@@ -298,7 +298,7 @@ describe('calculateContactDamage', () => {
     expect(calculateContactDamage(22, 0.75, 1.00, 1.5, 1)).toBe(25) // 24.75 -> 25
   })
 
-  it('applies the guard block multiplier (0.35)', () => {
+  it('applies a block multiplier (0.35 here, an arbitrary fraction -- the shipped value is pinned below)', () => {
     expect(calculateContactDamage(22, 0.75, 1.00, 1, 0.35)).toBe(6) // 5.775 -> 6
   })
 
@@ -317,8 +317,8 @@ describe('calculateContactDamage', () => {
 // ---------------------------------------------------------------------------
 
 describe('guard/parry multiplier constants', () => {
-  it('matches design.md exactly: damage 0.35, push 0.30, stagger 0.40, parry-attacker stagger 24', () => {
-    expect(GUARD_DAMAGE_MULTIPLIER).toBe(0.35)
+  it('matches design.md exactly: damage 0.25, push 0.30, stagger 0.40, parry-attacker stagger 24', () => {
+    expect(GUARD_DAMAGE_MULTIPLIER).toBe(0.25)
     expect(GUARD_PUSH_MULTIPLIER).toBe(0.30)
     expect(GUARD_STAGGER_MULTIPLIER).toBe(0.40)
     expect(PARRY_ATTACKER_STAGGER_TICKS).toBe(24)
